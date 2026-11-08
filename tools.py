@@ -2,13 +2,14 @@
 import ctypes
 import datetime
 import json
+import math
 import os
 import shutil
 import subprocess
 import threading
 import webbrowser
 from pathlib import Path
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlsplit
 
 import psutil
 
@@ -150,14 +151,76 @@ def abrir_aplicacion(nombre):
 
 
 @herramienta(
+    "Cierra las ventanas de una aplicación permitida. Pide confirmación antes de cerrar.",
+    {"nombre": {"type": "string", "enum": list(config.APPS), "description": "Aplicación que se va a cerrar"}},
+    ["nombre"],
+    confirmar=True,
+)
+def cerrar_aplicacion(nombre):
+    n = ALIAS_APPS.get(nombre.lower().strip(), nombre.lower().strip())
+    if n not in config.APPS:
+        return f"No conozco '{nombre}'. Apps disponibles: {', '.join(config.APPS)}"
+
+    nombres_proceso = {
+        "configuracion": {"systemsettings.exe"},
+        "terminal": {"wt.exe", "windowsterminal.exe"},
+        "vscode": {"code.exe"},
+        "spotify": {"spotify.exe"},
+        "word": {"winword.exe"},
+        "excel": {"excel.exe"},
+    }
+    ejecutable = Path(config.APPS[n]).name.lower()
+    if not ejecutable.endswith(".exe"):
+        ejecutable += ".exe"
+    objetivos = nombres_proceso.get(n, {ejecutable})
+
+    pids = set()
+    for proceso in psutil.process_iter(["pid", "name"]):
+        try:
+            if (proceso.info["name"] or "").lower() in objetivos:
+                pids.add(proceso.info["pid"])
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    if not pids:
+        return f"No encontré {n} abierto."
+
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    cerradas = []
+    callback_tipo = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def cerrar_ventana(hwnd, _):
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value in pids and user32.IsWindowVisible(hwnd):
+            if user32.PostMessageW(hwnd, 0x0010, 0, 0):  # WM_CLOSE
+                cerradas.append(pid.value)
+        return True
+
+    callback = callback_tipo(cerrar_ventana)
+    if not user32.EnumWindows(callback, 0):
+        raise ctypes.WinError()
+    cantidad = len(cerradas)
+    if not cantidad:
+        return f"Encontré {n} abierto, pero no tiene ventanas visibles para cerrar."
+    return f"Envié la solicitud de cierre a {cantidad} ventana(s) de {n}."
+
+
+@herramienta(
     "Abre una página web en el navegador predeterminado.",
     {"url": {"type": "string", "description": "Dirección, ej: https://www.youtube.com"}},
     ["url"],
 )
 def abrir_web(url):
+    url = url.strip()
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
-    webbrowser.open(url)
+    partes = urlsplit(url)
+    if partes.scheme not in ("http", "https") or not partes.netloc:
+        raise ValueError("El enlace debe ser una dirección web http o https válida.")
+    if not webbrowser.open(url):
+        raise OSError("Windows no pudo abrir el enlace en el navegador predeterminado.")
     return f"Abrí {url}."
 
 
@@ -167,7 +230,9 @@ def abrir_web(url):
     ["consulta"],
 )
 def buscar_en_google(consulta):
-    webbrowser.open(f"https://www.google.com/search?q={quote_plus(consulta)}")
+    url = f"https://www.google.com/search?q={quote_plus(consulta)}"
+    if not webbrowser.open(url):
+        raise OSError("Windows no pudo abrir Google en el navegador predeterminado.")
     return f"Busqué '{consulta}' en Google."
 
 
@@ -256,7 +321,7 @@ def crear_nota(titulo, contenido):
 
 
 @herramienta(
-    "Pone un recordatorio que avisará en voz alta dentro de N minutos.",
+    "Pone un recordatorio que avisará en voz alta dentro de N minutos. Jarvis debe permanecer abierto.",
     {
         "minutos": {"type": "number", "description": "Minutos hasta el aviso"},
         "mensaje": {"type": "string", "description": "Qué recordar"},
@@ -265,10 +330,35 @@ def crear_nota(titulo, contenido):
 )
 def poner_recordatorio(minutos, mensaje):
     minutos = float(minutos)
+    if not math.isfinite(minutos) or minutos <= 0:
+        raise ValueError("El tiempo del recordatorio debe ser mayor que cero.")
     t = threading.Timer(minutos * 60, lambda: NOTIFICAR(f"Recordatorio: {mensaje}"))
     t.daemon = True
     t.start()
     return f"Listo, te aviso en {minutos:g} minutos."
+
+
+@herramienta(
+    "Programa una alerta para la próxima vez que ocurra la hora indicada (formato 24 h HH:MM). Jarvis debe permanecer abierto.",
+    {
+        "hora": {"type": "string", "description": "Hora local, por ejemplo 18:30"},
+        "mensaje": {"type": "string", "description": "Qué debe avisar"},
+    },
+    ["hora", "mensaje"],
+)
+def crear_alerta(hora, mensaje):
+    ahora = datetime.datetime.now()
+    objetivo = datetime.datetime.strptime(hora, "%H:%M").replace(
+        year=ahora.year, month=ahora.month, day=ahora.day
+    )
+    if objetivo <= ahora:
+        objetivo += datetime.timedelta(days=1)
+    segundos = (objetivo - ahora).total_seconds()
+    t = threading.Timer(segundos, lambda: NOTIFICAR(f"Alerta: {mensaje}"))
+    t.daemon = True
+    t.start()
+    dia = "hoy" if objetivo.date() == ahora.date() else "mañana"
+    return f"Alerta programada para {dia} a las {objetivo:%H:%M}."
 
 
 @herramienta(

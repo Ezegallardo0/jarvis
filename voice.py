@@ -36,6 +36,42 @@ def hablar(texto):
         print(f"(voz no disponible: {e})")
 
 
+def probar_microfono():
+    """Muestra el nivel de entrada del micrófono seleccionado durante cinco segundos."""
+    import numpy as np
+    import sounddevice as sd
+
+    dispositivo = Oido._elegir_microfono_con(sd)
+    info = sd.query_devices(dispositivo)
+    frecuencia = int(info["default_samplerate"])
+    print(f"Probando: {info['name']} (dispositivo {dispositivo}, {frecuencia} Hz).")
+    print("Hablá durante la prueba; voy a medir cinco segundos.")
+    niveles = []
+    with sd.InputStream(
+        samplerate=frecuencia,
+        channels=1,
+        dtype="float32",
+        blocksize=frecuencia,
+        device=dispositivo,
+    ) as stream:
+        for segundo in range(1, 6):
+            audio, desbordado = stream.read(frecuencia)
+            nivel = float(np.sqrt(np.mean(audio**2)))
+            niveles.append(nivel)
+            marca = " (buffer saturado)" if desbordado else ""
+            print(f"  {segundo}/5: nivel {nivel:.5f}{marca}")
+    if max(niveles, default=0) < 0.001:
+        print("No se detectó señal. Revisá el permiso y el nivel de entrada en Windows, o probá otro índice MICROFONO en config.py.")
+        print("Dispositivos de entrada disponibles:")
+        for indice, dispositivo_info in enumerate(sd.query_devices()):
+            if dispositivo_info["max_input_channels"]:
+                api = sd.query_hostapis(dispositivo_info["hostapi"])["name"]
+                print(f"  {indice}: {dispositivo_info['name']} ({api})")
+        print("Para probar otro, poné MICROFONO = índice en config.py y volvé a ejecutar esta prueba.")
+    else:
+        print("Se detectó señal de audio en el micrófono.")
+
+
 class Oido:
     def __init__(self):
         import numpy as np
@@ -52,19 +88,30 @@ class Oido:
         self.calibrar()
 
     def _elegir_microfono(self):
-        dispositivos = self.sd.query_devices()
-        if config.MICROFONO:
-            buscado = config.MICROFONO.casefold()
-            for indice, dispositivo in enumerate(dispositivos):
-                if dispositivo["max_input_channels"] and buscado in dispositivo["name"].casefold():
+        return self._elegir_microfono_con(self.sd)
+
+    @staticmethod
+    def _elegir_microfono_con(sd):
+        dispositivos = sd.query_devices()
+        if config.MICROFONO != "":
+            if isinstance(config.MICROFONO, int):
+                indice = config.MICROFONO
+                if 0 <= indice < len(dispositivos) and dispositivos[indice]["max_input_channels"]:
                     return indice
+            else:
+                buscado = config.MICROFONO.casefold()
+                for indice, dispositivo in enumerate(dispositivos):
+                    if dispositivo["max_input_channels"] and buscado in dispositivo["name"].casefold():
+                        return indice
             disponibles = ", ".join(
-                d["name"] for d in dispositivos if d["max_input_channels"]
+                f"{indice}: {dispositivo['name']}"
+                for indice, dispositivo in enumerate(dispositivos)
+                if dispositivo["max_input_channels"]
             )
             raise RuntimeError(
                 f"No encontré el micrófono '{config.MICROFONO}'. Entradas disponibles: {disponibles}"
             )
-        predeterminado = self.sd.default.device[0]
+        predeterminado = sd.default.device[0]
         if predeterminado is None or predeterminado < 0:
             predeterminado = next(
                 (indice for indice, dispositivo in enumerate(dispositivos)

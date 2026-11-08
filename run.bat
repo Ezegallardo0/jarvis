@@ -14,11 +14,15 @@ set "JARVIS_ARGS=%*"
 if "%~1"=="" (
     echo.
     echo Selecciona el modo de Jarvis:
-    choice /C VT /N /M "[V]oz o [T]exto: "
-    if errorlevel 2 (
-        set "JARVIS_ARGS=--texto"
+    choice /C VTP /N /M "[V]oz, [T]exto o [P]robar microfono: "
+    if errorlevel 3 (
+        set "JARVIS_ARGS=--probar-microfono"
     ) else (
-        set "JARVIS_ARGS="
+        if errorlevel 2 (
+            set "JARVIS_ARGS=--texto"
+        ) else (
+            set "JARVIS_ARGS="
+        )
     )
 )
 

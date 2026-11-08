@@ -21,7 +21,7 @@ USAR_VOZ = True            # main.py --texto lo pone en False
 WHISPER_MODELO = "small"   # tiny / base / small / medium (más grande = más preciso y lento)
 IDIOMA = "es"
 VENTANA_CONVERSACION_SEG = 6   # tras responder, escucha seguimiento sin decir "Jarvis"
-MICROFONO = ""             # vacío = dispositivo predeterminado; también acepta parte del nombre
+MICROFONO = ""             # vacío = predeterminado; también acepta parte del nombre o índice
 
 # --- Interfaz (HUD) ---
 HUD_PUERTO = 8765

@@ -18,9 +18,13 @@ SALIDAS = ("salir", "adios", "apagate", "hasta luego", "chau")
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--texto", action="store_true", help="usar solo teclado")
+    ap.add_argument("--probar-microfono", action="store_true", help="medir el nivel de entrada del micrófono")
     args = ap.parse_args()
     if args.texto:
         config.USAR_VOZ = False
+    if args.probar_microfono:
+        voice.probar_microfono()
+        return
     config.CARPETA_DATOS.mkdir(parents=True, exist_ok=True)
 
     cerebro = Cerebro()
