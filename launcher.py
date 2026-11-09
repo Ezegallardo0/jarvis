@@ -5,6 +5,8 @@ import os
 import queue
 import sys
 import threading
+import webbrowser
+from datetime import datetime
 from pathlib import Path
 
 if __name__ == "__main__":
@@ -43,8 +45,8 @@ class Lanzador:
     def __init__(self, raiz):
         self.raiz = raiz
         raiz.title(f"{config.NOMBRE} // ASISTENTE PERSONAL")
-        raiz.geometry("1080x760")
-        raiz.minsize(860, 620)
+        raiz.geometry("1360x860")
+        raiz.minsize(1060, 700)
         raiz.configure(bg=FONDO)
         raiz.resizable(True, True)
         raiz.protocol("WM_DELETE_WINDOW", self.cerrar)
@@ -54,12 +56,58 @@ class Lanzador:
         self.modo = None
         self.vision_descargando = False
         self._fase_nucleo = 0
+        self.asistente_activo = False
         self.compartir_pantalla_var = tk.BooleanVar(value=False)
         config.COMPARTIENDO_PANTALLA = False
 
-        principal = ttk.Frame(raiz, padding=28, style="App.TFrame")
+        self.shell = ttk.Frame(raiz, style="App.TFrame")
+        self.shell.grid(row=0, column=0, sticky="nsew")
+        self.shell.columnconfigure(1, weight=1)
+        self.shell.rowconfigure(0, weight=1)
+        self.sidebar = tk.Frame(self.shell, bg="#081725", width=210, padx=16, pady=22)
+        self.sidebar.grid(row=0, column=0, sticky="ns")
+        self.sidebar.grid_propagate(False)
+        self.page_host = ttk.Frame(self.shell, style="App.TFrame", padding=(24, 20))
+        self.page_host.grid(row=0, column=1, sticky="nsew")
+        self.page_host.columnconfigure(0, weight=1)
+        self.page_host.rowconfigure(0, weight=1)
+        self.home_page = ttk.Frame(self.page_host, style="App.TFrame")
+        self.settings_page = ttk.Frame(self.page_host, style="App.TFrame")
+        self.connections_page = ttk.Frame(self.page_host, style="App.TFrame")
+        self._crear_navegacion()
+
+        self.settings_page.columnconfigure(0, weight=1)
+        self.settings_page.rowconfigure(0, weight=1)
+        self.settings_canvas = tk.Canvas(
+            self.settings_page,
+            bg=FONDO,
+            highlightthickness=0,
+        )
+        self.settings_canvas.grid(row=0, column=0, sticky="nsew")
+        settings_scroll = ttk.Scrollbar(
+            self.settings_page,
+            orient="vertical",
+            command=self.settings_canvas.yview,
+        )
+        settings_scroll.grid(row=0, column=1, sticky="ns")
+        self.settings_canvas.configure(yscrollcommand=settings_scroll.set)
+        principal = ttk.Frame(self.settings_canvas, padding=20, style="App.TFrame")
         self.principal = principal
-        principal.grid(sticky="nsew")
+        self._settings_window = self.settings_canvas.create_window(
+            (0, 0), window=principal, anchor="nw"
+        )
+        principal.bind(
+            "<Configure>",
+            lambda _: self.settings_canvas.configure(
+                scrollregion=self.settings_canvas.bbox("all")
+            ),
+        )
+        self.settings_canvas.bind(
+            "<Configure>",
+            lambda evento: self.settings_canvas.itemconfigure(
+                self._settings_window, width=evento.width
+            ),
+        )
         ttk.Label(
             principal,
             text=f"{config.NOMBRE.upper()}  /  ASISTENTE PERSONAL",
@@ -86,8 +134,10 @@ class Lanzador:
             proveedor,
             proveedor_tts,
             elevenlabs_voice_id,
+            ubicacion,
         ) = self._leer_seleccion()
         config.ELEVENLABS_VOICE_ID = elevenlabs_voice_id
+        self.ubicacion_var = tk.StringVar(value=ubicacion)
         self.entrada_var = tk.StringVar(value=self._etiqueta(self.entradas, microfono))
         self.salida_var = tk.StringVar(value=self._etiqueta(self.salidas, salida))
         self.proveedores = {
@@ -102,6 +152,7 @@ class Lanzador:
         try:
             clave_modelo = self._clave_guardada_o_entorno(proveedor)
             clave_elevenlabs = self._clave_guardada_o_entorno("elevenlabs")
+            github_token = self._clave_guardada_o_entorno("github")
         except Exception as error:
             messagebox.showerror(
                 "No se pudieron leer las API keys",
@@ -110,6 +161,12 @@ class Lanzador:
             )
             clave_modelo = self._clave_entorno(proveedor)
             clave_elevenlabs = os.environ.get("ELEVENLABS_API_KEY", "")
+            github_token = os.environ.get("GITHUB_TOKEN", "")
+        self.github_token_var = tk.StringVar(value=github_token)
+        config.GITHUB_TOKEN = github_token
+        self.github_status = tk.StringVar(
+            value="Token guardado" if github_token else "Sin conectar"
+        )
         self.api_key_var = tk.StringVar(value=clave_modelo)
         self.proveedores_tts = {
             "Piper (español argentino, gratis)": "piper",
@@ -255,6 +312,9 @@ class Lanzador:
             self.estado.set("Windows no informa entradas de audio. Revisá permisos y conexión del micrófono.")
         raiz.columnconfigure(0, weight=1)
         raiz.rowconfigure(0, weight=1)
+        self._crear_conexiones()
+        self._crear_dashboard()
+        self._mostrar_pagina("inicio")
 
     def _configurar_estilos(self):
         estilos = ttk.Style(self.raiz)
@@ -341,6 +401,573 @@ class Lanzador:
             borderwidth=0,
             arrowsize=12,
         )
+        estilos.configure(
+            "Sidebar.TButton",
+            background="#081725",
+            foreground="#9BB5C9",
+            anchor="w",
+            padding=(12, 12),
+            font=("Segoe UI Semibold", 10),
+        )
+        estilos.map(
+            "Sidebar.TButton",
+            background=[("active", "#12334A")],
+            foreground=[("active", CIAN)],
+        )
+
+    def _crear_navegacion(self):
+        tk.Label(
+            self.sidebar,
+            text="◉  J.A.R.V.I.S.",
+            bg="#081725",
+            fg=CIAN,
+            font=("Segoe UI Semibold", 16),
+            anchor="w",
+        ).pack(fill="x", pady=(2, 4))
+        tk.Label(
+            self.sidebar,
+            text="ASISTENTE PERSONAL",
+            bg="#081725",
+            fg=TEXTO_SUAVE,
+            font=("Segoe UI", 8),
+            anchor="w",
+        ).pack(fill="x", pady=(0, 30))
+        for texto, pagina in (
+            ("⌂   Asistente general", "inicio"),
+            ("⚙   Configuración", "ajustes"),
+            ("⌘   Integraciones", "conexiones"),
+        ):
+            ttk.Button(
+                self.sidebar,
+                text=texto,
+                style="Sidebar.TButton",
+                command=lambda p=pagina: self._mostrar_pagina(p),
+            ).pack(fill="x", pady=3)
+        tk.Frame(self.sidebar, bg="#1A3042", height=1).pack(fill="x", pady=20)
+        self.nav_status = tk.StringVar(value="●  LISTO PARA INICIAR")
+        tk.Label(
+            self.sidebar,
+            textvariable=self.nav_status,
+            bg="#081725",
+            fg=TEXTO_SUAVE,
+            font=("Segoe UI", 8),
+            anchor="w",
+            wraplength=170,
+        ).pack(fill="x", side="bottom", pady=(0, 4))
+
+    def _mostrar_pagina(self, nombre):
+        for pagina in (self.home_page, self.settings_page, self.connections_page):
+            pagina.grid_remove()
+        paginas = {
+            "inicio": self.home_page,
+            "ajustes": self.settings_page,
+            "conexiones": self.connections_page,
+        }
+        pagina = paginas[nombre]
+        pagina.grid(row=0, column=0, sticky="nsew")
+        self.pagina_actual = nombre
+
+    def _crear_conexiones(self):
+        self.connections_page.columnconfigure(0, weight=1)
+        ttk.Label(
+            self.connections_page,
+            text="CONEXIONES",
+            style="Title.TLabel",
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            self.connections_page,
+            text="Servicios conectados a Jarvis. Las credenciales se guardan en Windows.",
+            style="Muted.TLabel",
+        ).grid(row=1, column=0, sticky="w", pady=(4, 20))
+
+        github = ttk.LabelFrame(
+            self.connections_page,
+            text="  GitHub  /  búsqueda de repositorios e issues  ",
+            padding=18,
+        )
+        github.grid(row=2, column=0, sticky="ew", pady=(0, 14))
+        github.columnconfigure(0, weight=1)
+        ttk.Label(
+            github,
+            text="Creá un token fine-grained con permisos Metadata, Issues, Pull requests y "
+            "Contents: Read-only "
+            "(elegí solo los repositorios necesarios). "
+            "Jarvis solo realiza búsquedas y consultas de lectura.",
+            style="Muted.TLabel",
+            wraplength=720,
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        self.github_entry = ttk.Entry(
+            github,
+            textvariable=self.github_token_var,
+            show="*",
+        )
+        self.github_entry.grid(row=1, column=0, sticky="ew", padx=(0, 10))
+        ttk.Button(
+            github,
+            text="Guardar y probar",
+            command=self.probar_github,
+            style="Accent.TButton",
+        ).grid(row=1, column=1, sticky="e")
+        ttk.Button(
+            github,
+            text="Crear token en GitHub",
+            command=lambda: webbrowser.open(
+                "https://github.com/settings/personal-access-tokens/new"
+            ),
+        ).grid(row=2, column=1, sticky="e", pady=(8, 0))
+        ttk.Label(
+            github,
+            textvariable=self.github_status,
+            style="Muted.TLabel",
+        ).grid(row=2, column=0, sticky="w", pady=(10, 0))
+        ttk.Button(
+            github,
+            text="Desconectar",
+            command=self.desconectar_github,
+        ).grid(row=3, column=1, sticky="e", pady=(8, 0))
+        self.github_entry.bind("<FocusOut>", self._guardar_integraciones_al_perder_foco)
+
+        drive = ttk.LabelFrame(
+            self.connections_page,
+            text="  Google Drive  ",
+            padding=18,
+        )
+        drive.grid(row=3, column=0, sticky="ew", pady=(0, 14))
+        ttk.Label(
+            drive,
+            text="Aún no conectado. La integración con Drive requerirá iniciar sesión con Google "
+            "y elegir permisos de archivos antes de poder buscar o crear documentos.",
+            style="Muted.TLabel",
+            wraplength=760,
+        ).grid(row=0, column=0, sticky="w")
+
+        ttk.Label(
+            self.connections_page,
+            text="Las búsquedas de GitHub son de solo lectura. Drive no accede a tus archivos hasta que configures y autorices esa integración.",
+            style="Muted.TLabel",
+            wraplength=800,
+        ).grid(row=4, column=0, sticky="w", pady=(8, 0))
+        self._crear_localizacion()
+
+    def _crear_localizacion(self):
+        ubicacion = ttk.LabelFrame(
+            self.connections_page,
+            text="  Ubicación aproximada  ",
+            padding=18,
+        )
+        ubicacion.grid(row=5, column=0, sticky="ew", pady=(0, 14))
+        ubicacion.columnconfigure(0, weight=1)
+        ttk.Label(
+            ubicacion,
+            text="Detectar por IP puede revelar tu dirección IP al servicio de geolocalización. "
+            "Jarvis solo consulta si aceptás; guarda ciudad y región, no tus coordenadas.",
+            style="Muted.TLabel",
+            wraplength=760,
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        self.location_label = tk.StringVar(
+            value=f"Ubicación guardada: {config.UBICACION or 'ninguna'}"
+        )
+        ttk.Label(
+            ubicacion,
+            textvariable=self.location_label,
+            style="Muted.TLabel",
+        ).grid(row=1, column=0, sticky="w")
+        ttk.Button(
+            ubicacion,
+            text="Detectar ubicación por IP",
+            command=self.detectar_ubicacion,
+        ).grid(row=1, column=1, sticky="e", padx=(12, 0))
+        ttk.Label(
+            ubicacion,
+            text="También podés escribir tu ciudad y guardarla sin consultar servicios externos.",
+            style="Muted.TLabel",
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(10, 4))
+        self.ubicacion_entry = ttk.Entry(ubicacion, textvariable=self.ubicacion_var)
+        self.ubicacion_entry.grid(row=3, column=0, sticky="ew", padx=(0, 10))
+        ttk.Button(
+            ubicacion,
+            text="Guardar ciudad",
+            command=self.guardar_ubicacion_manual,
+        ).grid(row=3, column=1, sticky="e")
+
+    def _crear_dashboard(self):
+        self.home_page.columnconfigure(0, weight=1)
+        self.home_page.rowconfigure(1, weight=1)
+        encabezado = ttk.Frame(self.home_page, style="App.TFrame")
+        encabezado.grid(row=0, column=0, sticky="ew", pady=(0, 16))
+        encabezado.columnconfigure(0, weight=1)
+        ttk.Label(
+            encabezado,
+            text="J.A.R.V.I.S.   /   ASISTENTE GENERAL",
+            style="Title.TLabel",
+        ).grid(row=0, column=0, sticky="w")
+        self.reloj_var = tk.StringVar()
+        ttk.Label(
+            encabezado,
+            textvariable=self.reloj_var,
+            style="Muted.TLabel",
+        ).grid(row=0, column=1, sticky="e")
+
+        paneles = ttk.Frame(self.home_page, style="App.TFrame")
+        paneles.grid(row=1, column=0, sticky="nsew")
+        paneles.columnconfigure(0, weight=1)
+        paneles.columnconfigure(1, weight=2)
+        paneles.columnconfigure(2, weight=1)
+        paneles.rowconfigure(0, weight=1)
+
+        estado = ttk.LabelFrame(paneles, text="  ESTADO DEL SISTEMA  ", padding=16)
+        estado.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        self.system_status_var = tk.StringVar(value="Sistema: listo")
+        self.audio_status_var = tk.StringVar(value="Micrófono: detenido")
+        self.network_status_var = tk.StringVar(value="Red: disponible")
+        for row, variable in enumerate(
+            (self.system_status_var, self.audio_status_var, self.network_status_var)
+        ):
+            ttk.Label(
+                estado,
+                textvariable=variable,
+                style="Muted.TLabel",
+                wraplength=200,
+            ).grid(row=row, column=0, sticky="w", pady=7)
+        ttk.Button(
+            estado,
+            text="Configurar audio",
+            command=lambda: self._mostrar_pagina("ajustes"),
+        ).grid(row=4, column=0, sticky="w", pady=(16, 0))
+
+        nucleo = ttk.Frame(paneles, style="App.TFrame")
+        nucleo.grid(row=0, column=1, sticky="nsew")
+        nucleo.columnconfigure(0, weight=1)
+        nucleo.rowconfigure(0, weight=1)
+        self._orb_canvas = tk.Canvas(
+            nucleo,
+            width=340,
+            height=340,
+            bg=FONDO,
+            highlightthickness=0,
+        )
+        self._orb_canvas.grid(row=0, column=0, sticky="nsew")
+        self._core_label = ttk.Label(
+            nucleo,
+            text="¿En qué puedo ayudarte?",
+            style="Subtitle.TLabel",
+            anchor="center",
+        )
+        self._core_label.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        botones = ttk.Frame(nucleo, style="App.TFrame")
+        botones.grid(row=2, column=0)
+        ttk.Button(
+            botones,
+            text="Iniciar con voz",
+            style="Accent.TButton",
+            command=lambda: self.iniciar(False),
+        ).grid(row=0, column=0, padx=5)
+        ttk.Button(
+            botones,
+            text="Iniciar en texto",
+            command=lambda: self.iniciar(True),
+        ).grid(row=0, column=1, padx=5)
+
+        informacion = ttk.LabelFrame(paneles, text="  INFORMACIÓN  ", padding=16)
+        informacion.grid(row=0, column=2, sticky="nsew", padx=(10, 0))
+        self.clock_big_var = tk.StringVar()
+        ttk.Label(
+            informacion,
+            textvariable=self.clock_big_var,
+            font=("Segoe UI Light", 30),
+            foreground=CIAN,
+        ).grid(row=0, column=0, sticky="w", pady=(5, 0))
+        self.date_var = tk.StringVar()
+        ttk.Label(
+            informacion,
+            textvariable=self.date_var,
+            style="Muted.TLabel",
+        ).grid(row=1, column=0, sticky="w", pady=(0, 14))
+        ttk.Label(
+            informacion,
+            textvariable=self.location_label,
+            style="Muted.TLabel",
+            wraplength=205,
+        ).grid(row=2, column=0, sticky="w", pady=(4, 16))
+        ttk.Label(
+            informacion,
+            text="USO DEL SISTEMA",
+            foreground=CIAN,
+        ).grid(row=3, column=0, sticky="w", pady=(4, 6))
+        self.cpu_var = tk.StringVar(value="CPU  --")
+        self.ram_var = tk.StringVar(value="RAM  --")
+        self.disk_var = tk.StringVar(value="Disco  --")
+        for row, variable in enumerate(
+            (self.cpu_var, self.ram_var, self.disk_var), start=4
+        ):
+            ttk.Label(
+                informacion,
+                textvariable=variable,
+                style="Muted.TLabel",
+            ).grid(row=row, column=0, sticky="w", pady=5)
+
+        self._crear_chat()
+        self._actualizar_stats()
+
+    def _crear_chat_dashboard(self):
+        chat = tk.Frame(
+            self.home_page,
+            bg=PANEL,
+            highlightbackground="#1D7188",
+            highlightthickness=1,
+            padx=14,
+            pady=10,
+        )
+        chat.grid(row=2, column=0, sticky="ew", pady=(16, 0))
+        chat.columnconfigure(0, weight=1)
+        self.historial_ui = tk.Text(
+            chat,
+            wrap="word",
+            state="disabled",
+            height=5,
+            bg=PANEL,
+            fg=TEXTO,
+            insertbackground=CIAN,
+            selectbackground="#1D5368",
+            selectforeground="#FFFFFF",
+            font=("Segoe UI", 11),
+            padx=8,
+            pady=5,
+            relief="flat",
+            borderwidth=0,
+            spacing1=2,
+            spacing3=5,
+            highlightthickness=0,
+        )
+        self.historial_ui.tag_configure(
+            "assistant",
+            foreground=CIAN,
+            font=("Segoe UI Semibold", 9),
+            spacing1=6,
+        )
+        self.historial_ui.tag_configure(
+            "user",
+            foreground="#B8C6D4",
+            font=("Segoe UI Semibold", 9),
+            spacing1=6,
+        )
+        self.historial_ui.tag_configure("body", foreground=TEXTO)
+        self.historial_ui.grid(row=0, column=0, sticky="ew")
+        entrada = ttk.Frame(chat, style="Card.TFrame", padding=(8, 6))
+        entrada.grid(row=1, column=0, sticky="ew", pady=(5, 0))
+        entrada.columnconfigure(0, weight=1)
+        self.mensaje = tk.StringVar()
+        self.campo_mensaje = ttk.Entry(entrada, textvariable=self.mensaje)
+        self.campo_mensaje.grid(row=0, column=0, sticky="ew")
+        self.campo_mensaje.bind("<Return>", lambda _: self.enviar())
+        ttk.Button(
+            entrada,
+            text="Enviar  >",
+            style="Accent.TButton",
+            command=self.enviar,
+        ).grid(row=0, column=1, padx=(8, 0))
+        self.estado_chat = tk.StringVar(value="Configurá tus conexiones o iniciá la conversación.")
+        ttk.Label(
+            chat,
+            textvariable=self.estado_chat,
+            style="Muted.TLabel",
+            wraplength=850,
+        ).grid(row=2, column=0, sticky="w", pady=(6, 0))
+        self._animar_nucleo()
+
+    def _actualizar_stats(self):
+        if self.cerrando.is_set():
+            return
+        ahora = datetime.now()
+        dias = (
+            "lunes",
+            "martes",
+            "miércoles",
+            "jueves",
+            "viernes",
+            "sábado",
+            "domingo",
+        )
+        meses = (
+            "enero",
+            "febrero",
+            "marzo",
+            "abril",
+            "mayo",
+            "junio",
+            "julio",
+            "agosto",
+            "septiembre",
+            "octubre",
+            "noviembre",
+            "diciembre",
+        )
+        self.reloj_var.set(
+            f"{dias[ahora.weekday()].upper()} {ahora.day:02} "
+            f"{meses[ahora.month - 1].upper()} {ahora.year}   {ahora:%H:%M}"
+        )
+        self.clock_big_var.set(ahora.strftime("%H:%M"))
+        self.date_var.set(
+            f"{dias[ahora.weekday()].capitalize()}, {ahora.day} "
+            f"de {meses[ahora.month - 1]} de {ahora.year}"
+        )
+        self.network_status_var.set(
+            "GitHub: token configurado" if config.GITHUB_TOKEN else "GitHub: sin token"
+        )
+        try:
+            import psutil
+
+            memoria = psutil.virtual_memory()
+            disco = psutil.disk_usage(str(Path.home().anchor or "/"))
+            self.cpu_var.set(f"CPU  {psutil.cpu_percent(interval=None):.0f}%")
+            self.ram_var.set(f"RAM  {memoria.percent:.0f}%")
+            self.disk_var.set(f"Disco  {disco.percent:.0f}%")
+        except Exception as error:
+            self.cpu_var.set(f"Uso del sistema no disponible: {error}")
+        self.raiz.after(1000, self._actualizar_stats)
+
+    def _actualizar_estado_nucleo(self, texto):
+        if hasattr(self, "_core_label"):
+            self._core_label.configure(text=texto)
+
+    def _guardar_integraciones_al_perder_foco(self, evento):
+        if evento.widget is self.github_entry:
+            try:
+                token = self.github_token_var.get().strip()
+                self._guardar_clave("github", token)
+                config.GITHUB_TOKEN = token
+                self.github_status.set("Token guardado. Pulsá «Guardar y probar» para verificarlo.")
+            except Exception as error:
+                messagebox.showerror(
+                    "No se pudo guardar el token",
+                    f"No pude guardar el token de GitHub en Windows:\n{error}",
+                    parent=self.raiz,
+                )
+
+    def probar_github(self):
+        token = self.github_token_var.get().strip()
+        if not token:
+            self.github_status.set("Pegá un token personal para conectar GitHub.")
+            return
+        try:
+            self._guardar_clave("github", token)
+            config.GITHUB_TOKEN = token
+        except Exception as error:
+            messagebox.showerror(
+                "No se pudo guardar el token",
+                f"No pude guardar el token en el Administrador de credenciales de Windows:\n{error}",
+                parent=self.raiz,
+            )
+            return
+        self.github_status.set("Probando conexión con GitHub...")
+        threading.Thread(
+            target=self._probar_github_en_segundo_plano,
+            args=(token,),
+            daemon=True,
+        ).start()
+
+    def desconectar_github(self):
+        if not messagebox.askyesno(
+            "Desconectar GitHub",
+            "¿Querés borrar el token de GitHub del Administrador de credenciales de Windows?",
+            parent=self.raiz,
+        ):
+            return
+        try:
+            self._eliminar_clave("github")
+        except Exception as error:
+            messagebox.showerror(
+                "No se pudo borrar el token",
+                f"No pude borrar el token del Administrador de credenciales:\n{error}",
+                parent=self.raiz,
+            )
+            return
+        self.github_token_var.set("")
+        config.GITHUB_TOKEN = ""
+        self.github_status.set("Sin conectar")
+
+    def _probar_github_en_segundo_plano(self, token):
+        try:
+            import httpx
+
+            respuesta = httpx.get(
+                "https://api.github.com/user",
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "Authorization": f"Bearer {token}",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+                timeout=httpx.Timeout(10.0, connect=5.0),
+            )
+            if respuesta.status_code in (401, 403):
+                raise ValueError("GitHub rechazó el token o sus permisos (HTTP "
+                                 f"{respuesta.status_code}).")
+            respuesta.raise_for_status()
+            usuario = respuesta.json().get("login", "usuario")
+            estado = f"Conectado como {usuario}. Búsquedas de solo lectura."
+            config.GITHUB_TOKEN = token
+        except Exception as error:
+            estado = f"No se pudo conectar con GitHub: {error}"
+        if not self.cerrando.is_set():
+            self.raiz.after(0, self.github_status.set, estado)
+
+    def guardar_ubicacion_manual(self):
+        try:
+            self._guardar()
+        except (OSError, KeyError) as error:
+            messagebox.showerror("Ubicación", f"No pude guardar la ciudad:\n{error}", parent=self.raiz)
+            return
+        self.location_label.set(f"Ubicación guardada: {config.UBICACION or 'ninguna'}")
+        self._estado_visible("Ubicación guardada en este dispositivo.")
+
+    def detectar_ubicacion(self):
+        if not messagebox.askyesno(
+            "Permitir ubicación aproximada",
+            "Jarvis enviará tu dirección IP a ipapi.co para estimar ciudad y región. "
+            "La ubicación puede ser imprecisa. ¿Querés continuar?",
+            parent=self.raiz,
+        ):
+            return
+        self.location_label.set("Detectando ubicación aproximada...")
+        threading.Thread(target=self._detectar_ubicacion_en_segundo_plano, daemon=True).start()
+
+    def _detectar_ubicacion_en_segundo_plano(self):
+        try:
+            import httpx
+
+            respuesta = httpx.get(
+                "https://ipapi.co/json/",
+                timeout=httpx.Timeout(10.0, connect=5.0),
+            )
+            respuesta.raise_for_status()
+            datos = respuesta.json()
+            if datos.get("error"):
+                raise RuntimeError(datos.get("reason", "El servicio no pudo ubicar esta conexión."))
+            ubicacion = ", ".join(
+                parte
+                for parte in (datos.get("city"), datos.get("region"), datos.get("country_name"))
+                if parte
+            )
+            if not ubicacion:
+                raise RuntimeError("El servicio no devolvió una ciudad aproximada.")
+            self.raiz.after(0, self._guardar_ubicacion_detectada, ubicacion)
+        except Exception as error:
+            if not self.cerrando.is_set():
+                self.raiz.after(
+                    0,
+                    self.location_label.set,
+                    f"No se pudo detectar la ubicación: {error}",
+                )
+
+    def _guardar_ubicacion_detectada(self, ubicacion):
+        self.ubicacion_var.set(ubicacion)
+        try:
+            self._guardar()
+        except (OSError, KeyError) as error:
+            self.location_label.set(f"Ubicación detectada, pero no se pudo guardar: {error}")
+            return
+        self.location_label.set(f"Ubicación guardada: {ubicacion}")
+        self._estado_visible("Ubicación aproximada guardada. Podés cambiarla cuando quieras.")
 
     def _cambiar_permiso_pantalla(self):
         config.COMPARTIENDO_PANTALLA = self.compartir_pantalla_var.get()
@@ -438,6 +1065,14 @@ class Lanzador:
         if clave:
             cls._almacen_claves().set_password("Jarvis", proveedor, clave)
 
+    @classmethod
+    def _eliminar_clave(cls, proveedor):
+        almacen = cls._almacen_claves()
+        try:
+            almacen.delete_password("Jarvis", proveedor)
+        except almacen.errors.PasswordDeleteError:
+            pass
+
     def _cambiar_proveedor(self, evento=None):
         etiqueta = evento.widget.get() if evento else self.proveedor_var.get()
         proveedor = self.proveedores[etiqueta]
@@ -481,6 +1116,9 @@ class Lanzador:
         self._guardar_clave(
             "elevenlabs", self.elevenlabs_api_key_var.get().strip()
         )
+        token_github = self.github_token_var.get().strip()
+        self._guardar_clave("github", token_github)
+        config.GITHUB_TOKEN = token_github
 
     def _guardar_claves_al_perder_foco(self, evento):
         if evento.widget not in (
@@ -509,6 +1147,7 @@ class Lanzador:
                 config.PROVEEDOR_IA,
                 config.PROVEEDOR_TTS,
                 config.ELEVENLABS_VOICE_ID,
+                config.UBICACION,
             )
         except (OSError, ValueError) as error:
             messagebox.showerror("Configuración de audio", f"No pude leer la selección guardada:\n{error}")
@@ -518,6 +1157,7 @@ class Lanzador:
                 config.PROVEEDOR_IA,
                 config.PROVEEDOR_TTS,
                 config.ELEVENLABS_VOICE_ID,
+                config.UBICACION,
             )
         return (
             datos.get("microfono", config.MICROFONO),
@@ -529,6 +1169,7 @@ class Lanzador:
                 else datos.get("proveedor_tts", config.PROVEEDOR_TTS)
             ),
             datos.get("elevenlabs_voice_id", config.ELEVENLABS_VOICE_ID),
+            datos.get("ubicacion", config.UBICACION),
         )
 
     def _guardar(self):
@@ -537,6 +1178,7 @@ class Lanzador:
         proveedor = self.proveedores[self.proveedor_var.get()]
         proveedor_tts = self.proveedores_tts[self.proveedor_tts_var.get()]
         voice_id = self.elevenlabs_voice_id_var.get().strip()
+        ubicacion = self.ubicacion_var.get().strip()
         config.CARPETA_DATOS.mkdir(parents=True, exist_ok=True)
         ruta = config.CARPETA_DATOS / "dispositivos_audio.json"
         temporal = ruta.with_suffix(".tmp")
@@ -549,6 +1191,7 @@ class Lanzador:
                     "proveedor_tts": proveedor_tts,
                     "tts_version": 1,
                     "elevenlabs_voice_id": voice_id,
+                    "ubicacion": ubicacion,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -561,6 +1204,7 @@ class Lanzador:
         config.PROVEEDOR_IA = proveedor
         config.PROVEEDOR_TTS = proveedor_tts
         config.ELEVENLABS_VOICE_ID = voice_id
+        config.UBICACION = ubicacion
         return microfono, salida, proveedor
 
     def probar_microfono(self):
@@ -718,6 +1362,10 @@ class Lanzador:
         self.raiz.after(0, self.estado.set, estado)
 
     def iniciar(self, texto):
+        if self.asistente_activo:
+            if texto:
+                self._mostrar_pagina("inicio")
+            return True
         proveedor = self.proveedores[self.proveedor_var.get()]
         api_key = self.api_key_var.get().strip()
         try:
@@ -735,7 +1383,8 @@ class Lanzador:
                 "Ingresá la API key del proveedor seleccionado.",
                 parent=self.raiz,
             )
-            return
+            self._mostrar_pagina("ajustes")
+            return False
         proveedor_tts = self.proveedores_tts[self.proveedor_tts_var.get()]
         elevenlabs_api_key = self.elevenlabs_api_key_var.get().strip()
         if not texto and proveedor_tts == "elevenlabs" and not (
@@ -746,131 +1395,34 @@ class Lanzador:
                 "Ingresá la API key de ElevenLabs para usar esta voz.",
                 parent=self.raiz,
             )
-            return
+            self._mostrar_pagina("conexiones")
+            return False
         try:
             self._guardar()
         except (OSError, KeyError) as error:
             messagebox.showerror("Configuración de audio", str(error))
-            return
+            self._mostrar_pagina("ajustes")
+            return False
         self.modo = "texto" if texto else "voz"
         self.elevenlabs_api_key = elevenlabs_api_key
         config.USAR_VOZ = not texto
-        self.principal.grid_remove()
+        self.asistente_activo = True
+        self._mostrar_pagina("inicio")
         self._crear_chat()
         proveedor_nombre = self.proveedor_var.get()
         self.estado_chat.set(f"Conectando con {proveedor_nombre}...")
+        self._actualizar_estado_nucleo("Conectando...")
         threading.Thread(
             target=self._iniciar_asistente,
             args=(proveedor, api_key),
             daemon=True,
         ).start()
+        return True
 
     def _crear_chat(self):
-        self.raiz.title(f"{config.NOMBRE} // ENLACE ACTIVO")
-        self.chat = ttk.Frame(self.raiz, padding=22, style="App.TFrame")
-        self.chat.grid(row=0, column=0, sticky="nsew")
-        self.chat.columnconfigure(0, weight=1)
-        self.chat.rowconfigure(1, weight=1)
-        encabezado = ttk.Frame(self.chat, style="Card.TFrame", padding=(18, 12))
-        encabezado.grid(row=0, column=0, sticky="ew", pady=(0, 14))
-        encabezado.columnconfigure(1, weight=1)
-        self._orb_canvas = tk.Canvas(
-            encabezado,
-            width=104,
-            height=104,
-            bg=PANEL,
-            highlightthickness=0,
-        )
-        self._orb_canvas.grid(row=0, column=0, rowspan=2, padx=(0, 18))
-        ttk.Label(
-            encabezado,
-            text=config.NOMBRE.upper(),
-            style="Card.Title.TLabel",
-        ).grid(row=0, column=1, sticky="sw")
-        ttk.Label(
-            encabezado,
-            text=f"ASISTENTE PERSONAL  /  MODO {self.modo.upper()}",
-            style="Card.Subtitle.TLabel",
-        ).grid(row=1, column=1, sticky="nw", pady=(2, 0))
-        ttk.Checkbutton(
-            encabezado,
-            text="Permitir análisis de pantalla",
-            variable=self.compartir_pantalla_var,
-            command=self._cambiar_permiso_pantalla,
-        ).grid(row=0, column=2, rowspan=2, sticky="e", padx=(12, 0))
-        conversacion = tk.Frame(
-            self.chat,
-            bg=PANEL,
-            highlightbackground="#193147",
-            highlightthickness=1,
-            padx=22,
-            pady=18,
-        )
-        conversacion.grid(row=1, column=0, sticky="nsew")
-        conversacion.columnconfigure(0, weight=1)
-        conversacion.rowconfigure(0, weight=1)
-        self.historial_ui = tk.Text(
-            conversacion,
-            wrap="word",
-            state="disabled",
-            height=20,
-            bg=PANEL,
-            fg=TEXTO,
-            insertbackground=CIAN,
-            selectbackground="#1D5368",
-            selectforeground="#FFFFFF",
-            font=("Segoe UI", 11),
-            padx=8,
-            pady=8,
-            relief="flat",
-            borderwidth=0,
-            spacing1=3,
-            spacing3=8,
-            highlightthickness=0,
-        )
-        self.historial_ui.tag_configure(
-            "assistant",
-            foreground=CIAN,
-            font=("Segoe UI Semibold", 9),
-            spacing1=14,
-            spacing3=5,
-        )
-        self.historial_ui.tag_configure(
-            "user",
-            foreground="#B8C6D4",
-            font=("Segoe UI Semibold", 9),
-            spacing1=12,
-            spacing3=5,
-        )
-        self.historial_ui.tag_configure("body", foreground=TEXTO, lmargin1=2, lmargin2=2)
-        self.historial_ui.grid(row=0, column=0, sticky="nsew")
-        scroll = ttk.Scrollbar(conversacion, command=self.historial_ui.yview)
-        scroll.grid(row=0, column=1, sticky="ns")
-        self.historial_ui.configure(yscrollcommand=scroll.set)
-        entrada = ttk.Frame(self.chat, style="Card.TFrame", padding=(12, 10))
-        entrada.grid(row=2, column=0, sticky="ew", pady=(14, 0))
-        entrada.columnconfigure(0, weight=1)
-        self.mensaje = tk.StringVar()
-        self.campo_mensaje = ttk.Entry(entrada, textvariable=self.mensaje)
-        self.campo_mensaje.grid(row=0, column=0, sticky="ew")
-        self.campo_mensaje.bind("<Return>", lambda _: self.enviar())
-        ttk.Button(
-            entrada,
-            text="Enviar  >",
-            command=self.enviar,
-            style="Accent.TButton",
-        ).grid(row=0, column=1, padx=(10, 0))
-        self.estado_chat = tk.StringVar()
-        ttk.Label(
-            self.chat,
-            textvariable=self.estado_chat,
-            wraplength=900,
-            style="Muted.TLabel",
-        ).grid(
-            row=3, column=0, sticky="w", pady=(10, 0)
-        )
+        if not hasattr(self, "historial_ui"):
+            self._crear_chat_dashboard()
         self.campo_mensaje.focus_set()
-        self._animar_nucleo()
 
     def _animar_nucleo(self):
         canvas = getattr(self, "_orb_canvas", None)
@@ -939,10 +1491,14 @@ class Lanzador:
     def _estado(self, texto):
         if not self.cerrando.is_set():
             self.raiz.after(0, self.estado_chat.set, texto)
+            self.raiz.after(0, self.nav_status.set, f"●  {texto.upper()}")
+            self.raiz.after(0, self._actualizar_estado_nucleo, texto)
 
     def enviar(self):
         texto = self.mensaje.get().strip()
         if not texto:
+            return
+        if not self.asistente_activo and not self.iniciar(True):
             return
         self.mensaje.set("")
         self._agregar_mensaje("Tú", texto)
@@ -977,11 +1533,15 @@ class Lanzador:
         except Exception as error:
             self._agregar_mensaje(config.NOMBRE, f"No pude iniciar el modelo: {error}")
             self._estado("Revisá el proveedor y la API key y volvé a iniciar.")
+            self.raiz.after(0, self.system_status_var.set, "Sistema: error al iniciar")
+            self.asistente_activo = False
             return
         error = cerebro.verificar()
         if error:
             self._agregar_mensaje(config.NOMBRE, error)
             self._estado("No se pudo iniciar. Corregí el error y volvé a abrir Jarvis.")
+            self.raiz.after(0, self.system_status_var.set, "Sistema: no disponible")
+            self.asistente_activo = False
             return
 
         oido = None
@@ -996,6 +1556,13 @@ class Lanzador:
         self.oido = oido
 
         self._agregar_mensaje(config.NOMBRE, "En línea. Escribime abajo.")
+        self.raiz.after(0, self.system_status_var.set, "Sistema: en línea")
+        self.raiz.after(
+            0,
+            self.audio_status_var.set,
+            "Micrófono: activo" if oido else "Micrófono: desactivado",
+        )
+        self._actualizar_estado_nucleo("¿En qué puedo ayudarte?")
         self._estado(
             "Escucha continua activada: hablá normalmente."
             if oido

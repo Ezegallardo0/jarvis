@@ -366,6 +366,71 @@ def buscar_en_internet(consulta):
     )
 
 
+def _buscar_github(endpoint, consulta):
+    if not config.GITHUB_TOKEN:
+        return "GitHub no está conectado. Configurá un token de solo lectura en Ajustes > Integraciones."
+    respuesta = httpx.get(
+        f"https://api.github.com/search/{endpoint}",
+        params={"q": consulta.strip()[:250], "per_page": 5},
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {config.GITHUB_TOKEN}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        timeout=httpx.Timeout(12.0, connect=5.0),
+    )
+    respuesta.raise_for_status()
+    resultados = respuesta.json().get("items", [])
+    if not resultados:
+        return "GitHub no encontró resultados para esa búsqueda."
+    if endpoint == "repositories":
+        return "\n".join(
+            f"{item['full_name']}: {item.get('description') or 'Sin descripción'}\n"
+            f"URL: {item['html_url']}"
+            for item in resultados
+        )
+    if endpoint == "code":
+        return "\n".join(
+            f"{item['repository']['full_name']} — {item['path']}\nURL: {item['html_url']}"
+            for item in resultados
+        )
+    return "\n".join(
+        f"{item.get('repository_url', '').rsplit('/repos/', 1)[-1]} — "
+        f"{item['title']} ({item['state']})\nURL: {item['html_url']}"
+        for item in resultados
+    )
+
+
+@herramienta(
+    "Busca repositorios públicos o privados accesibles para el usuario conectado en GitHub. "
+    "Usá una consulta de búsqueda de GitHub, por ejemplo 'user:octocat language:python'. Solo lectura.",
+    {"consulta": {"type": "string", "description": "Consulta de búsqueda de repositorios"}},
+    ["consulta"],
+)
+def buscar_repositorios_github(consulta):
+    return _buscar_github("repositories", consulta)
+
+
+@herramienta(
+    "Busca issues y pull requests accesibles para el usuario conectado en GitHub. "
+    "Usá una consulta de búsqueda de GitHub, por ejemplo 'repo:owner/repo is:issue is:open'. Solo lectura.",
+    {"consulta": {"type": "string", "description": "Consulta de búsqueda de issues o pull requests"}},
+    ["consulta"],
+)
+def buscar_issues_github(consulta):
+    return _buscar_github("issues", consulta)
+
+
+@herramienta(
+    "Busca archivos y fragmentos de código en repositorios a los que el token tenga acceso. "
+    "Ejemplo: 'repo:owner/repo nombre_funcion'. Solo lectura; GitHub requiere permiso Contents: Read-only.",
+    {"consulta": {"type": "string", "description": "Consulta de código de GitHub"}},
+    ["consulta"],
+)
+def buscar_codigo_github(consulta):
+    return _buscar_github("code", consulta)
+
+
 _CODIGOS_CLIMA = {
     0: "despejado",
     1: "mayormente despejado",

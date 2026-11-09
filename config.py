@@ -31,6 +31,8 @@ IDIOMA = "es"
 VENTANA_CONVERSACION_SEG = 6   # tras responder, escucha seguimiento sin decir "Jarvis"
 MICROFONO = ""             # vacío = predeterminado; también acepta parte del nombre o índice
 AUDIO_SALIDA = None        # None = salida predeterminada de Windows; también acepta índice
+UBICACION = ""             # Ciudad/región aproximada, configurada por el usuario
+GITHUB_TOKEN = ""          # Se carga desde el Administrador de credenciales de Windows
 
 # --- Interfaz (HUD) ---
 HUD_PUERTO = 8765

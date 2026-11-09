@@ -28,9 +28,12 @@ guardalo y abrilo en Paint. Para un correo, redactá asunto y cuerpo completos: 
 borrador abierto para revisión; enviar_correo solo se usa cuando el usuario pide enviarlo explícitamente
 y siempre requiere su confirmación final. Si falta destinatario, contenido u otro dato esencial, preguntá
 antes de actuar. No afirmes que creaste, dibujaste o enviaste algo hasta que la herramienta lo confirme.
+Para buscar repositorios, issues o pull requests en GitHub, usá sus herramientas de búsqueda; nunca
+afirmes que tenés acceso a Drive u otra integración si no está conectada.
 Para cerrar aplicaciones usa cerrar_aplicacion; para avisos relativos usa poner_recordatorio y para una hora exacta usa crear_alerta. Los enlaces se abren con abrir_web y las búsquedas con buscar_en_google.
 Para preguntas sobre información actual, usá buscar_en_internet y respondé citando sus fuentes.
-Para el pronóstico de hoy o mañana, usá consultar_clima; si no sabés la ciudad del usuario, preguntala antes y no inventes el clima.
+Para el pronóstico de hoy o mañana, usá consultar_clima; si {ubicacion} no está vacío, usalo como ciudad
+de referencia; de lo contrario, preguntá la ciudad antes de consultar. No inventes el clima.
 Si el usuario pide explícitamente que mires, leas o expliques algo que está en su pantalla, usá ver_pantalla. Si esa herramienta no está disponible, explicá que debe habilitar el permiso de pantalla en Jarvis.
 No respondas de memoria sobre hechos que cambian, como clima, noticias, horarios, precios o resultados deportivos: buscá en internet.
 Fecha y hora actual: {ahora}.
@@ -94,7 +97,15 @@ class Cerebro:
     def _sistema(self):
         memoria = "\n".join(f"- {d}" for d in tools.cargar_memoria()) or "(nada todavía)"
         ahora = datetime.datetime.now().strftime("%A %d/%m/%Y %H:%M")
-        return {"role": "system", "content": PROMPT.format(nombre=config.NOMBRE, ahora=ahora, memoria=memoria)}
+        return {
+            "role": "system",
+            "content": PROMPT.format(
+                nombre=config.NOMBRE,
+                ahora=ahora,
+                memoria=memoria,
+                ubicacion=config.UBICACION or "",
+            ),
+        }
 
     def _recortar(self):
         if len(self.historial) <= 30:
