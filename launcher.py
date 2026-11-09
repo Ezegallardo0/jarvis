@@ -33,6 +33,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 import config
+import ai_providers
 import sounddevice as sd
 import ui
 import voice
@@ -95,7 +96,9 @@ class Lanzador:
             config.MODELO_VISION,
             config.MODELO,
             config.MODELO_GEMINI,
+            config.MODELO_GROK,
             config.MODELO_OPENAI,
+            config.PROVEEDOR_IA_ALTERNATIVO,
             config.OLLAMA_HOST,
             config.WHISPER_MODELO,
             config.IDIOMA,
@@ -211,6 +214,7 @@ class Lanzador:
         self.proveedores = {
             "Ollama (local)": "ollama",
             "Gemini (rápido)": "gemini",
+            "Grok (xAI)": "grok",
             "OpenAI / ChatGPT": "openai",
         }
         self.proveedor_var = tk.StringVar(
@@ -1180,6 +1184,7 @@ class Lanzador:
     def _clave_entorno(proveedor):
         variable = {
             "gemini": "GEMINI_API_KEY",
+            "grok": "XAI_API_KEY",
             "openai": "OPENAI_API_KEY",
             "elevenlabs": "ELEVENLABS_API_KEY",
             "github": "GITHUB_TOKEN",
@@ -1318,7 +1323,9 @@ class Lanzador:
                 config.MODELO_VISION,
                 config.MODELO,
                 config.MODELO_GEMINI,
+                config.MODELO_GROK,
                 config.MODELO_OPENAI,
+                config.PROVEEDOR_IA_ALTERNATIVO,
                 config.OLLAMA_HOST,
                 config.WHISPER_MODELO,
                 config.IDIOMA,
@@ -1340,7 +1347,9 @@ class Lanzador:
                 config.MODELO_VISION,
                 config.MODELO,
                 config.MODELO_GEMINI,
+                config.MODELO_GROK,
                 config.MODELO_OPENAI,
+                config.PROVEEDOR_IA_ALTERNATIVO,
                 config.OLLAMA_HOST,
                 config.WHISPER_MODELO,
                 config.IDIOMA,
@@ -1364,7 +1373,14 @@ class Lanzador:
             datos.get("vision_modelo", config.MODELO_VISION),
             datos.get("modelo_ollama", config.MODELO),
             datos.get("modelo_gemini", config.MODELO_GEMINI),
+            datos.get("modelo_grok", config.MODELO_GROK),
             datos.get("modelo_openai", config.MODELO_OPENAI),
+            (
+                datos.get("proveedor_ia_alternativo", config.PROVEEDOR_IA_ALTERNATIVO)
+                if datos.get("proveedor_ia_alternativo", config.PROVEEDOR_IA_ALTERNATIVO)
+                in {"", "gemini", "grok", "openai"}
+                else ""
+            ),
             datos.get("ollama_host", config.OLLAMA_HOST),
             datos.get("modelo_whisper", config.WHISPER_MODELO),
             datos.get("idioma", config.IDIOMA),
@@ -1415,7 +1431,9 @@ class Lanzador:
                     "vision_modelo": config.MODELO_VISION,
                     "modelo_ollama": config.MODELO,
                     "modelo_gemini": config.MODELO_GEMINI,
+                    "modelo_grok": config.MODELO_GROK,
                     "modelo_openai": config.MODELO_OPENAI,
+                    "proveedor_ia_alternativo": config.PROVEEDOR_IA_ALTERNATIVO,
                     "ollama_host": config.OLLAMA_HOST,
                     "modelo_whisper": config.WHISPER_MODELO,
                     "idioma": config.IDIOMA,
@@ -1764,7 +1782,18 @@ class Lanzador:
         tools.NOTIFICAR = self._notificar
         tools.CONFIRMAR = self._confirmar
         try:
-            cerebro = Cerebro(provider=proveedor, api_key=api_key or None)
+            proveedor_alternativo = config.PROVEEDOR_IA_ALTERNATIVO or None
+            clave_alternativa = (
+                self._clave_guardada_o_entorno(proveedor_alternativo)
+                if proveedor_alternativo
+                else None
+            )
+            cerebro = Cerebro(
+                provider=proveedor,
+                api_key=api_key or None,
+                proveedor_alternativo=proveedor_alternativo,
+                clave_alternativa=clave_alternativa,
+            )
         except Exception as error:
             self._agregar_mensaje(config.NOMBRE, f"No pude iniciar el modelo: {error}")
             self._estado("Revisá el proveedor y la API key y volvé a iniciar.")
@@ -1837,6 +1866,20 @@ class Lanzador:
             self._estado("Procesando...")
             try:
                 try:
+                    proveedor_actual = config.PROVEEDOR_IA
+                    proveedor_alternativo = config.PROVEEDOR_IA_ALTERNATIVO or None
+                    clave_actual = self._clave_guardada_o_entorno(proveedor_actual)
+                    clave_alternativa = (
+                        self._clave_guardada_o_entorno(proveedor_alternativo)
+                        if proveedor_alternativo
+                        else None
+                    )
+                    cerebro.configurar(
+                        proveedor_actual,
+                        clave_actual,
+                        proveedor_alternativo,
+                        clave_alternativa,
+                    )
                     respuesta = cerebro.responder(pedido)
                 except Exception as error:
                     respuesta = f"Tuve un problema: {error}"
@@ -2098,6 +2141,15 @@ class Lanzador:
             return indice if any(opcion["id"] == indice for opcion in opciones) else ""
 
         proveedor = config.PROVEEDOR_IA
+        claves_mascaradas = {}
+        for nombre in ai_providers.PROVEEDORES:
+            clave = self._clave_guardada_o_entorno(nombre)
+            if clave:
+                claves_mascaradas[nombre] = f"••••••{clave[-4:]}"
+        claves_guardadas = {
+            nombre: nombre in claves_mascaradas
+            for nombre in ai_providers.PROVEEDORES
+        }
         microfono_configurado = config.MICROFONO
         if microfono_configurado in (None, ""):
             microfono_configurado = voice.Oido._elegir_microfono_con(sd)
@@ -2107,7 +2159,14 @@ class Lanzador:
             "microfono": seleccionar_dispositivo(microfono_configurado, microfonos),
             "salida": seleccionar_dispositivo(config.AUDIO_SALIDA, salidas),
             "proveedor": proveedor,
-            "api_key_guardada": self._clave_local_guardada(proveedor),
+            "api_key_guardada": claves_guardadas.get(proveedor, False),
+            "api_keys_guardadas": claves_guardadas,
+            "api_key_mascarada": claves_mascaradas.get(proveedor, ""),
+            "api_keys_mascaradas": claves_mascaradas,
+            "proveedor_ia_alternativo": config.PROVEEDOR_IA_ALTERNATIVO,
+            "clave_alternativa_guardada": bool(
+                claves_guardadas.get(config.PROVEEDOR_IA_ALTERNATIVO, False)
+            ),
             "proveedor_tts": config.PROVEEDOR_TTS,
             "elevenlabs_key_guardada": self._clave_local_guardada("elevenlabs"),
             "elevenlabs_voice_id": config.ELEVENLABS_VOICE_ID,
@@ -2117,7 +2176,9 @@ class Lanzador:
             "vision_modelo": config.MODELO_VISION,
             "modelo_ollama": config.MODELO,
             "modelo_gemini": config.MODELO_GEMINI,
+            "modelo_grok": config.MODELO_GROK,
             "modelo_openai": config.MODELO_OPENAI,
+            "modelos_ia": config.MODELOS_IA,
             "ollama_host": config.OLLAMA_HOST,
             "modelo_whisper": config.WHISPER_MODELO,
             "idioma": config.IDIOMA,
@@ -2127,12 +2188,108 @@ class Lanzador:
             "tema_hud": config.TEMA_HUD,
         }
 
+    def _probar_ia_hud(self, comparar=False):
+        proveedores = (
+            list(ai_providers.PROVEEDORES)
+            if comparar
+            else [config.PROVEEDOR_IA]
+        )
+        resultados = []
+        for proveedor in proveedores:
+            if proveedor == "ollama":
+                inicio = time.perf_counter()
+                try:
+                    import ollama
+
+                    cliente = ollama.Client(host=config.OLLAMA_HOST)
+                    modelos = [item.model for item in cliente.list().models]
+                    presente = (
+                        config.MODELO in modelos
+                        if ":" in config.MODELO
+                        else any(modelo.split(":")[0] == config.MODELO for modelo in modelos)
+                    )
+                except Exception:
+                    resultados.append({
+                        "proveedor": proveedor,
+                        "modelo": config.MODELO,
+                        "estado": "error",
+                        "error": "No se pudo conectar con Ollama.",
+                    })
+                else:
+                    resultados.append({
+                        "proveedor": proveedor,
+                        "modelo": config.MODELO,
+                        "estado": "conectado" if presente else "error",
+                        "tiempo_ms": round((time.perf_counter() - inicio) * 1000),
+                        **({} if presente else {"error": "El modelo no está descargado en Ollama."}),
+                    })
+                continue
+            if proveedor not in ai_providers.PROVEEDORES:
+                resultados.append({
+                    "proveedor": proveedor,
+                    "modelo": "",
+                    "estado": "no_disponible",
+                    "error": "La prueba de conexión abarca Gemini, Grok y OpenAI.",
+                })
+                continue
+            modelo = ai_providers.obtener_modelo(proveedor)
+            try:
+                clave = self._clave_guardada_o_entorno(proveedor)
+            except Exception:
+                resultados.append({
+                    "proveedor": proveedor,
+                    "modelo": modelo,
+                    "estado": "error",
+                    "error": "No se pudo leer la credencial local de este proveedor.",
+                })
+                continue
+            if not clave:
+                resultados.append({
+                    "proveedor": proveedor,
+                    "modelo": modelo,
+                    "estado": "sin_configurar",
+                    "error": "No hay una API key guardada para este proveedor.",
+                })
+                continue
+            try:
+                tiempo_ms = ai_providers.probar_conexion(proveedor, clave, modelo)
+            except Exception as error:
+                resultados.append({
+                    "proveedor": proveedor,
+                    "modelo": modelo,
+                    "estado": "error",
+                    "error": ai_providers.error_publico(proveedor, error),
+                })
+            else:
+                resultados.append({
+                    "proveedor": proveedor,
+                    "modelo": modelo,
+                    "estado": "conectado",
+                    "tiempo_ms": tiempo_ms,
+                })
+        return {
+            "comparacion": bool(comparar),
+            "resultados": resultados,
+            "nota": (
+                "Cada proveedor recibió el mismo mensaje breve. La latencia es de ida y vuelta "
+                "e incluye red y generación; puede generar consumo de API."
+            ),
+        }
+
     def _guardar_configuracion_hud(self, datos):
-        proveedores = {"ollama", "gemini", "openai"}
+        proveedores = {"ollama", *ai_providers.PROVEEDORES}
         voces = {"piper", "windows", "elevenlabs"}
         proveedor = str(datos.get("proveedor", "")).lower()
         proveedor_tts = str(datos.get("proveedor_tts", "")).lower()
-        if proveedor not in proveedores or proveedor_tts not in voces:
+        proveedor_alternativo = str(
+            datos.get("proveedor_ia_alternativo", config.PROVEEDOR_IA_ALTERNATIVO)
+        ).lower()
+        if (
+            proveedor not in proveedores
+            or proveedor_tts not in voces
+            or proveedor_alternativo not in {"", *ai_providers.PROVEEDORES}
+            or proveedor_alternativo == proveedor
+        ):
             raise ValueError("Elegí un proveedor de IA y una voz disponibles.")
 
         dispositivos = sd.query_devices()
@@ -2177,11 +2334,20 @@ class Lanzador:
             raise ValueError("Indicá el nombre del modelo visual.")
         modelo_ollama = str(datos.get("modelo_ollama", "")).strip()[:200]
         modelo_gemini = str(datos.get("modelo_gemini", "")).strip()[:200]
+        modelo_grok = str(datos.get("modelo_grok", "")).strip()[:200]
         modelo_openai = str(datos.get("modelo_openai", "")).strip()[:200]
         ollama_host = str(datos.get("ollama_host", "")).strip()[:500]
         modelo_whisper = str(datos.get("modelo_whisper", "")).strip()[:100]
         idioma = str(datos.get("idioma", "")).strip()[:10]
-        if not all((modelo_ollama, modelo_gemini, modelo_openai, ollama_host, modelo_whisper, idioma)):
+        if not all((
+            modelo_ollama,
+            modelo_gemini,
+            modelo_grok,
+            modelo_openai,
+            ollama_host,
+            modelo_whisper,
+            idioma,
+        )):
             raise ValueError("Completá los modelos de IA, Ollama, Whisper y el idioma.")
         if not ollama_host.startswith(("http://", "https://")):
             raise ValueError("La dirección de Ollama debe comenzar con http:// o https://.")
@@ -2201,6 +2367,8 @@ class Lanzador:
         clave_elevenlabs = str(datos.get("elevenlabs_api_key", "")).strip()
         token_github = str(datos.get("github_token", "")).strip()
 
+        if proveedor == "ollama" and (clave_ia or datos.get("borrar_api_key")):
+            raise ValueError("Ollama es local y no admite una API key.")
         if clave_ia:
             self._guardar_clave(proveedor, clave_ia)
         elif datos.get("borrar_api_key"):
@@ -2219,10 +2387,6 @@ class Lanzador:
             for nuevo, actual in (
                 (microfono_guardado, config.MICROFONO),
                 (salida, config.AUDIO_SALIDA),
-                (proveedor, config.PROVEEDOR_IA),
-                (modelo_ollama, config.MODELO),
-                (modelo_gemini, config.MODELO_GEMINI),
-                (modelo_openai, config.MODELO_OPENAI),
                 (ollama_host, config.OLLAMA_HOST),
                 (modelo_whisper, config.WHISPER_MODELO),
                 (idioma, config.IDIOMA),
@@ -2238,7 +2402,9 @@ class Lanzador:
         config.MODELO_VISION = vision_modelo
         config.MODELO = modelo_ollama
         config.MODELO_GEMINI = modelo_gemini
+        config.MODELO_GROK = modelo_grok
         config.MODELO_OPENAI = modelo_openai
+        config.PROVEEDOR_IA_ALTERNATIVO = proveedor_alternativo
         config.OLLAMA_HOST = ollama_host
         config.WHISPER_MODELO = modelo_whisper
         config.IDIOMA = idioma
@@ -2264,7 +2430,9 @@ class Lanzador:
                     "vision_modelo": vision_modelo,
                     "modelo_ollama": modelo_ollama,
                     "modelo_gemini": modelo_gemini,
+                    "modelo_grok": modelo_grok,
                     "modelo_openai": modelo_openai,
+                    "proveedor_ia_alternativo": proveedor_alternativo,
                     "ollama_host": ollama_host,
                     "modelo_whisper": modelo_whisper,
                     "idioma": idioma,
@@ -2380,14 +2548,23 @@ class Lanzador:
         return ubicacion
 
     def _publicar_info(self):
-        nombres_ia = {"ollama": "Ollama", "gemini": "Gemini", "openai": "OpenAI"}
+        nombres_ia = {
+            "ollama": "Ollama",
+            **{codigo: proveedor.nombre for codigo, proveedor in ai_providers.PROVEEDORES.items()},
+        }
         nombres_tts = {"piper": "Piper", "windows": "Windows", "elevenlabs": "ElevenLabs"}
+        modelo = (
+            config.MODELO
+            if config.PROVEEDOR_IA == "ollama"
+            else ai_providers.obtener_modelo(config.PROVEEDOR_IA)
+        )
 
         self.bus.publish(
             "info",
             nombre=config.NOMBRE,
             modo=self.modo or "texto",
             ia=nombres_ia.get(config.PROVEEDOR_IA, config.PROVEEDOR_IA),
+            modelo=modelo,
             tts=nombres_tts.get(config.PROVEEDOR_TTS, config.PROVEEDOR_TTS),
             github=bool(config.GITHUB_TOKEN),
             spotify=bool(spotyfyTools and spotyfyTools.configurado()),
@@ -2477,6 +2654,7 @@ class Lanzador:
                 probar_audio=self._probar_audio_hud,
                 probar_github=self._probar_github_hud,
                 detectar_ubicacion=self._detectar_ubicacion_hud,
+                probar_ia=self._probar_ia_hud,
             )
             try:
                 servidor.iniciar()

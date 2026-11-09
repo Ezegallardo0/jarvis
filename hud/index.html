@@ -205,6 +205,7 @@ footer button{padding:0 34px}
 #settings-status{min-height:20px;color:var(--au);font-size:12px;margin-top:10px;white-space:pre-wrap}
 #settings-modal .check-row{display:flex;align-items:center;gap:7px;color:var(--dim);font-size:11px;margin-top:8px}
 #settings-modal .hint{color:var(--dim);font-size:10px;line-height:1.45;margin-top:6px}
+#cfg-ai-results{white-space:pre-line}
 @media(max-width:680px){#settings-modal .settings-grid{grid-template-columns:1fr}#settings-modal .panel{padding:16px}}
 #portada{position:fixed;inset:0;z-index:30;background:rgba(1,5,11,.55);backdrop-filter:blur(2px);display:grid;place-items:center;transition:opacity .5s,visibility .5s}
 #portada.fuera{opacity:0;visibility:hidden}
@@ -398,17 +399,33 @@ footer button{padding:0 34px}
         <div class="settings-actions"><button data-test-audio="salida">Probar salida</button></div>
       </section>
       <section class="settings-card">
-        <h3>CHAT E INTELIGENCIA ARTIFICIAL</h3>
+        <h3>INTELIGENCIA ARTIFICIAL</h3>
         <label for="cfg-proveedor">Proveedor</label>
         <select id="cfg-proveedor">
           <option value="ollama">Ollama · local</option>
           <option value="gemini">Gemini</option>
+          <option value="grok">Grok · xAI</option>
           <option value="openai">OpenAI</option>
         </select>
+        <p class="hint" id="cfg-ai-active"></p>
         <label for="cfg-api-key">API key</label>
         <input id="cfg-api-key" type="password" autocomplete="new-password" placeholder="Vacío = conservar la guardada">
         <label class="check-row"><input id="cfg-borrar-api" type="checkbox"> Borrar la clave guardada para este proveedor</label>
         <p class="hint" id="cfg-api-status"></p>
+        <label for="cfg-ai-fallback">Proveedor alternativo automático</label>
+        <select id="cfg-ai-fallback">
+          <option value="">Desactivado</option>
+          <option value="gemini">Gemini</option>
+          <option value="grok">Grok · xAI</option>
+          <option value="openai">OpenAI</option>
+        </select>
+        <p class="hint" id="cfg-ai-fallback-status">Se prueba una sola vez si el proveedor principal falla antes de ejecutar herramientas. No se repiten acciones ya realizadas.</p>
+        <div class="settings-actions">
+          <button id="cfg-test-ai" type="button">Probar conexión</button>
+          <button id="cfg-benchmark-ai" type="button">Comparar proveedores</button>
+        </div>
+        <p class="hint">La comparación envía el mismo mensaje breve a cada proveedor configurado y puede generar consumo de API.</p>
+        <div id="cfg-ai-results" class="hint" role="status" aria-live="polite"></div>
       </section>
       <section class="settings-card">
         <h3>VOZ DE RESPUESTA</h3>
@@ -476,9 +493,14 @@ footer button{padding:0 34px}
         <label for="cfg-ollama-host">Dirección de Ollama</label>
         <input id="cfg-ollama-host" autocomplete="url">
         <label for="cfg-modelo-gemini">Modelo de Gemini</label>
-        <input id="cfg-modelo-gemini" autocomplete="off">
+        <input id="cfg-modelo-gemini" list="cfg-modelos-gemini" autocomplete="off">
+        <datalist id="cfg-modelos-gemini"></datalist>
+        <label for="cfg-modelo-grok">Modelo de Grok (xAI)</label>
+        <input id="cfg-modelo-grok" list="cfg-modelos-grok" autocomplete="off">
+        <datalist id="cfg-modelos-grok"></datalist>
         <label for="cfg-modelo-openai">Modelo de OpenAI</label>
-        <input id="cfg-modelo-openai" autocomplete="off">
+        <input id="cfg-modelo-openai" list="cfg-modelos-openai" autocomplete="off">
+        <datalist id="cfg-modelos-openai"></datalist>
         <label for="cfg-modelo-whisper">Modelo de reconocimiento (Whisper)</label>
         <select id="cfg-modelo-whisper">
           <option value="tiny">tiny · más rápido, menos preciso</option>
@@ -511,6 +533,12 @@ const post = async (p,b) => {
     if(!r.ok || d.ok === false) throw new Error(d.error || `Error HTTP ${r.status}`);
     return d;
   }catch(e){ setEstado('desconectado', e.message || 'No se pudo completar la acción.'); return null; }
+};
+$('cfg-ai-fallback').onchange = () => {
+  const alternativo = $('cfg-ai-fallback').value;
+  $('cfg-ai-fallback-status').textContent = alternativo
+    ? 'Se usa solo si la solicitud principal falla antes de ejecutar herramientas. Asegurate de guardar la clave de ese proveedor.'
+    : 'Fallback automático desactivado.';
 };
 const $ = id => document.getElementById(id);
 const NS = 'http://www.w3.org/2000/svg';
@@ -724,7 +752,7 @@ function pintarInfo(d){
   $('btn-modo').textContent = d.modo === 'voz' ? 'Cambiar a texto' : 'Cambiar a voz';
   $('chip-ia').textContent = d.ia || 'IA';
   $('chip-ia').classList.add('on');
-  sub('ia', 'ok', d.ia || '—');
+  sub('ia', 'ok', d.modelo ? `${d.ia || 'IA'} · ${d.modelo}` : (d.ia || '—'));
   sub('voz', d.modo === 'voz' ? 'ok' : 'aviso', d.modo === 'voz' ? (d.tts || 'activa') : 'solo texto');
   sub('spotify', d.spotify ? 'ok' : '', d.spotify ? 'configurado' : 'sin configurar');
   sub('vision', d.vision ? 'ok' : '', d.vision ? 'habilitada' : 'desactivada');
@@ -825,6 +853,7 @@ async function abrirAjustes(){
   $('settings-status').textContent = 'Cargando configuración…';
   for(const id of ['cfg-api-key','cfg-elevenlabs-key','cfg-github']) $(id).value = '';
   for(const id of ['cfg-borrar-api','cfg-borrar-elevenlabs','cfg-borrar-github']) $(id).checked = false;
+  aiKeyDrafts = {};
   try{
     const r = await fetch('/settings?t=' + encodeURIComponent(T), {headers:{'X-Token':T}});
     const d = await r.json();
@@ -832,6 +861,10 @@ async function abrirAjustes(){
     llenarSelect('cfg-microfono', d.microfonos, d.microfono, 'Predeterminado de Windows');
     llenarSelect('cfg-salida', d.salidas, d.salida, 'Predeterminada de Windows');
     $('cfg-proveedor').value = d.proveedor;
+    proveedorClaveEnCampo = d.proveedor;
+    $('cfg-ai-fallback').value = d.proveedor_ia_alternativo || '';
+    $('cfg-ai-active').textContent = `Activo ahora: ${d.proveedor} · ${d['modelo_' + d.proveedor] || ''}`;
+    $('cfg-api-key').disabled = d.proveedor === 'ollama';
     $('cfg-tts').value = d.proveedor_tts;
     $('cfg-voice-id').value = d.elevenlabs_voice_id || '';
     $('cfg-spotify').value = d.spotify_client_id || '';
@@ -840,7 +873,16 @@ async function abrirAjustes(){
     $('cfg-modelo-ollama').value = d.modelo_ollama || '';
     $('cfg-ollama-host').value = d.ollama_host || '';
     $('cfg-modelo-gemini').value = d.modelo_gemini || '';
+    $('cfg-modelo-grok').value = d.modelo_grok || '';
     $('cfg-modelo-openai').value = d.modelo_openai || '';
+    for(const proveedor of ['gemini','grok','openai']){
+      const lista = $(`cfg-modelos-${proveedor}`);
+      lista.replaceChildren(...(d.modelos_ia?.[proveedor] || []).map(modelo => {
+        const opcion = document.createElement('option');
+        opcion.value = modelo;
+        return opcion;
+      }));
+    }
     $('cfg-modelo-whisper').value = d.modelo_whisper || 'small';
     $('cfg-idioma').value = d.idioma || 'es';
     $('cfg-volumen-voz').value = d.volumen_voz ?? 100;
@@ -851,7 +893,16 @@ async function abrirAjustes(){
     actualizarEtiquetasVolumen();
     aplicarTema($('cfg-tema').value);
     volumenEfectos = Number($('cfg-volumen-efectos').value) / 100;
-    $('cfg-api-status').textContent = d.api_key_guardada ? 'Hay una clave guardada para este proveedor.' : 'No hay una clave guardada para este proveedor.';
+    $('cfg-api-status').textContent = d.api_key_guardada
+      ? `Clave guardada en Windows: ${d.api_key_mascarada}.`
+      : d.proveedor === 'ollama'
+        ? 'Ollama se ejecuta localmente y no necesita API key.'
+        : 'No hay una clave guardada para este proveedor.';
+    $('cfg-ai-fallback-status').textContent = !d.proveedor_ia_alternativo
+      ? 'Se prueba una sola vez si el proveedor principal falla antes de ejecutar herramientas.'
+      : d.clave_alternativa_guardada
+        ? 'La clave del proveedor alternativo está guardada en Windows.'
+        : 'Guardá primero una clave para el proveedor alternativo seleccionándolo y pulsando Guardar.';
     $('cfg-elevenlabs-status').textContent = d.elevenlabs_key_guardada ? 'Hay una clave de ElevenLabs guardada.' : 'ElevenLabs sin configurar.';
     $('cfg-github-status').textContent = d.github_token_guardado ? 'Token de GitHub guardado.' : 'GitHub sin configurar.';
     $('settings-status').textContent = '';
@@ -873,12 +924,22 @@ $('cfg-cerrar').onclick = cerrarAjustes;
 $('settings-modal').addEventListener('click', e => { if(e.target === $('settings-modal')) cerrarAjustes(); });
 $('cfg-github-dashboard').onclick = () => window.open('https://github.com/settings/personal-access-tokens/new','_blank','noopener');
 $('cfg-proveedor').onchange = async () => {
+  const anterior = proveedorClaveEnCampo;
+  if(anterior) aiKeyDrafts[anterior] = $('cfg-api-key').value;
+  proveedorClaveEnCampo = $('cfg-proveedor').value;
+  $('cfg-api-key').value = aiKeyDrafts[proveedorClaveEnCampo] || '';
+  $('cfg-api-key').disabled = proveedorClaveEnCampo === 'ollama';
+  $('cfg-borrar-api').checked = false;
+  $('cfg-ai-active').textContent = `Proveedor seleccionado: ${proveedorClaveEnCampo}`;
   try{
     const r = await fetch('/settings?t=' + encodeURIComponent(T), {headers:{'X-Token':T}});
     const d = await r.json();
-    $('cfg-api-status').textContent = d.proveedor === $('cfg-proveedor').value
-      ? (d.api_key_guardada ? 'Hay una clave guardada para este proveedor.' : 'No hay una clave guardada para este proveedor.')
-      : 'La clave del proveedor elegido se conserva si dejás el campo vacío.';
+    const tieneClave = d.api_keys_guardadas?.[proveedorClaveEnCampo];
+    $('cfg-api-status').textContent = tieneClave
+      ? `Clave guardada en Windows: ${d.api_keys_mascaradas?.[proveedorClaveEnCampo] || '••••••'}.`
+      : proveedorClaveEnCampo === 'ollama'
+        ? 'Ollama se ejecuta localmente y no necesita API key.'
+        : 'No hay una clave guardada para este proveedor. La clave nueva se guardará en Windows.';
   }catch(e){ $('cfg-api-status').textContent = 'No se pudo consultar la clave guardada.'; }
 };
 $('cfg-spotify-dashboard').onclick = () => window.open('https://developer.spotify.com/dashboard','_blank','noopener');
@@ -918,7 +979,9 @@ function configuracionFormulario(){
     modelo_ollama:$('cfg-modelo-ollama').value,
     ollama_host:$('cfg-ollama-host').value,
     modelo_gemini:$('cfg-modelo-gemini').value,
+    modelo_grok:$('cfg-modelo-grok').value,
     modelo_openai:$('cfg-modelo-openai').value,
+    proveedor_ia_alternativo:$('cfg-ai-fallback').value,
     modelo_whisper:$('cfg-modelo-whisper').value,
     idioma:$('cfg-idioma').value,
     volumen_voz:Number($('cfg-volumen-voz').value),
@@ -932,17 +995,25 @@ async function guardarAjustes(){
   const datos = configuracionFormulario();
   const r = await post('/settings', datos);
   if(!r) { $('settings-status').textContent = 'No se pudo guardar. Revisá el estado del HUD e intentá de nuevo.'; return null; }
+  delete aiKeyDrafts[datos.proveedor];
+  $('cfg-api-key').value = '';
+  $('cfg-ai-active').textContent = `Activo ahora: ${r.configuracion.proveedor} · ${r.configuracion['modelo_' + r.configuracion.proveedor] || ''}`;
+  $('cfg-ai-fallback-status').textContent = !r.configuracion.proveedor_ia_alternativo
+    ? 'Fallback automático desactivado.'
+    : r.configuracion.clave_alternativa_guardada
+      ? 'La clave del proveedor alternativo está guardada en Windows.'
+      : 'Guardá una clave para el proveedor alternativo desde el selector de proveedor.';
+  $('cfg-api-status').textContent = datos.api_key
+    ? 'Clave guardada de forma segura en Windows: ••••••••.'
+    : datos.borrar_api_key
+      ? 'Clave local borrada.'
+      : r.configuracion && r.configuracion.api_key_guardada
+        ? `Clave guardada en Windows: ${r.configuracion.api_key_mascarada}.`
+        : 'No hay una clave guardada para este proveedor.';
   for(const id of ['cfg-borrar-api','cfg-borrar-elevenlabs','cfg-borrar-github']) $(id).checked = false;
   $('settings-status').textContent = r.configuracion && r.configuracion.requiere_reinicio
     ? 'Configuración guardada. Reiniciá Jarvis para aplicar los cambios de audio, reconocimiento o modelo.'
     : 'Configuración guardada.';
-  $('cfg-api-status').textContent = datos.api_key
-    ? 'Clave guardada localmente.'
-    : datos.borrar_api_key
-      ? 'Clave local borrada.'
-      : r.configuracion && r.configuracion.api_key_guardada
-        ? 'Clave local conservada.'
-        : 'No hay una clave local guardada para este proveedor.';
   $('cfg-elevenlabs-status').textContent = datos.elevenlabs_api_key
     ? 'Clave guardada localmente.'
     : datos.borrar_elevenlabs_key
@@ -955,6 +1026,31 @@ async function guardarAjustes(){
     : $('cfg-github-status').textContent;
   return r;
 }
+let aiKeyDrafts = {};
+let proveedorClaveEnCampo = '';
+async function probarIA(comparar){
+  const guardado = await guardarAjustes();
+  if(!guardado) return;
+  $('cfg-ai-results').textContent = comparar
+    ? 'Midiendo Gemini, Grok y OpenAI con una solicitud equivalente…'
+    : 'Probando la conexión con el proveedor seleccionado…';
+  const resultado = await post('/test-ai', {comparar});
+  if(!resultado){
+    $('cfg-ai-results').textContent = 'No se pudo realizar la prueba. Revisá la configuración e intentá de nuevo.';
+    return;
+  }
+  const filas = resultado.resultados.map(item => {
+    const estado = item.estado === 'conectado'
+      ? `Conectado · ${item.tiempo_ms} ms`
+      : item.estado === 'sin_configurar'
+        ? 'Sin API key'
+        : (item.error || 'Error de conexión');
+    return `${item.proveedor} · ${item.modelo}: ${estado}`;
+  });
+  $('cfg-ai-results').textContent = `${filas.join('\n')}\n${resultado.nota || ''}`;
+}
+$('cfg-test-ai').onclick = () => probarIA(false);
+$('cfg-benchmark-ai').onclick = () => probarIA(true);
 $('cfg-guardar').onclick = guardarAjustes;
 document.querySelectorAll('[data-test-audio]').forEach(b => b.onclick = async () => {
   const guardado = await guardarAjustes();

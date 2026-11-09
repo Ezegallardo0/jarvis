@@ -4,6 +4,7 @@ import json
 import os
 import sys
 
+import ai_providers
 import config
 import tools
 
@@ -52,41 +53,88 @@ Datos que el usuario te pidió recordar:
 
 
 class Cerebro:
-    def __init__(self, provider=None, api_key=None):
-        self.proveedor = (provider or config.PROVEEDOR_IA).lower()
-        self.api_key = api_key
+    def __init__(
+        self,
+        provider=None,
+        api_key=None,
+        proveedor_alternativo=None,
+        clave_alternativa=None,
+    ):
+        self.proveedor = None
+        self.api_key = None
+        self.modelo = None
         self.cliente = None
+        self.proveedor_alternativo = None
+        self.clave_alternativa = None
         self.historial = []
-        if self.proveedor == "ollama":
-            import ollama
+        self.configurar(
+            provider or config.PROVEEDOR_IA,
+            api_key,
+            proveedor_alternativo,
+            clave_alternativa,
+        )
 
-            self.cliente = ollama.Client(host=config.OLLAMA_HOST)
-        elif self.proveedor in ("gemini", "openai"):
-            try:
-                from openai import OpenAI
-            except ModuleNotFoundError as error:
-                if error.name != "openai":
-                    raise
-                raise RuntimeError(
-                    "Falta la dependencia del proveedor cloud. Cerrá Jarvis y ejecutá "
-                    f'"{sys.executable}" -m pip install -r requirements.txt; '
-                    "después volvé a abrir run.vbs."
-                ) from error
-
-            clave = api_key or (
-                os.environ.get("GEMINI_API_KEY")
-                if self.proveedor == "gemini"
-                else os.environ.get("OPENAI_API_KEY")
-            )
-            if not clave:
-                nombre = "GEMINI_API_KEY" if self.proveedor == "gemini" else "OPENAI_API_KEY"
-                raise ValueError(f"Falta la clave de API. Ingresala en Jarvis o configurá {nombre}.")
-            opciones = {"api_key": clave}
-            if self.proveedor == "gemini":
-                opciones["base_url"] = "https://generativelanguage.googleapis.com/v1beta/openai/"
-            self.cliente = OpenAI(**opciones)
+    def configurar(
+        self,
+        provider,
+        api_key=None,
+        proveedor_alternativo=None,
+        clave_alternativa=None,
+    ):
+        proveedor = (provider or "").lower()
+        modelo = config.MODELO if proveedor == "ollama" else ai_providers.obtener_modelo(proveedor)
+        if self.proveedor is not None and self.proveedor != proveedor:
+            self._normalizar_historial_cambio_proveedor()
+        if proveedor == "ollama":
+            if (
+                self.proveedor != proveedor
+                or self.cliente is None
+                or getattr(self, "ollama_host", None) != config.OLLAMA_HOST
+            ):
+                try:
+                    import ollama
+                except ModuleNotFoundError as error:
+                    if error.name != "ollama":
+                        raise
+                    raise RuntimeError(
+                        "Falta Ollama. Cerrá Jarvis y ejecutá "
+                        f'"{sys.executable}" -m pip install -r requirements.txt.'
+                    ) from error
+                self.cliente = ollama.Client(host=config.OLLAMA_HOST)
+                self.ollama_host = config.OLLAMA_HOST
         else:
-            raise ValueError(f"Proveedor de IA no válido: {self.proveedor}")
+            if not api_key:
+                variable = ai_providers.PROVEEDORES[proveedor].variable_entorno
+                api_key = os.environ.get(variable, "")
+            if not api_key:
+                nombre = ai_providers.PROVEEDORES[proveedor].nombre
+                raise ValueError(f"Falta la API key de {nombre}. Ingresala desde Configuración.")
+            if self.proveedor != proveedor or self.api_key != api_key or self.cliente is None:
+                try:
+                    self.cliente = ai_providers.crear_cliente(proveedor, api_key)
+                except ModuleNotFoundError as error:
+                    if error.name != "openai":
+                        raise
+                    raise RuntimeError(
+                        "Falta la dependencia del proveedor cloud. Cerrá Jarvis y ejecutá "
+                        f'"{sys.executable}" -m pip install -r requirements.txt; '
+                        "después volvé a abrir run.vbs."
+                    ) from error
+        self.proveedor = proveedor
+        self.api_key = api_key
+        self.modelo = modelo
+        self.proveedor_alternativo = proveedor_alternativo or None
+        self.clave_alternativa = clave_alternativa or None
+
+    def _normalizar_historial_cambio_proveedor(self):
+        historial = []
+        for entrada in self.historial:
+            rol = entrada.get("role")
+            if rol == "user":
+                historial.append({"role": "user", "content": entrada.get("content", "")})
+            elif rol == "assistant" and not entrada.get("tool_calls"):
+                historial.append({"role": "assistant", "content": entrada.get("content", "")})
+        self.historial = historial
 
     def verificar(self):
         """Devuelve None si todo está bien, o un mensaje de error útil."""
@@ -132,14 +180,28 @@ class Cerebro:
             return self._responder_api(texto)
         self.historial.append({"role": "user", "content": texto})
         self._recortar()
+        herramientas_ejecutadas = False
         for _ in range(6):  # máx. rondas de herramientas por pedido
             if tools.detencion_solicitada():
                 return "Detención recibida. No ejecutaré más acciones de esta solicitud."
-            resp = self.cliente.chat(
-                model=config.MODELO,
-                messages=[self._sistema()] + self.historial,
-                tools=tools.esquemas(),
-            )
+            try:
+                resp = self.cliente.chat(
+                    model=config.MODELO,
+                    messages=[self._sistema()] + self.historial,
+                    tools=tools.esquemas(),
+                )
+            except Exception as error:
+                if not herramientas_ejecutadas and self._activar_fallback():
+                    nombre = ai_providers.PROVEEDORES[self.proveedor].nombre
+                    try:
+                        respuesta = self._responder_api(texto, usuario_agregado=True)
+                    except Exception as error_alternativo:
+                        raise RuntimeError(
+                            f"Ollama no respondió y el proveedor alternativo también falló: "
+                            f"{error_alternativo}"
+                        ) from error
+                    return f"Ollama no respondió; usé {nombre}. {respuesta}"
+                raise
             msg = resp.message
             entrada = {"role": "assistant", "content": msg.content or ""}
             if msg.tool_calls:
@@ -163,39 +225,81 @@ class Cerebro:
                     cancelada = cancelada or tools.detencion_solicitada()
                 print(f"  [herramienta] {nombre} -> {resultado[:120]}")
                 self.historial.append({"role": "tool", "tool_name": nombre, "content": resultado})
+                herramientas_ejecutadas = True
             if cancelada:
                 return "Detención recibida. No ejecutaré más acciones de esta solicitud."
         return "Me trabé con ese pedido, ¿podés reformularlo?"
 
-    def _responder_api(self, texto):
-        self.historial.append({"role": "user", "content": texto})
+    def _responder_api(self, texto, usuario_agregado=False):
+        if not usuario_agregado:
+            self.historial.append({"role": "user", "content": texto})
         self._recortar()
-        modelo = config.MODELO_GEMINI if self.proveedor == "gemini" else config.MODELO_OPENAI
+        herramientas_ejecutadas = False
+        fallback_usado = False
+        error_proveedor_principal = None
         for _ in range(6):
             if tools.detencion_solicitada():
                 return "Detención recibida. No ejecutaré más acciones de esta solicitud."
-            opciones = {
-                "model": modelo,
-                "messages": [self._sistema()] + self.historial,
-                "tools": tools.esquemas(),
-                "tool_choice": "auto",
-            }
-            if self.proveedor == "openai":
-                opciones["reasoning_effort"] = "none"
-                opciones["max_completion_tokens"] = 400
-            else:
-                opciones["max_tokens"] = 400
             try:
+                opciones = ai_providers.crear_opciones_solicitud(
+                    self.proveedor,
+                    self.modelo,
+                    [self._sistema()] + self.historial,
+                    tools.esquemas(),
+                )
                 respuesta = self.cliente.chat.completions.create(**opciones)
             except Exception as error:
-                raise RuntimeError(self._explicar_error_api(error)) from error
+                codigo = getattr(error, "status_code", None)
+                tipo = type(error).__name__.casefold()
+                reintentable = (
+                    codigo in {401, 403, 404, 408, 409, 429}
+                    or (isinstance(codigo, int) and codigo >= 500)
+                    or "connection" in tipo
+                    or "timeout" in tipo
+                )
+                if (
+                    reintentable
+                    and not herramientas_ejecutadas
+                    and not fallback_usado
+                ):
+                    error_proveedor_principal = ai_providers.error_publico(
+                        self.proveedor, error
+                    )
+                    try:
+                        fallback_activo = self._activar_fallback()
+                    except Exception as error_fallback:
+                        detalle_fallback = (
+                            "No se pudo activar el proveedor alternativo; revisá su API key "
+                            "y configuración."
+                            if isinstance(error_fallback, ValueError)
+                            else ai_providers.error_publico(
+                                self.proveedor_alternativo, error_fallback
+                            )
+                        )
+                        raise RuntimeError(
+                            f"{error_proveedor_principal} {detalle_fallback}"
+                        ) from error
+                    if fallback_activo:
+                        fallback_usado = True
+                        continue
+                detalle = self._explicar_error_api(error)
+                if fallback_usado and error_proveedor_principal:
+                    detalle = (
+                        f"{error_proveedor_principal} El proveedor alternativo también falló: "
+                        f"{detalle}"
+                    )
+                raise RuntimeError(detalle) from error
             mensaje = respuesta.choices[0].message
             llamada = mensaje.model_dump(exclude_none=True)
             self.historial.append(llamada)
             if not mensaje.tool_calls:
                 if tools.detencion_solicitada():
                     return "Detención recibida. No ejecutaré más acciones de esta solicitud."
-                return (mensaje.content or "").strip() or "Listo."
+                respuesta = (mensaje.content or "").strip() or "Listo."
+                if fallback_usado:
+                    nombre = ai_providers.PROVEEDORES[self.proveedor].nombre
+                    return f"El proveedor principal no respondió; usé {nombre}. {respuesta}"
+                return respuesta
             cancelada = False
             for llamada_herramienta in mensaje.tool_calls:
                 nombre = llamada_herramienta.function.name
@@ -218,45 +322,24 @@ class Cerebro:
                 self.historial.append({
                     "role": "tool",
                     "tool_call_id": llamada_herramienta.id,
+                    "tool_name": nombre,
                     "content": resultado,
                 })
+                herramientas_ejecutadas = True
             if cancelada:
                 return "Detención recibida. No ejecutaré más acciones de esta solicitud."
         return "Me trabé con ese pedido, ¿podés reformularlo?"
 
     def _explicar_error_api(self, error):
-        codigo = getattr(error, "status_code", None)
-        detalle = getattr(error, "message", None) or str(error)
-        detalle = detalle.replace(self.api_key or "", "[API key oculta]") if self.api_key else detalle
-        detalle = detalle[:500]
-        if self.proveedor == "openai":
-            if codigo == 401:
-                return "OpenAI rechazó la API key (401). Verificá que sea una clave de API válida y activa."
-            if codigo == 403:
-                return "OpenAI denegó el acceso (403). Revisá permisos del proyecto y acceso al modelo."
-            if codigo == 404:
-                return (
-                    f"OpenAI no encontró el modelo '{config.MODELO_OPENAI}' (404). "
-                    "Revisá MODELO_OPENAI en config.py y el acceso de tu proyecto."
-                )
-            if codigo == 429:
-                return (
-                    "OpenAI rechazó la solicitud por cuota o límite (429). "
-                    "Revisá facturación y límites de la API."
-                )
-        elif codigo == 401:
-            return "Gemini rechazó la API key (401). Revisá que sea una clave válida de Google AI Studio."
-        elif codigo == 403:
-            return "Gemini denegó el acceso (403). Revisá permisos, región y habilitación de la API."
-        elif codigo == 404:
-            return (
-                f"Gemini no encontró el modelo '{config.MODELO_GEMINI}' (404). "
-                "Revisá MODELO_GEMINI en config.py."
-            )
-        elif codigo == 429:
-            return "Gemini rechazó la solicitud por cuota o límite (429). Revisá la cuota de tu proyecto."
-        if codigo is not None:
-            return f"Error de API de {self.proveedor} (HTTP {codigo}): {detalle}"
-        if "connection" in type(error).__name__.lower() or "timeout" in type(error).__name__.lower():
-            return f"No pude conectar con {self.proveedor}. Revisá internet y volvé a intentar."
-        return f"Error de {self.proveedor}: {detalle}"
+        return ai_providers.error_publico(self.proveedor, error)
+
+    def _activar_fallback(self):
+        proveedor = self.proveedor_alternativo
+        if not proveedor or proveedor == self.proveedor:
+            return False
+        self.configurar(
+            proveedor,
+            self.clave_alternativa,
+            proveedor_alternativo=None,
+        )
+        return True

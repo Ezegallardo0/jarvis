@@ -17,7 +17,23 @@ OLLAMA_HOST = "http://localhost:11434"
 MODELO = "qwen2.5:7b"
 PROVEEDOR_IA = os.environ.get("JARVIS_AI_PROVIDER", "gemini").lower()
 MODELO_GEMINI = "gemini-3.5-flash-lite"
+MODELO_GROK = "grok-4.7"
 MODELO_OPENAI = "gpt-6-luna"
+PROVEEDOR_IA_ALTERNATIVO = ""
+
+# IDs publicados en la documentación oficial. Las listas son sugerencias para el HUD;
+# los modelos siguen siendo editables porque el acceso depende de cada cuenta.
+MODELOS_IA = {
+    "gemini": (
+        "gemini-4-argon",
+        "gemini-3.8-flash",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+    ),
+    "grok": ("grok-4.7", "grok-4.6", "grok-4.5", "grok-4.3"),
+    "openai": ("gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"),
+}
 
 # --- Voz ---
 USAR_VOZ = True            # main.py --texto lo pone en False

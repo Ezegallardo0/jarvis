@@ -112,6 +112,7 @@ class Servidor:
         probar_audio=None,
         probar_github=None,
         detectar_ubicacion=None,
+        probar_ia=None,
     ):
         self.bus = bus
         self.entradas = entradas
@@ -122,6 +123,7 @@ class Servidor:
         self.probar_audio = probar_audio
         self.probar_github = probar_github
         self.detectar_ubicacion = detectar_ubicacion
+        self.probar_ia = probar_ia
         self.puerto = config.HUD_PUERTO
         self.token = secrets.token_urlsafe(16)
         self.httpd = None
@@ -285,6 +287,22 @@ class Servidor:
                         resultado = {"ok": False, "error": str(error)}
                         return self._enviar(
                             400,
+                            "application/json; charset=utf-8",
+                            json.dumps(resultado, ensure_ascii=False).encode("utf-8"),
+                        )
+                elif ruta == "/test-ai" and srv.probar_ia:
+                    try:
+                        resultado = {
+                            "ok": True,
+                            **srv.probar_ia(bool(datos.get("comparar"))),
+                        }
+                    except Exception:
+                        resultado = {
+                            "ok": False,
+                            "error": "No se pudo completar la prueba de IA.",
+                        }
+                        return self._enviar(
+                            500,
                             "application/json; charset=utf-8",
                             json.dumps(resultado, ensure_ascii=False).encode("utf-8"),
                         )
