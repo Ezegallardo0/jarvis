@@ -20,9 +20,8 @@ Asistente autónomo que corre 100% en tu PC con Windows: el cerebro es un modelo
 
 ## Uso
 
-- Modo voz: doble clic en `run.bat` y elegí `Voz` (o `python main.py`). Decí "Jarvis, abrí la calculadora".
-- Modo texto: elegí `Texto` al iniciar `run.bat` (o ejecutá `python main.py --texto`).
-- Diagnóstico de micrófono: elegí `Probar micrófono` en `run.bat` o ejecutá `python main.py --probar-microfono`; hablá durante los cinco segundos de medición.
+- Doble clic en `run.bat` para abrir la interfaz. Seleccioná micrófono y salida; probá el micrófono o la salida y elegí iniciar con voz o en modo texto. La conversación ocurre dentro de la misma interfaz, sin una consola aparte.
+- También podés ejecutar `python main.py --texto` para iniciar directamente en modo texto o `python main.py --probar-microfono` para medir la entrada predeterminada.
 - Podés pedir recordatorios por minutos (por ejemplo, "recordame en 10 minutos") o alertas por hora (por ejemplo, "avisame a las 18:30"). Jarvis debe quedar abierto para avisarte.
 - Después de cada respuesta te escucha unos segundos sin necesidad de repetir "Jarvis".
 - Para salir: decí "salir" o Ctrl+C.
@@ -52,3 +51,4 @@ En `tools.py`, escribí una función y decorala con `@herramienta(...)`. El mode
 - `WHISPER_MODELO`: `base` si el reconocimiento va lento, `medium` si querés más precisión.
 - `PALABRAS_ACTIVACION`: variantes de cómo Whisper puede escribir "Jarvis".
 - `MICROFONO`: vacío para usar el dispositivo predeterminado de Windows; también podés indicar parte del nombre o el índice de otro micrófono.
+- La interfaz guarda la selección de dispositivos en `~/.jarvis/dispositivos_audio.json`.

@@ -1,7 +1,10 @@
 """Voz: reconocimiento (faster-whisper, local) y síntesis (pyttsx3, local)."""
 import re
+import tempfile
 import time
 import unicodedata
+import wave
+from pathlib import Path
 
 import config
 
@@ -29,37 +32,83 @@ def hablar(texto):
                 motor.setProperty("voice", v.id)
                 break
         motor.setProperty("rate", 175)
-        motor.say(limpio)
-        motor.runAndWait()
-        motor.stop()
+        if config.AUDIO_SALIDA is None:
+            motor.say(limpio)
+            motor.runAndWait()
+            motor.stop()
+        else:
+            import numpy as np
+            import sounddevice as sd
+
+            with tempfile.TemporaryDirectory() as carpeta:
+                ruta = Path(carpeta) / "respuesta.wav"
+                motor.save_to_file(limpio, str(ruta))
+                motor.runAndWait()
+                motor.stop()
+                with wave.open(str(ruta), "rb") as archivo:
+                    if archivo.getsampwidth() != 2:
+                        raise ValueError("El formato de audio de voz no es PCM de 16 bits.")
+                    canales = archivo.getnchannels()
+                    frecuencia = archivo.getframerate()
+                    audio = np.frombuffer(
+                        archivo.readframes(archivo.getnframes()), dtype="<i2"
+                    ).astype(np.float32) / 32768
+                if canales > 1:
+                    audio = audio.reshape(-1, canales)
+                salida = sd.query_devices(config.AUDIO_SALIDA)
+                frecuencia_salida = int(salida["default_samplerate"])
+                if frecuencia != frecuencia_salida:
+                    cantidad = round(len(audio) * frecuencia_salida / frecuencia)
+                    posiciones = np.linspace(0, len(audio) - 1, cantidad)
+                    audio = np.stack(
+                        [np.interp(posiciones, np.arange(len(audio)), audio[:, canal]) for canal in range(canales)],
+                        axis=1,
+                    ) if canales > 1 else np.interp(posiciones, np.arange(len(audio)), audio)
+                sd.play(audio, samplerate=frecuencia_salida, device=config.AUDIO_SALIDA, blocking=True)
     except Exception as e:
         print(f"(voz no disponible: {e})")
 
 
-def probar_microfono():
-    """Muestra el nivel de entrada del micrófono seleccionado durante cinco segundos."""
+def medir_microfono(dispositivo=None, segundos=5):
+    """Devuelve el dispositivo, la frecuencia y el nivel RMS por segundo."""
     import numpy as np
     import sounddevice as sd
 
-    dispositivo = Oido._elegir_microfono_con(sd)
+    if dispositivo is None:
+        dispositivo = Oido._elegir_microfono_con(sd)
     info = sd.query_devices(dispositivo)
     frecuencia = int(info["default_samplerate"])
-    print(f"Probando: {info['name']} (dispositivo {dispositivo}, {frecuencia} Hz).")
-    print("Hablá durante la prueba; voy a medir cinco segundos.")
-    niveles = []
+    niveles, desbordados = [], []
     with sd.InputStream(
         samplerate=frecuencia,
         channels=1,
         dtype="float32",
-        blocksize=frecuencia,
+        blocksize=max(1, frecuencia // 10),
         device=dispositivo,
     ) as stream:
-        for segundo in range(1, 6):
-            audio, desbordado = stream.read(frecuencia)
-            nivel = float(np.sqrt(np.mean(audio**2)))
+        for _ in range(segundos):
+            bloques = []
+            desbordado = False
+            for _ in range(10):
+                audio, overflow = stream.read(max(1, frecuencia // 10))
+                bloques.append(audio)
+                desbordado = desbordado or overflow
+            nivel = float(np.sqrt(np.mean(np.concatenate(bloques) ** 2)))
             niveles.append(nivel)
-            marca = " (buffer saturado)" if desbordado else ""
-            print(f"  {segundo}/5: nivel {nivel:.5f}{marca}")
+            desbordados.append(desbordado)
+    return info["name"], dispositivo, frecuencia, niveles, desbordados
+
+
+def probar_microfono(dispositivo=None):
+    """Muestra el nivel de entrada del micrófono seleccionado durante cinco segundos."""
+    import sounddevice as sd
+
+    nombre, indice, frecuencia, niveles, desbordados = medir_microfono(dispositivo)
+    print(f"Probando: {nombre} (dispositivo {indice}, {frecuencia} Hz).")
+    print("Hablá durante cinco segundos.")
+    for segundo, nivel in enumerate(niveles, 1):
+        marca = " (buffer saturado)" if desbordados[segundo - 1] else ""
+        print(f"  {segundo}/5: nivel {nivel:.5f}{marca}")
     if max(niveles, default=0) < 0.001:
         print("No se detectó señal. Revisá el permiso y el nivel de entrada en Windows, o probá otro índice MICROFONO en config.py.")
         print("Dispositivos de entrada disponibles:")
@@ -82,6 +131,8 @@ class Oido:
         self.dispositivo = self._elegir_microfono()
         info = self.sd.query_devices(self.dispositivo)
         print(f"Micrófono: {info['name']} (dispositivo {self.dispositivo})")
+        self.frecuencia = int(info["default_samplerate"])
+        print(f"Frecuencia de captura: {self.frecuencia} Hz (se convierte a {SR} Hz para Whisper)")
         print("Cargando modelo de voz (la primera vez descarga unos cientos de MB)...")
         self.modelo = WhisperModel(config.WHISPER_MODELO, device="auto", compute_type="int8")
         self.umbral = 0.004
@@ -91,15 +142,16 @@ class Oido:
         return self._elegir_microfono_con(self.sd)
 
     @staticmethod
-    def _elegir_microfono_con(sd):
+    def _elegir_microfono_con(sd, seleccion=None):
         dispositivos = sd.query_devices()
-        if config.MICROFONO != "":
-            if isinstance(config.MICROFONO, int):
-                indice = config.MICROFONO
+        buscado = config.MICROFONO if seleccion is None else seleccion
+        if buscado != "":
+            if isinstance(buscado, int):
+                indice = buscado
                 if 0 <= indice < len(dispositivos) and dispositivos[indice]["max_input_channels"]:
                     return indice
             else:
-                buscado = config.MICROFONO.casefold()
+                buscado = buscado.casefold()
                 for indice, dispositivo in enumerate(dispositivos):
                     if dispositivo["max_input_channels"] and buscado in dispositivo["name"].casefold():
                         return indice
@@ -109,7 +161,7 @@ class Oido:
                 if dispositivo["max_input_channels"]
             )
             raise RuntimeError(
-                f"No encontré el micrófono '{config.MICROFONO}'. Entradas disponibles: {disponibles}"
+                f"No encontré el micrófono '{buscado}'. Entradas disponibles: {disponibles}"
             )
         predeterminado = sd.default.device[0]
         if predeterminado is None or predeterminado < 0:
@@ -125,8 +177,8 @@ class Oido:
     def calibrar(self):
         """Mide el ruido ambiente para fijar el umbral de detección de voz."""
         audio = self.sd.rec(
-            int(SR * 1.0),
-            samplerate=SR,
+            int(self.frecuencia * 1.0),
+            samplerate=self.frecuencia,
             channels=1,
             dtype="float32",
             device=self.dispositivo,
@@ -139,12 +191,12 @@ class Oido:
     def grabar_frase(self, espera_max=None, max_seg=15):
         """Graba hasta detectar una frase completa. Devuelve audio o None si pasó espera_max sin hablar."""
         np = self.np
-        bloque = int(SR * 0.1)
+        bloque = max(1, int(self.frecuencia * 0.1))
         pre, buf = [], []
         hablando, silencio = False, 0
         inicio = time.time()
         with self.sd.InputStream(
-            samplerate=SR,
+            samplerate=self.frecuencia,
             channels=1,
             dtype="float32",
             blocksize=bloque,
@@ -170,7 +222,16 @@ class Oido:
                 if hablando and len(buf) * 0.1 > max_seg:
                     break
         audio = np.concatenate(buf).flatten()
-        return audio if len(audio) > SR * 0.4 else None
+        if len(audio) <= self.frecuencia * 0.4:
+            return None
+        if self.frecuencia != SR:
+            cantidad = round(len(audio) * SR / self.frecuencia)
+            audio = np.interp(
+                np.linspace(0, len(audio) - 1, cantidad),
+                np.arange(len(audio)),
+                audio,
+            ).astype(np.float32)
+        return audio
 
     def transcribir(self, audio):
         if audio is None:

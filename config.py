@@ -22,6 +22,7 @@ WHISPER_MODELO = "small"   # tiny / base / small / medium (más grande = más pr
 IDIOMA = "es"
 VENTANA_CONVERSACION_SEG = 6   # tras responder, escucha seguimiento sin decir "Jarvis"
 MICROFONO = ""             # vacío = predeterminado; también acepta parte del nombre o índice
+AUDIO_SALIDA = None        # None = salida predeterminada de Windows; también acepta índice
 
 # --- Interfaz (HUD) ---
 HUD_PUERTO = 8765

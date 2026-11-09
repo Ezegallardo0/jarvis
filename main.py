@@ -19,7 +19,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--texto", action="store_true", help="usar solo teclado")
     ap.add_argument("--probar-microfono", action="store_true", help="medir el nivel de entrada del micrófono")
+    ap.add_argument("--microfono", type=int, help="índice del dispositivo de entrada de audio")
+    ap.add_argument("--salida-audio", type=int, help="índice del dispositivo de salida de audio")
     args = ap.parse_args()
+    if args.microfono is not None:
+        config.MICROFONO = args.microfono
+    if args.salida_audio is not None:
+        config.AUDIO_SALIDA = args.salida_audio
     if args.texto:
         config.USAR_VOZ = False
     if args.probar_microfono:
