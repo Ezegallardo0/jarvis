@@ -11,6 +11,7 @@ import webbrowser
 from pathlib import Path
 from urllib.parse import quote_plus, urlsplit
 
+import httpx
 import psutil
 
 import config
@@ -234,6 +235,108 @@ def buscar_en_google(consulta):
     if not webbrowser.open(url):
         raise OSError("Windows no pudo abrir Google en el navegador predeterminado.")
     return f"Busqué '{consulta}' en Google."
+
+
+@herramienta(
+    "Busca información actual en internet. Usala para noticias, datos recientes, preguntas sobre el mundo real o cuando no sepas la respuesta. Devuelve títulos, resúmenes y enlaces.",
+    {"consulta": {"type": "string", "description": "Pregunta o términos para buscar"}},
+    ["consulta"],
+)
+def buscar_en_internet(consulta):
+    from ddgs import DDGS
+
+    resultados = DDGS().text(consulta.strip()[:300], max_results=5, region="wt-wt")
+    if not resultados:
+        return "La búsqueda no encontró resultados. Probá reformularla."
+    return "\n".join(
+        f"{i}. {item.get('title', 'Sin título')}\n"
+        f"Resumen: {item.get('body', 'Sin resumen')}\n"
+        f"Fuente: {item.get('href', '')}"
+        for i, item in enumerate(resultados, 1)
+    )
+
+
+_CODIGOS_CLIMA = {
+    0: "despejado",
+    1: "mayormente despejado",
+    2: "parcialmente nublado",
+    3: "nublado",
+    45: "niebla",
+    48: "niebla con escarcha",
+    51: "llovizna ligera",
+    53: "llovizna moderada",
+    55: "llovizna intensa",
+    61: "lluvia ligera",
+    63: "lluvia moderada",
+    65: "lluvia intensa",
+    71: "nieve ligera",
+    73: "nieve moderada",
+    75: "nieve intensa",
+    80: "chaparrones ligeros",
+    81: "chaparrones moderados",
+    82: "chaparrones intensos",
+    95: "tormenta",
+    96: "tormenta con granizo leve",
+    99: "tormenta con granizo intenso",
+}
+
+
+@herramienta(
+    "Consulta el pronóstico meteorológico para hoy o mañana. Si el usuario no indicó ciudad, preguntásela antes de usar esta herramienta.",
+    {
+        "ubicacion": {"type": "string", "description": "Ciudad y país o región"},
+        "dia": {"type": "string", "enum": ["hoy", "mañana"]},
+    },
+    ["ubicacion", "dia"],
+)
+def consultar_clima(ubicacion, dia="mañana"):
+    nombre = ubicacion.strip()
+    if not nombre:
+        raise ValueError("Indicá una ciudad para consultar el pronóstico.")
+    dia_normalizado = dia.lower().strip().replace("ñ", "n")
+    if dia_normalizado not in ("hoy", "manana"):
+        raise ValueError("Solo puedo consultar el pronóstico de hoy o mañana.")
+
+    timeout = httpx.Timeout(10.0, connect=5.0)
+    with httpx.Client(timeout=timeout, follow_redirects=True) as cliente:
+        geocodificacion = cliente.get(
+            "https://geocoding-api.open-meteo.com/v1/search",
+            params={"name": nombre, "count": 1, "language": "es", "format": "json"},
+        )
+        geocodificacion.raise_for_status()
+        lugares = geocodificacion.json().get("results") or []
+        if not lugares:
+            return f"No encontré la ubicación '{nombre}'. Indicá otra ciudad."
+        lugar = lugares[0]
+        pronostico = cliente.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": lugar["latitude"],
+                "longitude": lugar["longitude"],
+                "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
+                "timezone": "auto",
+                "forecast_days": 2 if dia_normalizado == "manana" else 1,
+            },
+        )
+        pronostico.raise_for_status()
+        diarios = pronostico.json().get("daily", {})
+
+    indice = 1 if dia_normalizado == "manana" else 0
+    fecha = diarios.get("time", [])[indice]
+    codigo = diarios.get("weather_code", [])[indice]
+    maxima = diarios.get("temperature_2m_max", [])[indice]
+    minima = diarios.get("temperature_2m_min", [])[indice]
+    lluvia = diarios.get("precipitation_probability_max", [None])[indice]
+    condicion = _CODIGOS_CLIMA.get(codigo, "condiciones variables")
+    lugar_formateado = ", ".join(
+        parte for parte in (lugar.get("name"), lugar.get("admin1"), lugar.get("country")) if parte
+    )
+    posibilidad = f", probabilidad máxima de lluvia {lluvia}%" if lluvia is not None else ""
+    return (
+        f"Pronóstico para {lugar_formateado}, {fecha}: {condicion}, "
+        f"mínima {minima} °C, máxima {maxima} °C{posibilidad}. "
+        "Fuente: Open-Meteo."
+    )
 
 
 @herramienta("Informa el estado de la PC: CPU, RAM, disco y batería.")

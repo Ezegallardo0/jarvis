@@ -53,7 +53,7 @@ class Lanzador:
         self.salidas = {"Predeterminada de Windows": None}
         self.entradas.update(entradas)
         self.salidas.update(salidas)
-        microfono, salida, proveedor = self._leer_seleccion()
+        microfono, salida, proveedor, proveedor_tts = self._leer_seleccion()
         self.entrada_var = tk.StringVar(value=self._etiqueta(self.entradas, microfono))
         self.salida_var = tk.StringVar(value=self._etiqueta(self.salidas, salida))
         self.proveedores = {
@@ -64,7 +64,32 @@ class Lanzador:
         self.proveedor_var = tk.StringVar(
             value=next((label for label, code in self.proveedores.items() if code == proveedor), "Gemini (rápido)")
         )
-        self.api_key_var = tk.StringVar(value=self._clave_entorno(proveedor))
+        self._proveedor_modelo_visible = proveedor
+        try:
+            clave_modelo = self._clave_guardada_o_entorno(proveedor)
+            clave_elevenlabs = self._clave_guardada_o_entorno("elevenlabs")
+        except Exception as error:
+            messagebox.showerror(
+                "No se pudieron leer las API keys",
+                f"No pude leer las claves del Administrador de credenciales de Windows:\n{error}",
+                parent=raiz,
+            )
+            clave_modelo = self._clave_entorno(proveedor)
+            clave_elevenlabs = os.environ.get("ELEVENLABS_API_KEY", "")
+        self.api_key_var = tk.StringVar(value=clave_modelo)
+        self.proveedores_tts = {
+            "Piper (español argentino, gratis)": "piper",
+            "Windows (local)": "windows",
+            "ElevenLabs": "elevenlabs",
+        }
+        self.proveedor_tts_var = tk.StringVar(
+            value=next(
+                (label for label, code in self.proveedores_tts.items() if code == proveedor_tts),
+                "Windows (local)",
+            )
+        )
+        self.elevenlabs_api_key_var = tk.StringVar(value=clave_elevenlabs)
+        self.elevenlabs_api_key = ""
 
         ttk.Label(principal, text="Micrófono (entrada)").grid(row=1, column=0, sticky="w", pady=4)
         self.entrada_menu = ttk.Combobox(
@@ -89,17 +114,39 @@ class Lanzador:
         self.proveedor_menu.grid(row=3, column=1, sticky="ew", pady=4)
         self.proveedor_menu.bind("<<ComboboxSelected>>", self._cambiar_proveedor)
 
-        ttk.Label(principal, text="API key (no se guarda)").grid(row=4, column=0, sticky="w", pady=4)
+        ttk.Label(principal, text="API key del modelo (se guarda en Windows)").grid(row=4, column=0, sticky="w", pady=4)
         self.api_key_entry = ttk.Entry(principal, textvariable=self.api_key_var, show="*", width=56)
         self.api_key_entry.grid(row=4, column=1, sticky="ew", pady=4)
         ttk.Label(
             principal,
-            text="Obtené la clave en Google AI Studio o en la plataforma de OpenAI. No se guarda.",
+            text="Se almacena en el Administrador de credenciales de Windows, no en un archivo.",
         ).grid(row=5, column=0, columnspan=2, sticky="w")
         self._cambiar_proveedor()
 
+        ttk.Label(principal, text="Voz de respuesta").grid(row=6, column=0, sticky="w", pady=4)
+        self.proveedor_tts_menu = ttk.Combobox(
+            principal,
+            textvariable=self.proveedor_tts_var,
+            values=list(self.proveedores_tts),
+            state="readonly",
+            width=56,
+        )
+        self.proveedor_tts_menu.grid(row=6, column=1, sticky="ew", pady=4)
+
+        ttk.Label(principal, text="API key de ElevenLabs (se guarda en Windows)").grid(
+            row=7, column=0, sticky="w", pady=4
+        )
+        self.elevenlabs_api_key_entry = ttk.Entry(
+            principal, textvariable=self.elevenlabs_api_key_var, show="*", width=56
+        )
+        self.elevenlabs_api_key_entry.grid(row=7, column=1, sticky="ew", pady=4)
+        ttk.Label(
+            principal,
+            text=f"Voz Piper predeterminada: Daniela ({config.PIPER_MODELO_VOZ}). Se descarga gratis y funciona sin conexión.",
+        ).grid(row=8, column=0, columnspan=2, sticky="w")
+
         acciones = ttk.Frame(principal)
-        acciones.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(16, 8))
+        acciones.grid(row=9, column=0, columnspan=2, sticky="ew", pady=(16, 8))
         ttk.Button(acciones, text="Probar micrófono", command=self.probar_microfono).grid(
             row=0, column=0, padx=(0, 6)
         )
@@ -111,21 +158,26 @@ class Lanzador:
             text="Probar reconocimiento",
             command=self.probar_reconocimiento,
         ).grid(row=0, column=2, padx=6)
-        ttk.Button(acciones, text="Iniciar con voz", command=lambda: self.iniciar(False)).grid(
+        ttk.Button(acciones, text="Probar voz", command=self.probar_voz).grid(
             row=0, column=3, padx=6
         )
+        ttk.Button(acciones, text="Iniciar con voz", command=lambda: self.iniciar(False)).grid(
+            row=0, column=4, padx=6
+        )
         ttk.Button(acciones, text="Iniciar en modo texto", command=lambda: self.iniciar(True)).grid(
-            row=0, column=4, padx=(6, 0)
+            row=0, column=5, padx=(6, 0)
         )
 
         self.estado = tk.StringVar(value="Seleccioná los dispositivos y probalos antes de iniciar.")
         ttk.Label(principal, textvariable=self.estado, wraplength=650).grid(
-            row=7, column=0, columnspan=2, sticky="w", pady=(8, 0)
+            row=10, column=0, columnspan=2, sticky="w", pady=(8, 0)
         )
         ttk.Label(
             principal,
             text="La prueba del micrófono dura 5 segundos: hablá durante la medición.",
-        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ).grid(row=11, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        self.api_key_entry.bind("<FocusOut>", self._guardar_claves_al_perder_foco)
+        self.elevenlabs_api_key_entry.bind("<FocusOut>", self._guardar_claves_al_perder_foco)
 
         if not entradas:
             self.estado.set("Windows no informa entradas de audio. Revisá permisos y conexión del micrófono.")
@@ -166,14 +218,84 @@ class Lanzador:
         }.get(proveedor, "")
         return os.environ.get(variable, "") if variable else ""
 
+    @staticmethod
+    def _almacen_claves():
+        import keyring
+
+        if sys.platform == "win32":
+            from keyring.backends.Windows import WinVaultKeyring
+
+            keyring.set_keyring(WinVaultKeyring())
+        return keyring
+
+    @classmethod
+    def _clave_guardada_o_entorno(cls, proveedor):
+        guardada = cls._almacen_claves().get_password("Jarvis", proveedor)
+        return guardada or cls._clave_entorno(proveedor)
+
+    @classmethod
+    def _guardar_clave(cls, proveedor, clave):
+        if clave:
+            cls._almacen_claves().set_password("Jarvis", proveedor, clave)
+
     def _cambiar_proveedor(self, evento=None):
         etiqueta = evento.widget.get() if evento else self.proveedor_var.get()
         proveedor = self.proveedores[etiqueta]
-        self.api_key_var.set(self._clave_entorno(proveedor))
+        anterior = self._proveedor_modelo_visible
+        if proveedor != anterior:
+            try:
+                self._guardar_clave(anterior, self.api_key_var.get().strip())
+            except Exception as error:
+                messagebox.showerror(
+                    "No se pudo guardar la API key",
+                    f"No pude guardar la clave en el Administrador de credenciales de Windows:\n{error}",
+                    parent=self.raiz,
+                )
+                self.proveedor_var.set(
+                    next(
+                        etiqueta
+                        for etiqueta, codigo in self.proveedores.items()
+                        if codigo == anterior
+                    )
+                )
+                return
+            self._proveedor_modelo_visible = proveedor
+            try:
+                self.api_key_var.set(self._clave_guardada_o_entorno(proveedor))
+            except Exception as error:
+                messagebox.showerror(
+                    "No se pudo leer la API key",
+                    f"No pude leer la clave del Administrador de credenciales de Windows:\n{error}",
+                    parent=self.raiz,
+                )
+                self.api_key_var.set(self._clave_entorno(proveedor))
         if proveedor == "ollama":
             self.api_key_entry.state(["disabled"])
         else:
             self.api_key_entry.state(["!disabled"])
+
+    def _guardar_claves(self):
+        self._guardar_clave(
+            self._proveedor_modelo_visible, self.api_key_var.get().strip()
+        )
+        self._guardar_clave(
+            "elevenlabs", self.elevenlabs_api_key_var.get().strip()
+        )
+
+    def _guardar_claves_al_perder_foco(self, evento):
+        if evento.widget not in (
+            self.api_key_entry,
+            self.elevenlabs_api_key_entry,
+        ):
+            return
+        try:
+            self._guardar_claves()
+        except Exception as error:
+            messagebox.showerror(
+                "No se pudieron guardar las API keys",
+                f"No pude guardar las claves en el Administrador de credenciales de Windows:\n{error}",
+                parent=self.raiz,
+            )
 
     @staticmethod
     def _leer_seleccion():
@@ -181,26 +303,48 @@ class Lanzador:
         try:
             datos = json.loads(ruta.read_text(encoding="utf-8"))
         except FileNotFoundError:
-            return config.MICROFONO, config.AUDIO_SALIDA, config.PROVEEDOR_IA
+            return (
+                config.MICROFONO,
+                config.AUDIO_SALIDA,
+                config.PROVEEDOR_IA,
+                config.PROVEEDOR_TTS,
+            )
         except (OSError, ValueError) as error:
             messagebox.showerror("Configuración de audio", f"No pude leer la selección guardada:\n{error}")
-            return config.MICROFONO, config.AUDIO_SALIDA, config.PROVEEDOR_IA
+            return (
+                config.MICROFONO,
+                config.AUDIO_SALIDA,
+                config.PROVEEDOR_IA,
+                config.PROVEEDOR_TTS,
+            )
         return (
             datos.get("microfono", config.MICROFONO),
             datos.get("salida", config.AUDIO_SALIDA),
             datos.get("proveedor", config.PROVEEDOR_IA),
+            (
+                config.PROVEEDOR_TTS
+                if datos.get("tts_version", 0) < 1
+                else datos.get("proveedor_tts", config.PROVEEDOR_TTS)
+            ),
         )
 
     def _guardar(self):
         microfono = self.entradas[self.entrada_var.get()]
         salida = self.salidas[self.salida_var.get()]
         proveedor = self.proveedores[self.proveedor_var.get()]
+        proveedor_tts = self.proveedores_tts[self.proveedor_tts_var.get()]
         config.CARPETA_DATOS.mkdir(parents=True, exist_ok=True)
         ruta = config.CARPETA_DATOS / "dispositivos_audio.json"
         temporal = ruta.with_suffix(".tmp")
         temporal.write_text(
             json.dumps(
-                {"microfono": microfono, "salida": salida, "proveedor": proveedor},
+                {
+                    "microfono": microfono,
+                    "salida": salida,
+                    "proveedor": proveedor,
+                    "proveedor_tts": proveedor_tts,
+                    "tts_version": 1,
+                },
                 ensure_ascii=False,
                 indent=2,
             ),
@@ -210,6 +354,7 @@ class Lanzador:
         config.MICROFONO = microfono
         config.AUDIO_SALIDA = salida
         config.PROVEEDOR_IA = proveedor
+        config.PROVEEDOR_TTS = proveedor_tts
         return microfono, salida, proveedor
 
     def probar_microfono(self):
@@ -270,6 +415,36 @@ class Lanzador:
             return
         threading.Thread(target=self._reproducir_prueba, args=(salida,), daemon=True).start()
 
+    def probar_voz(self):
+        try:
+            self._guardar()
+            self._guardar_claves()
+        except (OSError, KeyError) as error:
+            messagebox.showerror("Configuración de voz", str(error))
+            return
+        except Exception as error:
+            messagebox.showerror(
+                "No se pudieron guardar las API keys",
+                f"No pude guardar las claves en el Administrador de credenciales de Windows:\n{error}",
+                parent=self.raiz,
+            )
+            return
+        self.elevenlabs_api_key = self.elevenlabs_api_key_var.get().strip()
+        self.estado.set("Probando la voz seleccionada...")
+        threading.Thread(target=self._reproducir_prueba_voz, daemon=True).start()
+
+    def _reproducir_prueba_voz(self):
+        error = voice.hablar(
+            "Hola, soy Jarvis. Esta es una prueba de voz.",
+            api_key=self.elevenlabs_api_key,
+        )
+        estado = error or (
+            "Prueba de voz completada."
+            if config.PROVEEDOR_TTS == "elevenlabs"
+            else "Prueba de voz local completada."
+        )
+        self.raiz.after(0, self.estado.set, estado)
+
     def _reproducir_prueba(self, salida):
         try:
             import numpy as np
@@ -287,10 +462,30 @@ class Lanzador:
     def iniciar(self, texto):
         proveedor = self.proveedores[self.proveedor_var.get()]
         api_key = self.api_key_var.get().strip()
+        try:
+            self._guardar_claves()
+        except Exception as error:
+            messagebox.showerror(
+                "No se pudieron guardar las API keys",
+                f"No pude guardar las claves en el Administrador de credenciales de Windows:\n{error}",
+                parent=self.raiz,
+            )
+            return
         if proveedor != "ollama" and not api_key:
             messagebox.showerror(
                 "Falta la API key",
-                "Pegá tu API key en el campo correspondiente. La clave se usa solo durante esta sesión y no se guarda en disco.",
+                "Ingresá la API key del proveedor seleccionado.",
+                parent=self.raiz,
+            )
+            return
+        proveedor_tts = self.proveedores_tts[self.proveedor_tts_var.get()]
+        elevenlabs_api_key = self.elevenlabs_api_key_var.get().strip()
+        if not texto and proveedor_tts == "elevenlabs" and not (
+            elevenlabs_api_key or os.environ.get("ELEVENLABS_API_KEY")
+        ):
+            messagebox.showerror(
+                "Falta la API key de ElevenLabs",
+                "Ingresá la API key de ElevenLabs para usar esta voz.",
                 parent=self.raiz,
             )
             return
@@ -300,6 +495,7 @@ class Lanzador:
             messagebox.showerror("Configuración de audio", str(error))
             return
         self.modo = "texto" if texto else "voz"
+        self.elevenlabs_api_key = elevenlabs_api_key
         config.USAR_VOZ = not texto
         self.principal.grid_remove()
         self._crear_chat()
@@ -413,7 +609,7 @@ class Lanzador:
 
         self._agregar_mensaje(config.NOMBRE, "En línea. Escribime abajo.")
         self._estado(
-            "Escuchando: decí «Jarvis» y luego tu pedido."
+            "Escucha continua activada: hablá normalmente."
             if oido
             else "Modo texto listo."
         )
@@ -433,21 +629,32 @@ class Lanzador:
             except Exception as error:
                 respuesta = f"Tuve un problema: {error}"
             self._agregar_mensaje(config.NOMBRE, respuesta)
+            error_voz = None
             if self.modo == "voz" and config.USAR_VOZ:
-                self._hablar(respuesta)
-            self._estado("Escuchando: decí «Jarvis» y luego tu pedido." if oido else "Listo.")
+                error_voz = self._hablar(respuesta)
+            self._estado(
+                error_voz
+                or ("Escucha continua activada: hablá normalmente." if oido else "Listo.")
+            )
 
     def _notificar(self, texto):
         self._agregar_mensaje(config.NOMBRE, texto)
         if self.modo == "voz" and config.USAR_VOZ:
-            self._hablar(texto)
+            error = self._hablar(texto)
+            if error:
+                self._estado(error)
 
     def _hablar(self, texto):
         oido = getattr(self, "oido", None)
         if oido:
             oido.pausar_escucha.set()
         try:
-            voice.hablar(texto)
+            if oido:
+                with oido.bloqueo_audio:
+                    error = voice.hablar(texto, api_key=self.elevenlabs_api_key)
+            else:
+                error = voice.hablar(texto, api_key=self.elevenlabs_api_key)
+            return error
         finally:
             if oido:
                 oido.pausar_escucha.clear()
@@ -455,12 +662,9 @@ class Lanzador:
     def _escuchar(self, oido):
         while not self.cerrando.is_set():
             try:
-                pedido = oido.esperar_activacion(
-                    lambda texto: self._estado(f"Reconocimiento: «{texto}»")
+                pedido = oido.escuchar_continuo(
+                    lambda texto: self._estado(f"Escuché: «{texto}»")
                 )
-                if not pedido:
-                    self._hablar("Decime.")
-                    pedido = oido.transcribir(oido.grabar_frase(espera_max=8))
                 if pedido and not self.cerrando.is_set():
                     self.pedidos.put((pedido, "voz"))
             except Exception as error:
@@ -468,6 +672,15 @@ class Lanzador:
                 return
 
     def cerrar(self):
+        try:
+            self._guardar_claves()
+        except Exception as error:
+            messagebox.showerror(
+                "No se pudieron guardar las API keys",
+                f"No pude guardar las claves en el Administrador de credenciales de Windows:\n{error}",
+                parent=self.raiz,
+            )
+            return
         self.cerrando.set()
         self.raiz.destroy()
 

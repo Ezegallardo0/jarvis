@@ -10,7 +10,7 @@ if not exist "venv\Scripts\pythonw.exe" (
     exit /b 1
 )
 
-venv\Scripts\python.exe -c "import openai" >nul 2>nul
+venv\Scripts\python.exe -c "import openai, ddgs, httpx, keyring, piper" >nul 2>nul
 if errorlevel 1 (
     echo Instalando las dependencias de Jarvis en su entorno virtual...
     "venv\Scripts\python.exe" -m pip install -r requirements.txt

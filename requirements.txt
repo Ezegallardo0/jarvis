@@ -6,3 +6,7 @@ pyttsx3
 psutil
 pillow
 openai
+ddgs
+httpx
+keyring
+piper-tts
