@@ -27,13 +27,16 @@ def CONFIRMAR(texto):  # main.py lo reemplaza (voz o teclado)
     return input(f"{texto} [s/n]: ").strip().lower().startswith(("s", "y"))
 
 
-def herramienta(descripcion, parametros=None, requeridos=None, confirmar=False):
+def herramienta(
+    descripcion, parametros=None, requeridos=None, confirmar=False, requiere_pantalla=False
+):
     """Registra una función como herramienta que el modelo puede invocar."""
 
     def deco(fn):
         HERRAMIENTAS[fn.__name__] = {
             "fn": fn,
             "confirmar": confirmar,
+            "requiere_pantalla": requiere_pantalla,
             "schema": {
                 "type": "function",
                 "function": {
@@ -53,13 +56,19 @@ def herramienta(descripcion, parametros=None, requeridos=None, confirmar=False):
 
 
 def esquemas():
-    return [h["schema"] for h in HERRAMIENTAS.values()]
+    return [
+        h["schema"]
+        for h in HERRAMIENTAS.values()
+        if not h["requiere_pantalla"] or config.COMPARTIENDO_PANTALLA
+    ]
 
 
 def ejecutar(nombre, args):
     h = HERRAMIENTAS.get(nombre)
     if not h:
         return f"Herramienta desconocida: {nombre}"
+    if h["requiere_pantalla"] and not config.COMPARTIENDO_PANTALLA:
+        return "El acceso a la pantalla está desactivado. Pedile al usuario que lo habilite en Jarvis."
     args = args or {}
     if h["confirmar"] and not CONFIRMAR(f"Voy a ejecutar {nombre} con {json.dumps(args, ensure_ascii=False)}. ¿Confirmás?"):
         return "El usuario canceló la acción."
@@ -118,7 +127,8 @@ ALIAS_APPS = {
 
 
 @herramienta(
-    "Abre una aplicación de la PC. El nombre debe ser exactamente uno de la lista permitida.",
+    "Abre sin pedir confirmación una aplicación de la PC solo cuando el usuario lo solicite explícitamente. "
+    "El nombre debe ser exactamente uno de la lista permitida; no uses esta herramienta para otras acciones.",
     {"nombre": {"type": "string", "enum": list(config.APPS), "description": "Nombre exacto de la aplicación"}},
     ["nombre"],
 )

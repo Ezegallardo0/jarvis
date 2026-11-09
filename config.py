@@ -22,8 +22,10 @@ MODELO_OPENAI = "gpt-6-luna"
 # --- Voz ---
 USAR_VOZ = True            # main.py --texto lo pone en False
 PROVEEDOR_TTS = os.environ.get("JARVIS_TTS_PROVIDER", "piper").lower()
-ELEVENLABS_VOICE_ID = "wBXNqKUATyqu0RtYt25i"
-PIPER_MODELO_VOZ = "es_AR-daniela-high"
+ELEVENLABS_VOICE_ID = os.environ.get(
+    "ELEVENLABS_VOICE_ID", "wBXNqKUATyqu0RtYt25i"
+).strip()
+PIPER_MODELO_VOZ = "es_MX-claude-high"
 WHISPER_MODELO = "small"   # tiny / base / small / medium (más grande = más preciso y lento)
 IDIOMA = "es"
 VENTANA_CONVERSACION_SEG = 6   # tras responder, escucha seguimiento sin decir "Jarvis"

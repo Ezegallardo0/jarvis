@@ -28,8 +28,11 @@ import argparse
 
 import config
 import tools
+import visionTools
 import voice
 from brain import Cerebro
+
+_ = visionTools
 
 SALIDAS = ("salir", "adios", "apagate", "hasta luego", "chau")
 

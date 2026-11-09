@@ -6,6 +6,7 @@ import threading
 import time
 import unicodedata
 import wave
+from dataclasses import dataclass
 from pathlib import Path
 
 import config
@@ -13,11 +14,16 @@ import config
 SR = 16000
 _PIPER_REVISION = "e7229f7d33a10e145e109b886d661984201ac3c4"
 _PIPER_FILES = {
-    f"{config.PIPER_MODELO_VOZ}.onnx": 114199011,
-    f"{config.PIPER_MODELO_VOZ}.onnx.json": 7248,
+    f"{config.PIPER_MODELO_VOZ}.onnx": 63122309,
+    f"{config.PIPER_MODELO_VOZ}.onnx.json": 4963,
 }
 _PIPER_VOICE = None
 _PIPER_LOCK = threading.RLock()
+
+
+@dataclass(frozen=True)
+class InterrupcionVoz:
+    texto: str
 
 
 def normalizar(texto):
@@ -26,23 +32,21 @@ def normalizar(texto):
     return re.sub(r"[^\w\s]", " ", texto)
 
 
-def hablar(texto, api_key=None):
+def hablar(texto, api_key=None, oido=None):
     print(f"{config.NOMBRE}: {texto}")
     if not config.USAR_VOZ:
         return None
-    limpio = re.sub(r"[*#`_]", "", texto)
+    limpio = texto
     if config.PROVEEDOR_TTS == "elevenlabs":
         try:
-            _hablar_elevenlabs(limpio, api_key)
-            return None
+            return _hablar_elevenlabs(limpio, api_key, oido)
         except Exception as error:
             mensaje = f"No se pudo generar la voz de ElevenLabs: {error}"
             print(f"({mensaje})")
             return mensaje
     if config.PROVEEDOR_TTS == "piper":
         try:
-            _hablar_piper(limpio)
-            return None
+            return _hablar_piper(limpio, oido)
         except Exception as error:
             mensaje = f"No se pudo generar la voz local de Piper: {error}"
             print(f"({mensaje})")
@@ -58,39 +62,13 @@ def hablar(texto, api_key=None):
                 motor.setProperty("voice", v.id)
                 break
         motor.setProperty("rate", 175)
-        if config.AUDIO_SALIDA is None:
-            motor.say(limpio)
+        with tempfile.TemporaryDirectory() as carpeta:
+            ruta = Path(carpeta) / "respuesta.wav"
+            motor.save_to_file(limpio, str(ruta))
             motor.runAndWait()
             motor.stop()
-        else:
-            import numpy as np
-            import sounddevice as sd
-
-            with tempfile.TemporaryDirectory() as carpeta:
-                ruta = Path(carpeta) / "respuesta.wav"
-                motor.save_to_file(limpio, str(ruta))
-                motor.runAndWait()
-                motor.stop()
-                with wave.open(str(ruta), "rb") as archivo:
-                    if archivo.getsampwidth() != 2:
-                        raise ValueError("El formato de audio de voz no es PCM de 16 bits.")
-                    canales = archivo.getnchannels()
-                    frecuencia = archivo.getframerate()
-                    audio = np.frombuffer(
-                        archivo.readframes(archivo.getnframes()), dtype="<i2"
-                    ).astype(np.float32) / 32768
-                if canales > 1:
-                    audio = audio.reshape(-1, canales)
-                salida = sd.query_devices(config.AUDIO_SALIDA)
-                frecuencia_salida = int(salida["default_samplerate"])
-                if frecuencia != frecuencia_salida:
-                    cantidad = round(len(audio) * frecuencia_salida / frecuencia)
-                    posiciones = np.linspace(0, len(audio) - 1, cantidad)
-                    audio = np.stack(
-                        [np.interp(posiciones, np.arange(len(audio)), audio[:, canal]) for canal in range(canales)],
-                        axis=1,
-                    ) if canales > 1 else np.interp(posiciones, np.arange(len(audio)), audio)
-                sd.play(audio, samplerate=frecuencia_salida, device=config.AUDIO_SALIDA, blocking=True)
+            audio, frecuencia = _leer_wav(ruta)
+            return _reproducir_audio(audio, frecuencia, oido)
     except Exception as e:
         print(f"(voz no disponible: {e})")
     return None
@@ -113,10 +91,7 @@ def _cargar_voz_piper():
             if destino.is_file() and destino.stat().st_size == tamaño_esperado:
                 continue
 
-            ruta_repo = (
-                "es/es_AR/daniela/high/"
-                f"{nombre}"
-            )
+            ruta_repo = f"es/es_MX/claude/high/{nombre}"
             url = (
                 "https://huggingface.co/rhasspy/piper-voices/resolve/"
                 f"{_PIPER_REVISION}/{ruta_repo}"
@@ -149,69 +124,97 @@ def _cargar_voz_piper():
         return _PIPER_VOICE
 
 
-def _hablar_piper(texto):
+def _leer_wav(ruta):
+    import numpy as np
+
+    with wave.open(str(ruta), "rb") as archivo:
+        if archivo.getsampwidth() != 2:
+            raise ValueError("El formato de audio de voz no es PCM de 16 bits.")
+        canales = archivo.getnchannels()
+        frecuencia = archivo.getframerate()
+        audio = np.frombuffer(
+            archivo.readframes(archivo.getnframes()), dtype="<i2"
+        ).astype(np.float32) / 32768
+    if canales > 1:
+        audio = audio.reshape(-1, canales)
+    return audio, frecuencia
+
+
+def _reproducir_audio(audio, frecuencia, oido=None):
     import numpy as np
     import sounddevice as sd
 
+    salida = (
+        sd.query_devices(kind="output")
+        if config.AUDIO_SALIDA is None
+        else sd.query_devices(config.AUDIO_SALIDA, "output")
+    )
+    frecuencia_salida = int(salida["default_samplerate"])
+    if frecuencia != frecuencia_salida:
+        cantidad = round(len(audio) * frecuencia_salida / frecuencia)
+        posiciones = np.linspace(0, len(audio) - 1, cantidad)
+        if getattr(audio, "ndim", 1) > 1:
+            audio = np.stack(
+                [
+                    np.interp(posiciones, np.arange(len(audio)), audio[:, canal])
+                    for canal in range(audio.shape[1])
+                ],
+                axis=1,
+            )
+        else:
+            audio = np.interp(posiciones, np.arange(len(audio)), audio)
+    if oido:
+        return oido.reproducir_interrumpible(
+            audio, frecuencia_salida, config.AUDIO_SALIDA
+        )
+    sd.play(
+        audio,
+        samplerate=frecuencia_salida,
+        device=config.AUDIO_SALIDA,
+        blocking=True,
+    )
+    return None
+
+
+def _hablar_piper(texto, oido=None):
     with _PIPER_LOCK:
         voz = _cargar_voz_piper()
         with tempfile.TemporaryDirectory() as carpeta:
             ruta = Path(carpeta) / "respuesta.wav"
             with wave.open(str(ruta), "wb") as archivo:
                 voz.synthesize_wav(texto, archivo)
-            with wave.open(str(ruta), "rb") as archivo:
-                if archivo.getsampwidth() != 2:
-                    raise ValueError("Piper devolvió audio que no es PCM de 16 bits.")
-                canales = archivo.getnchannels()
-                frecuencia = archivo.getframerate()
-                audio = np.frombuffer(
-                    archivo.readframes(archivo.getnframes()), dtype="<i2"
-                ).astype(np.float32) / 32768
-            if canales > 1:
-                audio = audio.reshape(-1, canales)
-            salida = (
-                sd.query_devices(kind="output")
-                if config.AUDIO_SALIDA is None
-                else sd.query_devices(config.AUDIO_SALIDA, "output")
-            )
-            frecuencia_salida = int(salida["default_samplerate"])
-            if frecuencia != frecuencia_salida:
-                cantidad = round(len(audio) * frecuencia_salida / frecuencia)
-                posiciones = np.linspace(0, len(audio) - 1, cantidad)
-                if canales > 1:
-                    audio = np.stack(
-                        [
-                            np.interp(posiciones, np.arange(len(audio)), audio[:, canal])
-                            for canal in range(canales)
-                        ],
-                        axis=1,
-                    )
-                else:
-                    audio = np.interp(posiciones, np.arange(len(audio)), audio)
-            sd.play(
-                audio,
-                samplerate=frecuencia_salida,
-                device=config.AUDIO_SALIDA,
-                blocking=True,
-            )
+            audio, frecuencia = _leer_wav(ruta)
+            return _reproducir_audio(audio, frecuencia, oido)
 
 
-def _hablar_elevenlabs(texto, api_key):
+def probar_elevenlabs(texto, api_key, voice_id=None, oido=None):
+    """Genera y reproduce una frase usando la API de ElevenLabs directamente."""
+    if not texto.strip():
+        raise ValueError("El texto de prueba está vacío.")
+    _hablar_elevenlabs(texto, api_key, oido, voice_id=voice_id)
+    return 200
+
+
+def _hablar_elevenlabs(texto, api_key, oido=None, voice_id=None):
     import httpx
     import numpy as np
-    import sounddevice as sd
 
     clave = api_key or os.environ.get("ELEVENLABS_API_KEY", "")
+    id_voz = (voice_id or config.ELEVENLABS_VOICE_ID).strip()
     if not clave:
         raise ValueError(
             "Falta ELEVENLABS_API_KEY. Ingresala en la interfaz o definila como variable de entorno."
+        )
+    if not id_voz or id_voz == "TU_VOICE_ID":
+        raise ValueError(
+            "Falta un Voice ID válido. Copialo desde la voz elegida en ElevenLabs."
         )
     if not texto.strip():
         return
 
     url = (
         "https://api.elevenlabs.io/v1/text-to-speech/"
-        f"{config.ELEVENLABS_VOICE_ID}"
+        f"{id_voz}"
     )
     try:
         respuesta = httpx.post(
@@ -224,44 +227,54 @@ def _hablar_elevenlabs(texto, api_key):
     except httpx.RequestError as error:
         raise RuntimeError(f"No pude conectar con ElevenLabs: {error}") from error
 
+    if not respuesta.is_success:
+        detalle = ""
+        try:
+            cuerpo = respuesta.json()
+            detalle = cuerpo.get("detail", cuerpo)
+            if isinstance(detalle, dict):
+                detalle = detalle.get("message", detalle)
+                if isinstance(detalle, dict):
+                    detalle = detalle.get("message", detalle)
+            detalle = str(detalle).replace(clave, "[API key oculta]")[:500]
+        except (ValueError, AttributeError):
+            detalle = respuesta.text[:500].replace(clave, "[API key oculta]")
+        sufijo = f" Detalle: {detalle}" if detalle else ""
+    else:
+        sufijo = ""
+
     if respuesta.status_code == 401:
         raise RuntimeError(
             "ElevenLabs devolvió HTTP 401: la API key no es válida, fue revocada "
             "o está mal copiada. Usá una clave creada en ElevenLabs, no la de Gemini/OpenAI."
+            f"{sufijo}"
         )
     if respuesta.status_code == 403:
         raise RuntimeError(
             f"ElevenLabs devolvió HTTP 403: la clave no tiene permiso para usar "
-            f"la voz {config.ELEVENLABS_VOICE_ID}, o la voz no está disponible "
-            "en esa cuenta. Revisá permisos de la clave y acceso a la voz."
+            f"la voz {id_voz}, o la voz no está disponible en esa cuenta. "
+            f"Revisá permisos de la clave y acceso a la voz.{sufijo}"
+        )
+    if respuesta.status_code == 402:
+        raise RuntimeError(
+            "ElevenLabs devolvió HTTP 402: el plan gratuito no permite usar voces "
+            "de la biblioteca mediante la API. Actualizá el plan de ElevenLabs o "
+            "seguí usando Piper, que funciona gratis y localmente."
+            f"{sufijo}"
         )
     if respuesta.status_code == 429:
-        raise RuntimeError("ElevenLabs alcanzó el límite de uso. Revisá tu plan y cuota.")
+        raise RuntimeError(
+            f"ElevenLabs alcanzó el límite de uso (HTTP 429). Revisá tu plan y cuota.{sufijo}"
+        )
     if not respuesta.is_success:
-        raise RuntimeError(f"ElevenLabs respondió con HTTP {respuesta.status_code}.")
+        raise RuntimeError(
+            f"ElevenLabs respondió con HTTP {respuesta.status_code}.{sufijo}"
+        )
     if not respuesta.content or len(respuesta.content) % 2:
         raise RuntimeError("ElevenLabs devolvió audio PCM vacío o inválido.")
 
     audio = np.frombuffer(respuesta.content, dtype="<i2").astype(np.float32) / 32768
-    frecuencia_audio = 24000
-    if config.AUDIO_SALIDA is None:
-        salida = sd.query_devices(kind="output")
-    else:
-        salida = sd.query_devices(config.AUDIO_SALIDA, "output")
-    frecuencia_salida = int(salida["default_samplerate"])
-    if frecuencia_salida != frecuencia_audio:
-        cantidad = round(len(audio) * frecuencia_salida / frecuencia_audio)
-        audio = np.interp(
-            np.linspace(0, len(audio) - 1, cantidad),
-            np.arange(len(audio)),
-            audio,
-        )
-    sd.play(
-        audio,
-        samplerate=frecuencia_salida,
-        device=config.AUDIO_SALIDA,
-        blocking=True,
-    )
+    return _reproducir_audio(audio, 24000, oido)
 
 
 def medir_microfono(dispositivo=None, segundos=5):
@@ -452,6 +465,70 @@ class Oido:
             return ""
         segmentos, _ = self.modelo.transcribe(audio, language=config.IDIOMA, beam_size=1, vad_filter=True)
         return " ".join(s.text.strip() for s in segmentos).strip()
+
+    def reproducir_interrumpible(self, audio, samplerate, dispositivo_salida):
+        """Reproduce la respuesta y la corta si detecta voz del usuario."""
+        np, sd = self.np, self.sd
+        bloque = max(1, int(self.frecuencia * 0.1))
+        umbral_interrupcion = max(0.006, self.umbral * 2.0)
+        previos = []
+        frase = []
+        actividad = 0
+        silencio = 0
+        hablando = False
+        bloques_frase = 0
+        sd.play(
+            audio,
+            samplerate=samplerate,
+            device=dispositivo_salida,
+            blocking=False,
+        )
+        try:
+            with sd.InputStream(
+                samplerate=self.frecuencia,
+                channels=1,
+                dtype="float32",
+                blocksize=bloque,
+                device=self.dispositivo,
+            ) as stream:
+                while True:
+                    salida = sd.get_stream()
+                    reproduciendo = salida is not None and salida.active
+                    if not reproduciendo and not hablando:
+                        break
+                    datos, _ = stream.read(bloque)
+                    nivel = float(np.sqrt(np.mean(datos**2)))
+                    if not hablando:
+                        previos = (previos + [datos.copy()])[-3:]
+                        if nivel >= umbral_interrupcion:
+                            actividad += 1
+                            if actividad >= 2:
+                                hablando = True
+                                frase = list(previos)
+                                sd.stop()
+                        else:
+                            actividad = 0
+                    else:
+                        frase.append(datos.copy())
+                        bloques_frase += 1
+                        silencio = silencio + 1 if nivel < self.umbral else 0
+                        if silencio >= 8 or bloques_frase >= 150:
+                            break
+        except Exception:
+            sd.stop()
+            raise
+
+        if not hablando:
+            return None
+        audio_usuario = np.concatenate(frase).flatten()
+        if self.frecuencia != SR:
+            cantidad = round(len(audio_usuario) * SR / self.frecuencia)
+            audio_usuario = np.interp(
+                np.linspace(0, len(audio_usuario) - 1, cantidad),
+                np.arange(len(audio_usuario)),
+                audio_usuario,
+            ).astype(np.float32)
+        return InterrupcionVoz(self.transcribir(audio_usuario))
 
     def esperar_activacion(self, al_transcribir=None):
         """Bloquea hasta oír la palabra de activación. Devuelve lo que se dijo después (puede ser '')."""

@@ -40,6 +40,9 @@ class Lanzador:
         self.cerrando = threading.Event()
         self.pedidos = queue.Queue()
         self.modo = None
+        self.vision_descargando = False
+        self.compartir_pantalla_var = tk.BooleanVar(value=False)
+        config.COMPARTIENDO_PANTALLA = False
 
         principal = ttk.Frame(raiz, padding=16)
         self.principal = principal
@@ -53,7 +56,14 @@ class Lanzador:
         self.salidas = {"Predeterminada de Windows": None}
         self.entradas.update(entradas)
         self.salidas.update(salidas)
-        microfono, salida, proveedor, proveedor_tts = self._leer_seleccion()
+        (
+            microfono,
+            salida,
+            proveedor,
+            proveedor_tts,
+            elevenlabs_voice_id,
+        ) = self._leer_seleccion()
+        config.ELEVENLABS_VOICE_ID = elevenlabs_voice_id
         self.entrada_var = tk.StringVar(value=self._etiqueta(self.entradas, microfono))
         self.salida_var = tk.StringVar(value=self._etiqueta(self.salidas, salida))
         self.proveedores = {
@@ -90,6 +100,9 @@ class Lanzador:
         )
         self.elevenlabs_api_key_var = tk.StringVar(value=clave_elevenlabs)
         self.elevenlabs_api_key = ""
+        self.elevenlabs_voice_id_var = tk.StringVar(
+            value=config.ELEVENLABS_VOICE_ID
+        )
 
         ttk.Label(principal, text="Micrófono (entrada)").grid(row=1, column=0, sticky="w", pady=4)
         self.entrada_menu = ttk.Combobox(
@@ -140,13 +153,35 @@ class Lanzador:
             principal, textvariable=self.elevenlabs_api_key_var, show="*", width=56
         )
         self.elevenlabs_api_key_entry.grid(row=7, column=1, sticky="ew", pady=4)
+        ttk.Label(principal, text="Voice ID de ElevenLabs").grid(
+            row=8, column=0, sticky="w", pady=4
+        )
+        self.elevenlabs_voice_id_entry = ttk.Entry(
+            principal, textvariable=self.elevenlabs_voice_id_var, width=56
+        )
+        self.elevenlabs_voice_id_entry.grid(row=8, column=1, sticky="ew", pady=4)
         ttk.Label(
             principal,
-            text=f"Voz Piper predeterminada: Daniela ({config.PIPER_MODELO_VOZ}). Se descarga gratis y funciona sin conexión.",
-        ).grid(row=8, column=0, columnspan=2, sticky="w")
+            text="Copiá el Voice ID de la voz elegida en ElevenLabs. Se guarda en la configuración local.",
+        ).grid(row=9, column=0, columnspan=2, sticky="w")
+        ttk.Label(
+            principal,
+            text=f"Voz local predeterminada: Claude ({config.PIPER_MODELO_VOZ}), gratis y sin conexión.",
+        ).grid(row=10, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(
+            principal,
+            text="Permitir que Jarvis analice la pantalla cuando se lo pida (captura bajo demanda)",
+            variable=self.compartir_pantalla_var,
+            command=self._cambiar_permiso_pantalla,
+        ).grid(row=11, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Button(
+            principal,
+            text=f"Descargar modelo visual (~3 GB): {config.MODELO_VISION}",
+            command=self.preparar_vision,
+        ).grid(row=12, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
         acciones = ttk.Frame(principal)
-        acciones.grid(row=9, column=0, columnspan=2, sticky="ew", pady=(16, 8))
+        acciones.grid(row=13, column=0, columnspan=2, sticky="ew", pady=(16, 8))
         ttk.Button(acciones, text="Probar micrófono", command=self.probar_microfono).grid(
             row=0, column=0, padx=(0, 6)
         )
@@ -161,21 +196,24 @@ class Lanzador:
         ttk.Button(acciones, text="Probar voz", command=self.probar_voz).grid(
             row=0, column=3, padx=6
         )
+        ttk.Button(
+            acciones, text="Probar ElevenLabs", command=self.probar_elevenlabs
+        ).grid(row=0, column=4, padx=6)
         ttk.Button(acciones, text="Iniciar con voz", command=lambda: self.iniciar(False)).grid(
-            row=0, column=4, padx=6
+            row=1, column=0, sticky="w", pady=(8, 0)
         )
         ttk.Button(acciones, text="Iniciar en modo texto", command=lambda: self.iniciar(True)).grid(
-            row=0, column=5, padx=(6, 0)
+            row=1, column=1, sticky="w", padx=6, pady=(8, 0)
         )
 
         self.estado = tk.StringVar(value="Seleccioná los dispositivos y probalos antes de iniciar.")
         ttk.Label(principal, textvariable=self.estado, wraplength=650).grid(
-            row=10, column=0, columnspan=2, sticky="w", pady=(8, 0)
+            row=14, column=0, columnspan=2, sticky="w", pady=(8, 0)
         )
         ttk.Label(
             principal,
             text="La prueba del micrófono dura 5 segundos: hablá durante la medición.",
-        ).grid(row=11, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ).grid(row=15, column=0, columnspan=2, sticky="w", pady=(8, 0))
         self.api_key_entry.bind("<FocusOut>", self._guardar_claves_al_perder_foco)
         self.elevenlabs_api_key_entry.bind("<FocusOut>", self._guardar_claves_al_perder_foco)
 
@@ -183,6 +221,48 @@ class Lanzador:
             self.estado.set("Windows no informa entradas de audio. Revisá permisos y conexión del micrófono.")
         raiz.columnconfigure(0, weight=1)
         raiz.rowconfigure(0, weight=1)
+
+    def _cambiar_permiso_pantalla(self):
+        config.COMPARTIENDO_PANTALLA = self.compartir_pantalla_var.get()
+        if config.COMPARTIENDO_PANTALLA:
+            estado = "Acceso a pantalla habilitado. Jarvis solo captura al pedírselo."
+        else:
+            estado = "Acceso a pantalla desactivado."
+        self._estado_visible(estado)
+
+    def _estado_visible(self, texto):
+        if hasattr(self, "estado_chat"):
+            self.estado_chat.set(texto)
+        else:
+            self.estado.set(texto)
+
+    def preparar_vision(self):
+        if self.vision_descargando:
+            return
+        self.vision_descargando = True
+        self._estado_visible(
+            f"Descargando {config.MODELO_VISION} desde Ollama; puede tardar según tu conexión..."
+        )
+        threading.Thread(target=self._descargar_modelo_vision, daemon=True).start()
+
+    def _descargar_modelo_vision(self):
+        try:
+            import ollama
+
+            cliente = ollama.Client(host=config.OLLAMA_HOST)
+            for progreso in cliente.pull(config.MODELO_VISION, stream=True):
+                estado = getattr(progreso, "status", "Descargando modelo visual...")
+                total = getattr(progreso, "total", None)
+                completado = getattr(progreso, "completed", None)
+                if total and completado is not None:
+                    estado += f" ({100 * completado / total:.0f}%)"
+                self.raiz.after(0, self._estado_visible, estado)
+            resultado = f"Modelo visual listo: {config.MODELO_VISION}. Habilitá el permiso para analizar la pantalla."
+        except Exception as error:
+            resultado = f"No pude descargar el modelo visual: {error}. Verificá que Ollama esté abierto y tenga internet."
+        finally:
+            self.vision_descargando = False
+        self.raiz.after(0, self._estado_visible, resultado)
 
     @staticmethod
     def _dispositivos():
@@ -308,6 +388,7 @@ class Lanzador:
                 config.AUDIO_SALIDA,
                 config.PROVEEDOR_IA,
                 config.PROVEEDOR_TTS,
+                config.ELEVENLABS_VOICE_ID,
             )
         except (OSError, ValueError) as error:
             messagebox.showerror("Configuración de audio", f"No pude leer la selección guardada:\n{error}")
@@ -316,6 +397,7 @@ class Lanzador:
                 config.AUDIO_SALIDA,
                 config.PROVEEDOR_IA,
                 config.PROVEEDOR_TTS,
+                config.ELEVENLABS_VOICE_ID,
             )
         return (
             datos.get("microfono", config.MICROFONO),
@@ -326,6 +408,7 @@ class Lanzador:
                 if datos.get("tts_version", 0) < 1
                 else datos.get("proveedor_tts", config.PROVEEDOR_TTS)
             ),
+            datos.get("elevenlabs_voice_id", config.ELEVENLABS_VOICE_ID),
         )
 
     def _guardar(self):
@@ -333,6 +416,7 @@ class Lanzador:
         salida = self.salidas[self.salida_var.get()]
         proveedor = self.proveedores[self.proveedor_var.get()]
         proveedor_tts = self.proveedores_tts[self.proveedor_tts_var.get()]
+        voice_id = self.elevenlabs_voice_id_var.get().strip()
         config.CARPETA_DATOS.mkdir(parents=True, exist_ok=True)
         ruta = config.CARPETA_DATOS / "dispositivos_audio.json"
         temporal = ruta.with_suffix(".tmp")
@@ -344,6 +428,7 @@ class Lanzador:
                     "proveedor": proveedor,
                     "proveedor_tts": proveedor_tts,
                     "tts_version": 1,
+                    "elevenlabs_voice_id": voice_id,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -355,6 +440,7 @@ class Lanzador:
         config.AUDIO_SALIDA = salida
         config.PROVEEDOR_IA = proveedor
         config.PROVEEDOR_TTS = proveedor_tts
+        config.ELEVENLABS_VOICE_ID = voice_id
         return microfono, salida, proveedor
 
     def probar_microfono(self):
@@ -445,6 +531,58 @@ class Lanzador:
         )
         self.raiz.after(0, self.estado.set, estado)
 
+    def probar_elevenlabs(self):
+        try:
+            self._guardar()
+            self._guardar_claves()
+        except (OSError, KeyError) as error:
+            messagebox.showerror("Configuración de voz", str(error))
+            return
+        except Exception as error:
+            messagebox.showerror(
+                "No se pudieron guardar las API keys",
+                f"No pude guardar las claves en el Administrador de credenciales de Windows:\n{error}",
+                parent=self.raiz,
+            )
+            return
+
+        api_key = self.elevenlabs_api_key_var.get().strip() or os.environ.get(
+            "ELEVENLABS_API_KEY", ""
+        )
+        if not api_key:
+            self.estado.set("Falta la API key de ElevenLabs. Pegala en el campo correspondiente.")
+            return
+        voice_id = self.elevenlabs_voice_id_var.get().strip()
+        if not voice_id or voice_id == "TU_VOICE_ID":
+            self.estado.set(
+                "Falta un Voice ID válido. Copialo desde la voz elegida en ElevenLabs."
+            )
+            return
+
+        self.estado.set(
+            f"Probando ElevenLabs con la voz {voice_id}..."
+        )
+        threading.Thread(
+            target=self._reproducir_prueba_elevenlabs,
+            args=(api_key, voice_id),
+            daemon=True,
+        ).start()
+
+    def _reproducir_prueba_elevenlabs(self, api_key, voice_id):
+        try:
+            codigo = voice.probar_elevenlabs(
+                "Hola, soy Jarvis. ¿En qué puedo ayudarte?",
+                api_key=api_key,
+                voice_id=voice_id,
+            )
+            estado = (
+                f"ElevenLabs respondió HTTP {codigo}: audio generado y reproducido "
+                f"con la voz {voice_id}."
+            )
+        except Exception as error:
+            estado = f"Falló la prueba de ElevenLabs: {error}"
+        self.raiz.after(0, self.estado.set, estado)
+
     def _reproducir_prueba(self, salida):
         try:
             import numpy as np
@@ -512,11 +650,20 @@ class Lanzador:
         self.chat.grid(row=0, column=0, sticky="nsew")
         self.chat.columnconfigure(0, weight=1)
         self.chat.rowconfigure(1, weight=1)
+        encabezado = ttk.Frame(self.chat)
+        encabezado.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         ttk.Label(
-            self.chat,
+            encabezado,
             text=f"{config.NOMBRE} - modo {self.modo}",
             font=("Segoe UI", 15, "bold"),
-        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Checkbutton(
+            encabezado,
+            text="Permitir análisis de pantalla",
+            variable=self.compartir_pantalla_var,
+            command=self._cambiar_permiso_pantalla,
+        ).grid(row=0, column=1, sticky="e", padx=(12, 0))
+        encabezado.columnconfigure(0, weight=1)
         conversacion = ttk.Frame(self.chat)
         conversacion.grid(row=1, column=0, sticky="nsew")
         conversacion.columnconfigure(0, weight=1)
@@ -581,7 +728,9 @@ class Lanzador:
         from brain import Cerebro
 
         import tools
+        import visionTools
 
+        _ = visionTools
         tools.NOTIFICAR = self._notificar
         tools.CONFIRMAR = self._confirmar
         try:
@@ -651,10 +800,24 @@ class Lanzador:
         try:
             if oido:
                 with oido.bloqueo_audio:
-                    error = voice.hablar(texto, api_key=self.elevenlabs_api_key)
+                    resultado = voice.hablar(
+                        texto,
+                        api_key=self.elevenlabs_api_key,
+                        oido=oido,
+                    )
             else:
-                error = voice.hablar(texto, api_key=self.elevenlabs_api_key)
-            return error
+                resultado = voice.hablar(
+                    texto, api_key=self.elevenlabs_api_key
+                )
+            if isinstance(resultado, voice.InterrupcionVoz):
+                pedido = resultado.texto.strip()
+                if pedido and not self.cerrando.is_set():
+                    self._agregar_mensaje("Tú (voz)", pedido)
+                    self.pedidos.put((pedido, "voz"))
+                elif not self.cerrando.is_set():
+                    self._estado("Te escuché, pero no pude reconocer lo que dijiste.")
+                return None
+            return resultado
         finally:
             if oido:
                 oido.pausar_escucha.clear()

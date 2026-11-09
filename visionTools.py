@@ -1,4 +1,4 @@
-"""Compartir pantalla: Jarvis mira tu pantalla con un modelo de visión local."""
+"""Análisis de pantalla bajo demanda con un modelo de visión local."""
 import io
 
 import ollama
@@ -18,12 +18,16 @@ def capturar_jpeg(ancho_max=1280):
 
 
 @herramienta(
-    "Mira la pantalla del usuario en este momento y responde una pregunta sobre lo que se ve "
+    "Mira una captura actual de la pantalla solo cuando el usuario pide explícitamente que la analices; "
+    "responde una pregunta sobre lo que se ve "
     "(describir, leer texto, explicar un error, ayudar con lo que tiene abierto).",
     {"pregunta": {"type": "string", "description": "Qué querés saber de la pantalla"}},
     ["pregunta"],
+    requiere_pantalla=True,
 )
 def ver_pantalla(pregunta="Describí brevemente lo que hay en la pantalla."):
+    if not config.COMPARTIENDO_PANTALLA:
+        return "El acceso a la pantalla está desactivado. Pedile al usuario que lo habilite en Jarvis."
     try:
         resp = ollama.Client(host=config.OLLAMA_HOST).chat(
             model=config.MODELO_VISION,
@@ -36,5 +40,7 @@ def ver_pantalla(pregunta="Describí brevemente lo que hay en la pantalla."):
     except Exception as e:
         if "not found" in str(e).lower():
             return f"Falta el modelo de visión. Ejecutá en una terminal: ollama pull {config.MODELO_VISION}"
+        if "connect" in str(e).lower() or "refused" in str(e).lower():
+            return "No pude conectar con Ollama. Abrilo y volvé a pedirme que mire la pantalla."
         raise
     return (resp.message.content or "").strip() or "No pude interpretar la captura."
