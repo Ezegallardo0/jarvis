@@ -1,10 +1,13 @@
-"""Interfaz básica para elegir dispositivos de audio y arrancar Jarvis."""
+"""Controlador del HUD web y de los subsistemas de Jarvis."""
 import json
 import math
 import os
 import queue
+import shutil
+import subprocess
 import sys
 import threading
+import time
 import webbrowser
 from datetime import datetime
 from pathlib import Path
@@ -31,7 +34,13 @@ from tkinter import messagebox, ttk
 
 import config
 import sounddevice as sd
+import ui
 import voice
+
+try:  # registra las herramientas de Spotify (la librería spotipy se carga recién al usarlas)
+    import spotyfyTools
+except Exception:  # pragma: no cover
+    spotyfyTools = None
 
 FONDO = "#07111C"
 PANEL = "#0D1A28"
@@ -41,25 +50,71 @@ TEXTO_SUAVE = "#8DA4B8"
 CIAN = "#47D7F5"
 
 
+class _EntradasHud:
+    """Conecta los mensajes del HUD con la cola del asistente."""
+
+    def __init__(self, app):
+        self.app = app
+
+    def put(self, texto):
+        self.app.desde_hud(texto)
+
+
 class Lanzador:
     def __init__(self, raiz):
         self.raiz = raiz
-        raiz.title(f"{config.NOMBRE} // ASISTENTE PERSONAL")
-        raiz.geometry("1360x860")
-        raiz.minsize(1060, 700)
-        raiz.configure(bg=FONDO)
-        raiz.resizable(True, True)
+        raiz.withdraw()
         raiz.protocol("WM_DELETE_WINDOW", self.cerrar)
-        self._configurar_estilos()
         self.cerrando = threading.Event()
         self.pedidos = queue.Queue()
+        self._pedidos_lock = threading.Lock()
+        self._respuesta_lista = threading.Event()
+        self._respuesta_lista.set()
+        self.bus = ui.Bus()
+        self.hud_servidor = None
+        self._hud_visto = False
+        self._hud_ausente = None
+        self._hud_vigilando = False
+        self._hud_lanzado_en = None
         self.modo = None
         self.vision_descargando = False
-        self._fase_nucleo = 0
         self.asistente_activo = False
-        self.compartir_pantalla_var = tk.BooleanVar(value=False)
+        self.oido = None
+        self._modo_lock = threading.Lock()
+        self._voz_iniciando = False
+        self._escucha_hilo = None
+        (
+            config.MICROFONO,
+            config.AUDIO_SALIDA,
+            config.PROVEEDOR_IA,
+            config.PROVEEDOR_TTS,
+            config.ELEVENLABS_VOICE_ID,
+            config.UBICACION,
+            config.SPOTIFY_CLIENT_ID,
+            config.MODELO_VISION,
+            config.MODELO,
+            config.MODELO_GEMINI,
+            config.MODELO_OPENAI,
+            config.OLLAMA_HOST,
+            config.WHISPER_MODELO,
+            config.IDIOMA,
+        ) = self._leer_seleccion()
+        try:
+            config.GITHUB_TOKEN = self._clave_guardada_o_entorno("github")
+        except Exception as error:
+            messagebox.showerror(
+                "Credenciales no disponibles",
+                f"No pude leer las credenciales guardadas en Windows:\n{error}",
+                parent=raiz,
+            )
+            config.GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
         config.COMPARTIENDO_PANTALLA = False
+        if spotyfyTools:
+            spotyfyTools.PUBLICAR = self.bus.publish
 
+    def _crear_interfaz_anterior(self, raiz):
+        """Interfaz nativa retirada; la configuración y el chat viven en el HUD."""
+        self._configurar_estilos()
         self.shell = ttk.Frame(raiz, style="App.TFrame")
         self.shell.grid(row=0, column=0, sticky="nsew")
         self.shell.columnconfigure(1, weight=1)
@@ -135,8 +190,16 @@ class Lanzador:
             proveedor_tts,
             elevenlabs_voice_id,
             ubicacion,
+            spotify_client_id,
         ) = self._leer_seleccion()
+        config.MICROFONO = microfono
+        config.AUDIO_SALIDA = salida
+        config.PROVEEDOR_IA = proveedor
+        config.PROVEEDOR_TTS = proveedor_tts
+        config.UBICACION = ubicacion
         config.ELEVENLABS_VOICE_ID = elevenlabs_voice_id
+        config.SPOTIFY_CLIENT_ID = spotify_client_id
+        self.spotify_client_id_var = tk.StringVar(value=spotify_client_id)
         self.ubicacion_var = tk.StringVar(value=ubicacion)
         self.entrada_var = tk.StringVar(value=self._etiqueta(self.entradas, microfono))
         self.salida_var = tk.StringVar(value=self._etiqueta(self.salidas, salida))
@@ -476,7 +539,7 @@ class Lanzador:
         ).grid(row=0, column=0, sticky="w")
         ttk.Label(
             self.connections_page,
-            text="Servicios conectados a Jarvis. Las credenciales se guardan en Windows.",
+            text="Servicios conectados a Jarvis. Las claves secretas se guardan en Windows y los ajustes localmente.",
             style="Muted.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(4, 20))
 
@@ -527,12 +590,51 @@ class Lanzador:
         ).grid(row=3, column=1, sticky="e", pady=(8, 0))
         self.github_entry.bind("<FocusOut>", self._guardar_integraciones_al_perder_foco)
 
+        spotify = ttk.LabelFrame(
+            self.connections_page,
+            text="  Spotify  /  control de reproducción  ",
+            padding=18,
+        )
+        spotify.grid(row=3, column=0, sticky="ew", pady=(0, 14))
+        spotify.columnconfigure(0, weight=1)
+        ttk.Label(
+            spotify,
+            text="Pegá el Client ID de tu app de Spotify. Configurá la URI de redirección "
+            f"{config.SPOTIFY_REDIRECT_URI} en Spotify Developer Dashboard; no hace falta el secret.",
+            style="Muted.TLabel",
+            wraplength=760,
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        self.spotify_client_id_entry = ttk.Entry(
+            spotify,
+            textvariable=self.spotify_client_id_var,
+        )
+        self.spotify_client_id_entry.grid(row=1, column=0, sticky="ew", padx=(0, 10))
+        ttk.Button(
+            spotify,
+            text="Guardar Client ID",
+            command=self.guardar_spotify,
+            style="Accent.TButton",
+        ).grid(row=1, column=1, sticky="e")
+        ttk.Button(
+            spotify,
+            text="Abrir Spotify Developer Dashboard",
+            command=lambda: webbrowser.open("https://developer.spotify.com/dashboard"),
+        ).grid(row=2, column=1, sticky="e", pady=(8, 0))
+        self.spotify_status = tk.StringVar(
+            value="Configurado" if config.SPOTIFY_CLIENT_ID else "Sin configurar"
+        )
+        ttk.Label(
+            spotify,
+            textvariable=self.spotify_status,
+            style="Muted.TLabel",
+        ).grid(row=2, column=0, sticky="w", pady=(8, 0))
+
         drive = ttk.LabelFrame(
             self.connections_page,
             text="  Google Drive  ",
             padding=18,
         )
-        drive.grid(row=3, column=0, sticky="ew", pady=(0, 14))
+        drive.grid(row=4, column=0, sticky="ew", pady=(0, 14))
         ttk.Label(
             drive,
             text="Aún no conectado. La integración con Drive requerirá iniciar sesión con Google "
@@ -546,7 +648,7 @@ class Lanzador:
             text="Las búsquedas de GitHub son de solo lectura. Drive no accede a tus archivos hasta que configures y autorices esa integración.",
             style="Muted.TLabel",
             wraplength=800,
-        ).grid(row=4, column=0, sticky="w", pady=(8, 0))
+        ).grid(row=5, column=0, sticky="w", pady=(8, 0))
         self._crear_localizacion()
 
     def _crear_localizacion(self):
@@ -555,7 +657,7 @@ class Lanzador:
             text="  Ubicación aproximada  ",
             padding=18,
         )
-        ubicacion.grid(row=5, column=0, sticky="ew", pady=(0, 14))
+        ubicacion.grid(row=6, column=0, sticky="ew", pady=(0, 14))
         ubicacion.columnconfigure(0, weight=1)
         ttk.Label(
             ubicacion,
@@ -667,6 +769,11 @@ class Lanzador:
             text="Iniciar en texto",
             command=lambda: self.iniciar(True),
         ).grid(row=0, column=1, padx=5)
+        ttk.Button(
+            botones,
+            text="Abrir HUD",
+            command=self._boton_hud,
+        ).grid(row=0, column=2, padx=5)
 
         informacion = ttk.LabelFrame(paneles, text="  INFORMACIÓN  ", padding=16)
         informacion.grid(row=0, column=2, sticky="nsew", padx=(10, 0))
@@ -971,6 +1078,8 @@ class Lanzador:
 
     def _cambiar_permiso_pantalla(self):
         config.COMPARTIENDO_PANTALLA = self.compartir_pantalla_var.get()
+        self.bus.publish("pantalla", on=config.COMPARTIENDO_PANTALLA)
+        self._publicar_info()
         if config.COMPARTIENDO_PANTALLA:
             estado = "Acceso a pantalla habilitado. Jarvis solo captura al pedírselo."
         else:
@@ -978,10 +1087,7 @@ class Lanzador:
         self._estado_visible(estado)
 
     def _estado_visible(self, texto):
-        if hasattr(self, "estado_chat"):
-            self.estado_chat.set(texto)
-        else:
-            self.estado.set(texto)
+        self.bus.publish("estado", valor="espera", texto=texto)
 
     def preparar_vision(self):
         if self.vision_descargando:
@@ -1035,6 +1141,34 @@ class Lanzador:
 
     @staticmethod
     def _etiqueta(opciones, valor):
+        if isinstance(valor, dict):
+            nombre = str(valor.get("name", "")).casefold()
+            hostapi = str(valor.get("hostapi", "")).casefold()
+            coincidencia = next(
+                (
+                    etiqueta
+                    for etiqueta, indice in opciones.items()
+                    if indice != ""
+                    and sd.query_devices(indice)["name"].casefold() == nombre
+                    and sd.query_hostapis(
+                        sd.query_devices(indice)["hostapi"]
+                    )["name"].casefold()
+                    == hostapi
+                ),
+                None,
+            )
+            if coincidencia is None:
+                coincidencia = next(
+                    (
+                        etiqueta
+                        for etiqueta, indice in opciones.items()
+                        if indice != ""
+                        and sd.query_devices(indice)["name"].casefold() == nombre
+                    ),
+                    None,
+                )
+            if coincidencia is not None:
+                return coincidencia
         return next((nombre for nombre, indice in opciones.items() if indice == valor), next(iter(opciones)))
 
     @staticmethod
@@ -1042,6 +1176,8 @@ class Lanzador:
         variable = {
             "gemini": "GEMINI_API_KEY",
             "openai": "OPENAI_API_KEY",
+            "elevenlabs": "ELEVENLABS_API_KEY",
+            "github": "GITHUB_TOKEN",
         }.get(proveedor, "")
         return os.environ.get(variable, "") if variable else ""
 
@@ -1059,6 +1195,10 @@ class Lanzador:
     def _clave_guardada_o_entorno(cls, proveedor):
         guardada = cls._almacen_claves().get_password("Jarvis", proveedor)
         return guardada or cls._clave_entorno(proveedor)
+
+    @classmethod
+    def _clave_local_guardada(cls, proveedor):
+        return bool(cls._almacen_claves().get_password("Jarvis", proveedor))
 
     @classmethod
     def _guardar_clave(cls, proveedor, clave):
@@ -1148,6 +1288,14 @@ class Lanzador:
                 config.PROVEEDOR_TTS,
                 config.ELEVENLABS_VOICE_ID,
                 config.UBICACION,
+                config.SPOTIFY_CLIENT_ID,
+                config.MODELO_VISION,
+                config.MODELO,
+                config.MODELO_GEMINI,
+                config.MODELO_OPENAI,
+                config.OLLAMA_HOST,
+                config.WHISPER_MODELO,
+                config.IDIOMA,
             )
         except (OSError, ValueError) as error:
             messagebox.showerror("Configuración de audio", f"No pude leer la selección guardada:\n{error}")
@@ -1158,6 +1306,14 @@ class Lanzador:
                 config.PROVEEDOR_TTS,
                 config.ELEVENLABS_VOICE_ID,
                 config.UBICACION,
+                config.SPOTIFY_CLIENT_ID,
+                config.MODELO_VISION,
+                config.MODELO,
+                config.MODELO_GEMINI,
+                config.MODELO_OPENAI,
+                config.OLLAMA_HOST,
+                config.WHISPER_MODELO,
+                config.IDIOMA,
             )
         return (
             datos.get("microfono", config.MICROFONO),
@@ -1170,15 +1326,30 @@ class Lanzador:
             ),
             datos.get("elevenlabs_voice_id", config.ELEVENLABS_VOICE_ID),
             datos.get("ubicacion", config.UBICACION),
+            datos.get("spotify_client_id", config.SPOTIFY_CLIENT_ID),
+            datos.get("vision_modelo", config.MODELO_VISION),
+            datos.get("modelo_ollama", config.MODELO),
+            datos.get("modelo_gemini", config.MODELO_GEMINI),
+            datos.get("modelo_openai", config.MODELO_OPENAI),
+            datos.get("ollama_host", config.OLLAMA_HOST),
+            datos.get("modelo_whisper", config.WHISPER_MODELO),
+            datos.get("idioma", config.IDIOMA),
         )
 
     def _guardar(self):
-        microfono = self.entradas[self.entrada_var.get()]
+        microfono_id = self.entradas[self.entrada_var.get()]
+        if microfono_id == "":
+            microfono = ""
+        else:
+            dispositivo = sd.query_devices(microfono_id)
+            hostapi = sd.query_hostapis(dispositivo["hostapi"])["name"]
+            microfono = {"name": dispositivo["name"], "hostapi": hostapi}
         salida = self.salidas[self.salida_var.get()]
         proveedor = self.proveedores[self.proveedor_var.get()]
         proveedor_tts = self.proveedores_tts[self.proveedor_tts_var.get()]
         voice_id = self.elevenlabs_voice_id_var.get().strip()
         ubicacion = self.ubicacion_var.get().strip()
+        spotify_client_id = self.spotify_client_id_var.get().strip()
         config.CARPETA_DATOS.mkdir(parents=True, exist_ok=True)
         ruta = config.CARPETA_DATOS / "dispositivos_audio.json"
         temporal = ruta.with_suffix(".tmp")
@@ -1192,6 +1363,14 @@ class Lanzador:
                     "tts_version": 1,
                     "elevenlabs_voice_id": voice_id,
                     "ubicacion": ubicacion,
+                    "spotify_client_id": spotify_client_id,
+                    "vision_modelo": config.MODELO_VISION,
+                    "modelo_ollama": config.MODELO,
+                    "modelo_gemini": config.MODELO_GEMINI,
+                    "modelo_openai": config.MODELO_OPENAI,
+                    "ollama_host": config.OLLAMA_HOST,
+                    "modelo_whisper": config.WHISPER_MODELO,
+                    "idioma": config.IDIOMA,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -1205,7 +1384,22 @@ class Lanzador:
         config.PROVEEDOR_TTS = proveedor_tts
         config.ELEVENLABS_VOICE_ID = voice_id
         config.UBICACION = ubicacion
+        config.SPOTIFY_CLIENT_ID = spotify_client_id
         return microfono, salida, proveedor
+
+    def guardar_spotify(self):
+        try:
+            self._guardar()
+        except (OSError, KeyError) as error:
+            messagebox.showerror("Configuración de Spotify", str(error), parent=self.raiz)
+            return
+        self.spotify_status.set(
+            "Client ID guardado. Usá Spotify desde el HUD para autorizar la cuenta."
+            if config.SPOTIFY_CLIENT_ID
+            else "Sin configurar"
+        )
+        self._publicar_info()
+        self._estado_visible("Configuración de Spotify guardada.")
 
     def probar_microfono(self):
         try:
@@ -1363,55 +1557,33 @@ class Lanzador:
 
     def iniciar(self, texto):
         if self.asistente_activo:
-            if texto:
-                self._mostrar_pagina("inicio")
             return True
-        proveedor = self.proveedores[self.proveedor_var.get()]
-        api_key = self.api_key_var.get().strip()
+        proveedor = config.PROVEEDOR_IA
         try:
-            self._guardar_claves()
+            api_key = self._clave_guardada_o_entorno(proveedor)
+            elevenlabs_api_key = self._clave_guardada_o_entorno("elevenlabs")
         except Exception as error:
-            messagebox.showerror(
-                "No se pudieron guardar las API keys",
-                f"No pude guardar las claves en el Administrador de credenciales de Windows:\n{error}",
-                parent=self.raiz,
-            )
-            return
-        if proveedor != "ollama" and not api_key:
-            messagebox.showerror(
-                "Falta la API key",
-                "Ingresá la API key del proveedor seleccionado.",
-                parent=self.raiz,
-            )
-            self._mostrar_pagina("ajustes")
+            self.bus.publish("msg", rol="jarvis", texto=f"No pude leer las credenciales guardadas: {error}")
+            self.bus.publish("estado", valor="desconectado", texto="Revisá las credenciales desde Ajustes.")
             return False
-        proveedor_tts = self.proveedores_tts[self.proveedor_tts_var.get()]
-        elevenlabs_api_key = self.elevenlabs_api_key_var.get().strip()
+        if proveedor != "ollama" and not api_key:
+            self.bus.publish("msg", rol="jarvis", texto=f"Falta la API key de {proveedor}. Guardala desde Ajustes.")
+            self.bus.publish("ajustes")
+            return False
+        proveedor_tts = config.PROVEEDOR_TTS
         if not texto and proveedor_tts == "elevenlabs" and not (
             elevenlabs_api_key or os.environ.get("ELEVENLABS_API_KEY")
         ):
-            messagebox.showerror(
-                "Falta la API key de ElevenLabs",
-                "Ingresá la API key de ElevenLabs para usar esta voz.",
-                parent=self.raiz,
-            )
-            self._mostrar_pagina("conexiones")
-            return False
-        try:
-            self._guardar()
-        except (OSError, KeyError) as error:
-            messagebox.showerror("Configuración de audio", str(error))
-            self._mostrar_pagina("ajustes")
+            self.bus.publish("msg", rol="jarvis", texto="Falta la API key de ElevenLabs. Guardala desde Ajustes.")
+            self.bus.publish("ajustes")
             return False
         self.modo = "texto" if texto else "voz"
         self.elevenlabs_api_key = elevenlabs_api_key
         config.USAR_VOZ = not texto
         self.asistente_activo = True
-        self._mostrar_pagina("inicio")
-        self._crear_chat()
-        proveedor_nombre = self.proveedor_var.get()
-        self.estado_chat.set(f"Conectando con {proveedor_nombre}...")
-        self._actualizar_estado_nucleo("Conectando...")
+        proveedor_nombre = proveedor.capitalize()
+        self.bus.publish("estado", valor="pensando", texto=f"Conectando con {proveedor_nombre}…")
+        self._publicar_info()
         threading.Thread(
             target=self._iniciar_asistente,
             args=(proveedor, api_key),
@@ -1473,26 +1645,27 @@ class Lanzador:
         self.raiz.after(70, self._animar_nucleo)
 
     def _agregar_mensaje(self, quien, texto):
-        def agregar():
-            if not self.cerrando.is_set():
-                self.historial_ui.configure(state="normal")
-                es_jarvis = quien == config.NOMBRE
-                etiqueta = "assistant" if es_jarvis else "user"
-                nombre = "JARVIS" if es_jarvis else "TÚ"
-                if "voz" in quien.lower():
-                    nombre += "  /  VOZ"
-                self.historial_ui.insert("end", f"{nombre}\n", etiqueta)
-                self.historial_ui.insert("end", f"{texto}\n\n", "body")
-                self.historial_ui.configure(state="disabled")
-                self.historial_ui.see("end")
-
-        self.raiz.after(0, agregar)
+        self.bus.publish(
+            "msg",
+            rol="jarvis" if quien == config.NOMBRE else "usuario",
+            texto=texto,
+            voz="voz" in quien.lower(),
+        )
 
     def _estado(self, texto):
-        if not self.cerrando.is_set():
-            self.raiz.after(0, self.estado_chat.set, texto)
-            self.raiz.after(0, self.nav_status.set, f"●  {texto.upper()}")
-            self.raiz.after(0, self._actualizar_estado_nucleo, texto)
+        bajo = texto.lower()
+        if "procesando" in bajo:
+            valor = "pensando"
+        elif "escuch" in bajo:
+            valor = "escuchando"
+        else:
+            valor = "espera"
+        self.bus.publish("estado", valor=valor, texto=texto)
+
+    def _encolar_pedido(self, texto, origen):
+        with self._pedidos_lock:
+            self._respuesta_lista.clear()
+            self.pedidos.put((texto, origen))
 
     def enviar(self):
         texto = self.mensaje.get().strip()
@@ -1502,9 +1675,11 @@ class Lanzador:
             return
         self.mensaje.set("")
         self._agregar_mensaje("Tú", texto)
-        self.pedidos.put((texto, "texto"))
+        self._encolar_pedido(texto, "texto")
 
     def _confirmar(self, texto):
+        if self.bus.hay_hud():
+            return self.bus.preguntar(texto, timeout=60)
         resultado = threading.Event()
         respuesta = {"ok": False}
 
@@ -1533,14 +1708,12 @@ class Lanzador:
         except Exception as error:
             self._agregar_mensaje(config.NOMBRE, f"No pude iniciar el modelo: {error}")
             self._estado("Revisá el proveedor y la API key y volvé a iniciar.")
-            self.raiz.after(0, self.system_status_var.set, "Sistema: error al iniciar")
             self.asistente_activo = False
             return
         error = cerebro.verificar()
         if error:
             self._agregar_mensaje(config.NOMBRE, error)
             self._estado("No se pudo iniciar. Corregí el error y volvé a abrir Jarvis.")
-            self.raiz.after(0, self.system_status_var.set, "Sistema: no disponible")
             self.asistente_activo = False
             return
 
@@ -1548,28 +1721,27 @@ class Lanzador:
         if self.modo == "voz":
             self._estado("Iniciando micrófono y reconocimiento de voz...")
             try:
-                oido = voice.Oido()
+                oido = voice.Oido(dispositivo=config.MICROFONO or None)
             except Exception as error:
                 self._agregar_mensaje(config.NOMBRE, f"No pude iniciar la voz: {error}")
-                self._estado("Podés seguir conversando por texto en esta misma ventana.")
+                self.modo = "texto"
                 config.USAR_VOZ = False
+                self._publicar_info()
+                self._estado(
+                    "Jarvis quedó en modo texto. Corregí el micrófono en Ajustes "
+                    "y usá «Cambiar a voz» para volver a intentarlo."
+                )
         self.oido = oido
 
         self._agregar_mensaje(config.NOMBRE, "En línea. Escribime abajo.")
-        self.raiz.after(0, self.system_status_var.set, "Sistema: en línea")
-        self.raiz.after(
-            0,
-            self.audio_status_var.set,
-            "Micrófono: activo" if oido else "Micrófono: desactivado",
-        )
-        self._actualizar_estado_nucleo("¿En qué puedo ayudarte?")
+        self._publicar_info()
         self._estado(
-            "Escucha continua activada: hablá normalmente."
+            "Micrófono activo. Hablá normalmente; Jarvis te escucha."
             if oido
             else "Modo texto listo."
         )
         if oido:
-            threading.Thread(target=self._escuchar, args=(oido,), daemon=True).start()
+            self._iniciar_escucha(oido)
 
         while not self.cerrando.is_set():
             try:
@@ -1580,17 +1752,26 @@ class Lanzador:
                 self._agregar_mensaje("Tú (voz)", pedido)
             self._estado("Procesando...")
             try:
-                respuesta = cerebro.responder(pedido)
-            except Exception as error:
-                respuesta = f"Tuve un problema: {error}"
-            self._agregar_mensaje(config.NOMBRE, respuesta)
-            error_voz = None
-            if self.modo == "voz" and config.USAR_VOZ:
-                error_voz = self._hablar(respuesta)
-            self._estado(
-                error_voz
-                or ("Escucha continua activada: hablá normalmente." if oido else "Listo.")
-            )
+                try:
+                    respuesta = cerebro.responder(pedido)
+                except Exception as error:
+                    respuesta = f"Tuve un problema: {error}"
+                self._agregar_mensaje(config.NOMBRE, respuesta)
+                error_voz = None
+                if self.modo == "voz" and config.USAR_VOZ:
+                    error_voz = self._hablar(respuesta)
+                self._estado(
+                    error_voz
+                    or (
+                        "Escuchando; hablá cuando quieras."
+                        if self.modo == "voz"
+                        else "Listo."
+                    )
+                )
+            finally:
+                with self._pedidos_lock:
+                    if self.pedidos.empty():
+                        self._respuesta_lista.set()
 
     def _notificar(self, texto):
         self._agregar_mensaje(config.NOMBRE, texto)
@@ -1601,6 +1782,7 @@ class Lanzador:
 
     def _hablar(self, texto):
         oido = getattr(self, "oido", None)
+        self.bus.publish("estado", valor="hablando", texto="Respondiendo…")
         if oido:
             oido.pausar_escucha.set()
         try:
@@ -1619,54 +1801,631 @@ class Lanzador:
                 pedido = resultado.texto.strip()
                 if pedido and not self.cerrando.is_set():
                     self._agregar_mensaje("Tú (voz)", pedido)
-                    self.pedidos.put((pedido, "voz"))
+                    self._encolar_pedido(pedido, "voz")
                 elif not self.cerrando.is_set():
                     self._estado("Te escuché, pero no pude reconocer lo que dijiste.")
                 return None
             return resultado
         finally:
-            if oido:
+            if oido and self.modo == "voz" and config.USAR_VOZ:
                 oido.pausar_escucha.clear()
+            self.bus.publish("estado", valor="escuchando" if oido else "espera", texto="")
+
+    def _iniciar_escucha(self, oido):
+        if self._escucha_hilo and self._escucha_hilo.is_alive():
+            return
+        self._escucha_hilo = threading.Thread(
+            target=self._escuchar, args=(oido,), daemon=True
+        )
+        self._escucha_hilo.start()
 
     def _escuchar(self, oido):
         while not self.cerrando.is_set():
+            if self.modo != "voz" or self.oido is not oido:
+                time.sleep(0.1)
+                continue
             try:
-                pedido = oido.escuchar_continuo(
-                    lambda texto: self._estado(f"Escuché: «{texto}»")
-                )
-                if pedido and not self.cerrando.is_set():
-                    self.pedidos.put((pedido, "voz"))
+                pedido = oido.escuchar_continuo()
+                if (
+                    self.modo != "voz"
+                    or self.oido is not oido
+                    or self.cerrando.is_set()
+                ):
+                    continue
+                if not pedido or self.cerrando.is_set():
+                    continue
+
+                self._encolar_pedido(pedido, "voz")
+                while (
+                    not self._respuesta_lista.wait(0.1)
+                    and not self.cerrando.is_set()
+                    and self.modo == "voz"
+                    and self.oido is oido
+                ):
+                    pass
             except Exception as error:
-                self._estado(f"Se interrumpió el micrófono: {error}. Podés escribir abajo.")
+                with self._modo_lock:
+                    es_escucha_actual = self.oido is oido
+                    if es_escucha_actual:
+                        self.oido = None
+                    if es_escucha_actual and self.modo == "voz":
+                        self.modo = "texto"
+                        config.USAR_VOZ = False
+                    if self._escucha_hilo is threading.current_thread():
+                        self._escucha_hilo = None
+                self._publicar_info()
+                self._agregar_mensaje(
+                    config.NOMBRE,
+                    f"Se interrumpió el micrófono: {error}. Podés seguir por texto "
+                    "y volver a intentar con «Cambiar a voz».",
+                )
+                self._estado("Jarvis quedó en modo texto.")
                 return
 
-    def cerrar(self):
+    def alternar_modo(self):
+        if not self.asistente_activo:
+            return self.iniciar(self.modo == "voz")
+
+        if self.modo == "voz":
+            with self._modo_lock:
+                self.modo = "texto"
+                config.USAR_VOZ = False
+                if self.oido:
+                    self.oido.pausar_escucha.set()
+            self._publicar_info()
+            self._estado("Modo texto activo. El micrófono quedó en pausa.")
+            return True
+
         try:
-            self._guardar_claves()
+            if config.PROVEEDOR_TTS == "elevenlabs":
+                self.elevenlabs_api_key = self._clave_guardada_o_entorno(
+                    "elevenlabs"
+                )
+                if not self.elevenlabs_api_key:
+                    self._agregar_mensaje(
+                        config.NOMBRE,
+                        "Falta la API key de ElevenLabs. Guardala en Ajustes "
+                        "o elegí Piper/Windows para la voz de respuesta.",
+                    )
+                    self.bus.publish("ajustes")
+                    return False
         except Exception as error:
-            messagebox.showerror(
-                "No se pudieron guardar las API keys",
-                f"No pude guardar las claves en el Administrador de credenciales de Windows:\n{error}",
-                parent=self.raiz,
+            self._agregar_mensaje(
+                config.NOMBRE, f"No pude leer la clave de voz guardada: {error}"
             )
+            return False
+
+        with self._modo_lock:
+            self.modo = "voz"
+            config.USAR_VOZ = True
+            if self.oido:
+                self.oido.pausar_escucha.clear()
+                self._iniciar_escucha(self.oido)
+                iniciar = False
+            elif self._voz_iniciando:
+                iniciar = False
+            else:
+                self._voz_iniciando = True
+                iniciar = True
+        self._publicar_info()
+        self._estado("Activando micrófono y reconocimiento de voz…")
+        if iniciar:
+            threading.Thread(target=self._activar_voz, daemon=True).start()
+        return True
+
+    def _activar_voz(self):
+        try:
+            oido = voice.Oido(dispositivo=config.MICROFONO or None)
+        except Exception as error:
+            with self._modo_lock:
+                self._voz_iniciando = False
+                if self.modo == "voz":
+                    self.modo = "texto"
+                    config.USAR_VOZ = False
+            self._publicar_info()
+            self._agregar_mensaje(
+                config.NOMBRE,
+                f"No pude activar el micrófono: {error}. Revisá la entrada "
+                "en Ajustes; Jarvis sigue disponible en modo texto.",
+            )
+            self._estado("Modo texto activo. Corregí el micrófono y reintentá.")
             return
+
+        with self._modo_lock:
+            self._voz_iniciando = False
+            if self.cerrando.is_set() or self.modo != "voz":
+                oido.pausar_escucha.set()
+                return
+            self.oido = oido
+            oido.pausar_escucha.clear()
+            self._iniciar_escucha(oido)
+        self._publicar_info()
+        self._estado("Micrófono activo. Hablá normalmente; Jarvis te escucha.")
+
+    # ------------------------------------------------------------------ HUD
+    def _boton_hud(self):
+        if self.asistente_activo:
+            self._abrir_hud(forzar=True)
+        else:
+            self.iniciar(True)
+
+    def abrir_hud_inicial(self):
+        """Al abrir la app: muestra solo el HUD con sus botones de inicio."""
+        if not self._abrir_hud(inicial=True):
+            messagebox.showerror(
+                config.NOMBRE,
+                "No se pudo abrir la interfaz HUD. Verificá que Microsoft Edge o Google Chrome esté instalado.",
+            )
+
+    def _iniciar_desde_hud(self, solo_texto):
+        if not self.iniciar(solo_texto):
+            self._mostrar_ajustes_desde_hud()  # falta configurar algo: mostramos los ajustes
+
+    def desde_hud(self, texto):
+        texto = texto.strip()
+        if not texto:
+            return
+        self._agregar_mensaje("Tú", texto)
+        if not self.asistente_activo and not self.iniciar(True):
+            return
+        self._encolar_pedido(texto, "texto")
+
+    def _configuracion_hud(self):
+        dispositivos = sd.query_devices()
+        apis = sd.query_hostapis()
+        microfonos = []
+        salidas = []
+        for indice, dispositivo in enumerate(dispositivos):
+            api = apis[dispositivo["hostapi"]]["name"]
+            etiqueta = (
+                f'{indice}: {dispositivo["name"]} ({api}, '
+                f'{int(dispositivo["default_samplerate"])} Hz)'
+            )
+            if (
+                dispositivo["max_input_channels"]
+                and api.casefold() != "windows wdm-ks"
+            ):
+                microfonos.append({"id": indice, "label": etiqueta})
+            if dispositivo["max_output_channels"]:
+                salidas.append({"id": indice, "label": etiqueta})
+
+        def seleccionar_dispositivo(valor, opciones):
+            if valor in (None, ""):
+                return ""
+            if isinstance(valor, dict):
+                indice = voice.Oido._elegir_microfono_con(sd, valor)
+                return indice if any(opcion["id"] == indice for opcion in opciones) else ""
+            try:
+                indice = int(valor)
+            except (TypeError, ValueError):
+                texto = str(valor).casefold()
+                return next(
+                    (
+                        opcion["id"]
+                        for opcion in opciones
+                        if texto in dispositivos[opcion["id"]]["name"].casefold()
+                    ),
+                    "",
+                )
+            return indice if any(opcion["id"] == indice for opcion in opciones) else ""
+
+        proveedor = config.PROVEEDOR_IA
+        microfono_configurado = config.MICROFONO
+        if microfono_configurado in (None, ""):
+            microfono_configurado = voice.Oido._elegir_microfono_con(sd)
+        return {
+            "microfonos": microfonos,
+            "salidas": salidas,
+            "microfono": seleccionar_dispositivo(microfono_configurado, microfonos),
+            "salida": seleccionar_dispositivo(config.AUDIO_SALIDA, salidas),
+            "proveedor": proveedor,
+            "api_key_guardada": self._clave_local_guardada(proveedor),
+            "proveedor_tts": config.PROVEEDOR_TTS,
+            "elevenlabs_key_guardada": self._clave_local_guardada("elevenlabs"),
+            "elevenlabs_voice_id": config.ELEVENLABS_VOICE_ID,
+            "github_token_guardado": self._clave_local_guardada("github"),
+            "spotify_client_id": config.SPOTIFY_CLIENT_ID,
+            "ubicacion": config.UBICACION,
+            "vision_modelo": config.MODELO_VISION,
+            "modelo_ollama": config.MODELO,
+            "modelo_gemini": config.MODELO_GEMINI,
+            "modelo_openai": config.MODELO_OPENAI,
+            "ollama_host": config.OLLAMA_HOST,
+            "modelo_whisper": config.WHISPER_MODELO,
+            "idioma": config.IDIOMA,
+        }
+
+    def _guardar_configuracion_hud(self, datos):
+        proveedores = {"ollama", "gemini", "openai"}
+        voces = {"piper", "windows", "elevenlabs"}
+        proveedor = str(datos.get("proveedor", "")).lower()
+        proveedor_tts = str(datos.get("proveedor_tts", "")).lower()
+        if proveedor not in proveedores or proveedor_tts not in voces:
+            raise ValueError("Elegí un proveedor de IA y una voz disponibles.")
+
+        dispositivos = sd.query_devices()
+        apis = sd.query_hostapis()
+
+        def elegir_dispositivo(campo, canales):
+            valor = datos.get(campo)
+            if valor in (None, ""):
+                return None if canales == "output" else ""
+            try:
+                indice = int(valor)
+            except (TypeError, ValueError) as error:
+                raise ValueError(f"El dispositivo de {canales} seleccionado no es válido.") from error
+            if not 0 <= indice < len(dispositivos) or not dispositivos[indice][f"max_{canales}_channels"]:
+                raise ValueError(f"El dispositivo de {canales} seleccionado ya no está disponible.")
+            if (
+                canales == "input"
+                and apis[dispositivos[indice]["hostapi"]]["name"].casefold()
+                == "windows wdm-ks"
+            ):
+                raise ValueError(
+                    "Esa entrada usa WDM-KS, que no es compatible de forma estable. "
+                    "Elegí la misma entrada con WASAPI o DirectSound."
+                )
+            return indice
+
+        microfono = elegir_dispositivo("microfono", "input")
+        if microfono in (None, ""):
+            microfono_guardado = ""
+        else:
+            dispositivo = dispositivos[microfono]
+            microfono_guardado = {
+                "name": dispositivo["name"],
+                "hostapi": apis[dispositivo["hostapi"]]["name"],
+            }
+        salida = elegir_dispositivo("salida", "output")
+        voice_id = str(datos.get("elevenlabs_voice_id", "")).strip()[:200]
+        spotify_client_id = str(datos.get("spotify_client_id", "")).strip()[:200]
+        ubicacion = str(datos.get("ubicacion", "")).strip()[:200]
+        vision_modelo = str(datos.get("vision_modelo", "")).strip()[:200]
+        if not vision_modelo:
+            raise ValueError("Indicá el nombre del modelo visual.")
+        modelo_ollama = str(datos.get("modelo_ollama", "")).strip()[:200]
+        modelo_gemini = str(datos.get("modelo_gemini", "")).strip()[:200]
+        modelo_openai = str(datos.get("modelo_openai", "")).strip()[:200]
+        ollama_host = str(datos.get("ollama_host", "")).strip()[:500]
+        modelo_whisper = str(datos.get("modelo_whisper", "")).strip()[:100]
+        idioma = str(datos.get("idioma", "")).strip()[:10]
+        if not all((modelo_ollama, modelo_gemini, modelo_openai, ollama_host, modelo_whisper, idioma)):
+            raise ValueError("Completá los modelos de IA, Ollama, Whisper y el idioma.")
+        if not ollama_host.startswith(("http://", "https://")):
+            raise ValueError("La dirección de Ollama debe comenzar con http:// o https://.")
+        clave_ia = str(datos.get("api_key", "")).strip()
+        clave_elevenlabs = str(datos.get("elevenlabs_api_key", "")).strip()
+        token_github = str(datos.get("github_token", "")).strip()
+
+        if clave_ia:
+            self._guardar_clave(proveedor, clave_ia)
+        elif datos.get("borrar_api_key"):
+            self._eliminar_clave(proveedor)
+        if clave_elevenlabs:
+            self._guardar_clave("elevenlabs", clave_elevenlabs)
+        elif datos.get("borrar_elevenlabs_key"):
+            self._eliminar_clave("elevenlabs")
+        if token_github:
+            self._guardar_clave("github", token_github)
+        elif datos.get("borrar_github_token"):
+            self._eliminar_clave("github")
+
+        requiere_reinicio = self.asistente_activo and any(
+            nuevo != actual
+            for nuevo, actual in (
+                (microfono_guardado, config.MICROFONO),
+                (salida, config.AUDIO_SALIDA),
+                (proveedor, config.PROVEEDOR_IA),
+                (modelo_ollama, config.MODELO),
+                (modelo_gemini, config.MODELO_GEMINI),
+                (modelo_openai, config.MODELO_OPENAI),
+                (ollama_host, config.OLLAMA_HOST),
+                (modelo_whisper, config.WHISPER_MODELO),
+                (idioma, config.IDIOMA),
+            )
+        )
+        config.MICROFONO = microfono_guardado
+        config.AUDIO_SALIDA = salida
+        config.PROVEEDOR_IA = proveedor
+        config.PROVEEDOR_TTS = proveedor_tts
+        config.ELEVENLABS_VOICE_ID = voice_id
+        config.SPOTIFY_CLIENT_ID = spotify_client_id
+        config.UBICACION = ubicacion
+        config.MODELO_VISION = vision_modelo
+        config.MODELO = modelo_ollama
+        config.MODELO_GEMINI = modelo_gemini
+        config.MODELO_OPENAI = modelo_openai
+        config.OLLAMA_HOST = ollama_host
+        config.WHISPER_MODELO = modelo_whisper
+        config.IDIOMA = idioma
+        config.GITHUB_TOKEN = self._clave_guardada_o_entorno("github")
+        config.CARPETA_DATOS.mkdir(parents=True, exist_ok=True)
+        ruta = config.CARPETA_DATOS / "dispositivos_audio.json"
+        temporal = ruta.with_suffix(".tmp")
+        temporal.write_text(
+            json.dumps(
+                {
+                    "microfono": microfono_guardado,
+                    "salida": salida,
+                    "proveedor": proveedor,
+                    "proveedor_tts": proveedor_tts,
+                    "tts_version": 1,
+                    "elevenlabs_voice_id": voice_id,
+                    "ubicacion": ubicacion,
+                    "spotify_client_id": spotify_client_id,
+                    "vision_modelo": vision_modelo,
+                    "modelo_ollama": modelo_ollama,
+                    "modelo_gemini": modelo_gemini,
+                    "modelo_openai": modelo_openai,
+                    "ollama_host": ollama_host,
+                    "modelo_whisper": modelo_whisper,
+                    "idioma": idioma,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        temporal.replace(ruta)
+        self._publicar_info()
+        configuracion = self._configuracion_hud()
+        configuracion["requiere_reinicio"] = requiere_reinicio
+        return configuracion
+
+    def _probar_audio_hud(self, prueba):
+        import numpy as np
+
+        if prueba == "microfono":
+            nombre, indice, frecuencia, niveles, desbordados = voice.medir_microfono(
+                config.MICROFONO or None
+            )
+            nivel = max(niveles, default=0)
+            if nivel < 0.001:
+                return (
+                    f"No se detectó audio en {nombre} (dispositivo {indice}). "
+                    "Revisá el permiso de micrófono de Windows o elegí otra entrada."
+                )
+            aviso = " Se detectaron cortes de audio." if any(desbordados) else ""
+            return f"Micrófono detectado: {nombre} ({frecuencia} Hz, nivel máximo {nivel:.4f}).{aviso}"
+        if prueba == "reconocimiento":
+            return voice.probar_reconocimiento(config.MICROFONO or None)
+        if prueba == "salida":
+            dispositivo = config.AUDIO_SALIDA
+            info = sd.query_devices(dispositivo, "output") if dispositivo is not None else sd.query_devices(kind="output")
+            frecuencia = int(info["default_samplerate"])
+            tiempo = np.arange(int(frecuencia * 0.5)) / frecuencia
+            tono = (0.15 * np.sin(2 * np.pi * 660 * tiempo)).astype(np.float32)
+            sd.play(tono, samplerate=frecuencia, device=dispositivo, blocking=True)
+            return f"Sonido de prueba reproducido por {info['name']}."
+        if prueba == "voz":
+            usar_voz = config.USAR_VOZ
+            config.USAR_VOZ = True
+            try:
+                resultado = voice.hablar(
+                    "Hola, soy Jarvis. Esta es una prueba de voz.",
+                    api_key=self._clave_guardada_o_entorno("elevenlabs"),
+                )
+            finally:
+                config.USAR_VOZ = usar_voz
+            return resultado or "Prueba de voz completada."
+        raise ValueError("Prueba de audio desconocida.")
+
+    def _probar_github_hud(self):
+        token = config.GITHUB_TOKEN
+        if not token:
+            raise ValueError("Pegá y guardá primero un token de GitHub.")
+        import httpx
+
+        respuesta = httpx.get(
+            "https://api.github.com/user",
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {token}",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            timeout=httpx.Timeout(10.0, connect=5.0),
+        )
+        if respuesta.status_code in (401, 403):
+            raise ValueError(
+                f"GitHub rechazó el token o sus permisos (HTTP {respuesta.status_code})."
+            )
+        respuesta.raise_for_status()
+        usuario = respuesta.json().get("login", "usuario")
+        return f"Conectado como {usuario}. Búsquedas de solo lectura."
+
+    def _detectar_ubicacion_hud(self):
+        if not self.bus.preguntar(
+            "Jarvis enviará tu dirección IP a ipapi.co para estimar ciudad y región. "
+            "La ubicación puede ser imprecisa. ¿Querés continuar?",
+            timeout=60,
+        ):
+            raise ValueError("No se consultó la ubicación.")
+        import httpx
+
+        respuesta = httpx.get(
+            "https://ipapi.co/json/",
+            timeout=httpx.Timeout(8.0, connect=4.0),
+        )
+        respuesta.raise_for_status()
+        datos = respuesta.json()
+        if datos.get("error"):
+            raise RuntimeError("El servicio de ubicación no devolvió resultados.")
+        ubicacion = ", ".join(
+            parte
+            for parte in (datos.get("city"), datos.get("region"), datos.get("country_name"))
+            if parte
+        )
+        if not ubicacion:
+            raise RuntimeError("El servicio no devolvió una ciudad aproximada.")
+        configuracion = self._configuracion_hud()
+        configuracion.update(
+            ubicacion=ubicacion,
+            api_key="",
+            elevenlabs_api_key="",
+            github_token="",
+        )
+        self._guardar_configuracion_hud(configuracion)
+        return ubicacion
+
+    def _publicar_info(self):
+        nombres_ia = {"ollama": "Ollama", "gemini": "Gemini", "openai": "OpenAI"}
+        nombres_tts = {"piper": "Piper", "windows": "Windows", "elevenlabs": "ElevenLabs"}
+
+        self.bus.publish(
+            "info",
+            nombre=config.NOMBRE,
+            modo=self.modo or "texto",
+            ia=nombres_ia.get(config.PROVEEDOR_IA, config.PROVEEDOR_IA),
+            tts=nombres_tts.get(config.PROVEEDOR_TTS, config.PROVEEDOR_TTS),
+            github=bool(config.GITHUB_TOKEN),
+            spotify=bool(spotyfyTools and spotyfyTools.configurado()),
+            vision=bool(config.COMPARTIENDO_PANTALLA),
+        )
+
+    def _accion_hud(self, nombre):
+        """Acciones que pide el HUD (corren en un hilo del servidor)."""
+        if nombre == "pantalla_sync":
+            self.raiz.after(0, lambda: self.compartir_pantalla_var.set(config.COMPARTIENDO_PANTALLA))
+            self._publicar_info()
+        elif nombre == "ajustes":
+            self.bus.publish("ajustes")
+        elif nombre == "preparar_vision":
+            self.raiz.after(0, self.preparar_vision)
+        elif nombre in ("iniciar_voz", "iniciar_texto"):
+            self.raiz.after(0, lambda: self._iniciar_desde_hud(nombre == "iniciar_texto"))
+        elif nombre == "alternar_modo":
+            self.raiz.after(0, self.alternar_modo)
+        elif nombre == "salir":
+            self.raiz.after(0, self.cerrar)
+
+    def _mostrar_ajustes_desde_hud(self):
+        self.bus.publish("ajustes")
+
+    def _abrir_hud(self, inicial=False, forzar=False):
+        if self.hud_servidor is None:
+            accion_spotify = spotyfyTools.control if spotyfyTools else None
+            servidor = ui.Servidor(
+                self.bus,
+                _EntradasHud(self),
+                accion_spotify=accion_spotify,
+                accion_app=self._accion_hud,
+                leer_configuracion=self._configuracion_hud,
+                guardar_configuracion=self._guardar_configuracion_hud,
+                probar_audio=self._probar_audio_hud,
+                probar_github=self._probar_github_hud,
+                detectar_ubicacion=self._detectar_ubicacion_hud,
+            )
+            try:
+                servidor.iniciar()
+            except OSError as error:
+                self._estado_visible(f"No pude iniciar el HUD: {error}")
+                return False
+            self.hud_servidor = servidor
+            if spotyfyTools:
+                spotyfyTools.iniciar_si_hay_sesion()
+        if not inicial:
+            self._publicar_info()
+        if self.bus.hay_hud() and not forzar:
+            return True  # ya hay una ventana del HUD abierta
+        if not self._lanzar_ventana(self.hud_servidor.url):
+            self._estado_visible("No pude abrir un navegador para mostrar el HUD.")
+            return False
+        self._hud_lanzado_en = time.monotonic()
+        self.raiz.withdraw()  # una sola interfaz a la vista: el HUD
+        if not self._hud_vigilando:
+            self._hud_vigilando = True
+            self.raiz.after(3000, self._hud_vigilar)
+        return True
+
+    @staticmethod
+    def _lanzar_ventana(url):
+        """Abre el HUD como ventana de aplicación (sin barra de direcciones) en Edge o Chrome."""
+        candidatos = [
+            shutil.which("msedge"),
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+            shutil.which("chrome"),
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        ]
+        for ruta in candidatos:
+            if ruta and Path(ruta).is_file():
+                try:
+                    subprocess.Popen(
+                        [
+                            ruta,
+                            f"--app={url}",
+                            "--window-size=1520,920",
+                            "--window-position=50,30",
+                        ]
+                    )
+                except OSError:
+                    continue
+                return True
+        return bool(webbrowser.open(url))
+
+    def _hud_vigilar(self):
+        """Mantiene el proceso oculto mientras la ventana del HUD esté abierta."""
+        if self.cerrando.is_set():
+            return
+        if self.bus.hay_hud():
+            self._hud_visto = True
+            self._hud_ausente = None
+            self._hud_lanzado_en = None
+        elif not self._hud_visto and self._hud_lanzado_en and time.monotonic() - self._hud_lanzado_en > 25:
+            self._hud_lanzado_en = None
+            messagebox.showerror(
+                config.NOMBRE,
+                "No se pudo conectar con el HUD. Cerrá el aviso y volvé a iniciar Jarvis.",
+            )
+            self.cerrar()
+            return
+        elif self._hud_visto:
+            if self._hud_ausente is None:
+                self._hud_ausente = time.monotonic()
+            elif time.monotonic() - self._hud_ausente > 20:
+                self._hud_visto = False
+                self._hud_ausente = None
+                self.cerrar()
+                return
+        self.raiz.after(2000, self._hud_vigilar)
+
+    def cerrar(self):
         self.cerrando.set()
         self.raiz.destroy()
 
 
-def main():
-    import argparse
+def _instancia_unica():
+    """Evita abrir dos Jarvis a la vez (se pelearían por el micrófono y el HUD)."""
+    import socket
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--texto", action="store_true")
-    parser.add_argument("--probar-microfono", action="store_true")
-    args = parser.parse_args()
+    candado = socket.socket()
+    if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+        candado.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    try:
+        candado.bind(("127.0.0.1", 48621))
+        candado.listen(1)
+    except OSError:
+        candado.close()
+        return None
+    return candado
+
+
+def main():
     raiz = tk.Tk()
+    raiz.withdraw()  # no mostrar esta ventana: la interfaz principal es el HUD
+    candado = _instancia_unica()
+    if candado is None:
+        messagebox.showinfo(
+            config.NOMBRE,
+            f"{config.NOMBRE} ya está en ejecución.\n\nSi no ves su ventana, cerralo desde el "
+            "Administrador de tareas (procesos «Python») y volvé a abrir run.vbs.",
+        )
+        raiz.destroy()
+        return
     lanzador = Lanzador(raiz)
-    if args.texto:
-        raiz.after(200, lanzador.iniciar, True)
-    elif args.probar_microfono:
-        raiz.after(200, lanzador.probar_microfono)
+    lanzador._candado = candado  # se mantiene abierto mientras viva el programa
+    raiz.after(300, lanzador.abrir_hud_inicial)
     raiz.mainloop()
 
 

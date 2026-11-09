@@ -8,6 +8,7 @@ import io
 import json
 import queue
 import secrets
+import socket
 import threading
 import time
 from collections import deque
@@ -20,6 +21,28 @@ import psutil
 import config
 
 HUD_DIR = Path(__file__).parent / "hud"
+
+
+class _ServidorExclusivo(ThreadingHTTPServer):
+    """Servidor que NO comparte puerto con otro proceso.
+
+    En Windows, SO_REUSEADDR deja que dos programas escuchen en el mismo puerto y las
+    conexiones caen en cualquiera de los dos (de ahí un «Prohibido» con el token de otra sesión).
+    """
+
+    allow_reuse_address = False
+    daemon_threads = True
+
+    def server_bind(self):
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):  # solo existe en Windows
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
+PAGINA_PROHIBIDO = """<!doctype html><meta charset="utf-8"><title>Sesión no válida</title>
+<body style="background:#02070d;color:#d9f3ff;font-family:Segoe UI,sans-serif;display:grid;place-items:center;height:100vh;margin:0">
+<div style="text-align:center;max-width:460px;line-height:1.6"><h2 style="color:#ffb347;letter-spacing:.2em">SESIÓN NO VÁLIDA</h2>
+<p>Esta ventana pertenece a otra sesión de Jarvis que ya no está activa.<br>Cerrala y abrí Jarvis de nuevo con <b>run.vbs</b>.</p></div></body>"""
 
 
 class Bus:
@@ -37,7 +60,7 @@ class Bus:
         with self._lock:
             if tipo == "msg":
                 self.mensajes.append(ev)
-            elif tipo in ("estado", "stats", "spotify"):
+            elif tipo in ("estado", "stats", "spotify", "info", "pantalla"):
                 self.ultimo[tipo] = ev
             subs = list(self._subs)
         for q in subs:
@@ -78,10 +101,27 @@ class Bus:
 
 
 class Servidor:
-    def __init__(self, bus, entradas, accion_spotify=None):
+    def __init__(
+        self,
+        bus,
+        entradas,
+        accion_spotify=None,
+        accion_app=None,
+        leer_configuracion=None,
+        guardar_configuracion=None,
+        probar_audio=None,
+        probar_github=None,
+        detectar_ubicacion=None,
+    ):
         self.bus = bus
         self.entradas = entradas
         self.accion_spotify = accion_spotify
+        self.accion_app = accion_app
+        self.leer_configuracion = leer_configuracion
+        self.guardar_configuracion = guardar_configuracion
+        self.probar_audio = probar_audio
+        self.probar_github = probar_github
+        self.detectar_ubicacion = detectar_ubicacion
         self.puerto = config.HUD_PUERTO
         self.token = secrets.token_urlsafe(16)
         self.httpd = None
@@ -119,10 +159,12 @@ class Servidor:
             time.sleep(2)
 
     def iniciar(self):
+        if self.httpd is not None:
+            return
         srv = self
 
         class Handler(BaseHTTPRequestHandler):
-            def log_message(self, *a):
+            def log_message(self, *_):
                 pass
 
             def _autorizado(self):
@@ -142,13 +184,26 @@ class Servidor:
                 self.wfile.write(cuerpo)
 
             def do_GET(self):
+                if urlparse(self.path).path == "/favicon.ico":
+                    self.send_response(204)
+                    self.end_headers()
+                    return
                 if not self._autorizado():
-                    return self._enviar(403, "text/plain", b"Prohibido")
+                    return self._enviar(403, "text/html; charset=utf-8", PAGINA_PROHIBIDO.encode("utf-8"))
                 ruta = urlparse(self.path).path
                 if ruta == "/":
                     html = (HUD_DIR / "index.html").read_text(encoding="utf-8")
                     html = html.replace("{{NOMBRE}}", config.NOMBRE)
                     return self._enviar(200, "text/html; charset=utf-8", html.encode("utf-8"))
+                if ruta == "/settings" and srv.leer_configuracion:
+                    try:
+                        cuerpo = json.dumps(
+                            srv.leer_configuracion(), ensure_ascii=False
+                        ).encode("utf-8")
+                    except Exception as error:
+                        cuerpo = json.dumps({"error": str(error)}).encode("utf-8")
+                        return self._enviar(500, "application/json; charset=utf-8", cuerpo)
+                    return self._enviar(200, "application/json; charset=utf-8", cuerpo)
                 if ruta == "/screen.jpg":
                     try:
                         return self._enviar(200, "image/jpeg", srv._captura_jpeg())
@@ -189,10 +244,73 @@ class Servidor:
                     texto = str(datos.get("texto", "")).strip()[:1000]
                     if texto:
                         srv.entradas.put(texto)
+                elif ruta == "/settings" and srv.guardar_configuracion:
+                    try:
+                        configuracion = srv.guardar_configuracion(datos)
+                        resultado = {"ok": True, "configuracion": configuracion}
+                    except ValueError as error:
+                        resultado = {"ok": False, "error": str(error)}
+                        return self._enviar(
+                            400,
+                            "application/json; charset=utf-8",
+                            json.dumps(resultado, ensure_ascii=False).encode("utf-8"),
+                        )
+                    except Exception as error:
+                        resultado = {"ok": False, "error": str(error)}
+                        return self._enviar(
+                            500,
+                            "application/json; charset=utf-8",
+                            json.dumps(resultado, ensure_ascii=False).encode("utf-8"),
+                        )
+                elif ruta == "/test-audio" and srv.probar_audio:
+                    try:
+                        resultado = {
+                            "ok": True,
+                            "resultado": srv.probar_audio(str(datos.get("prueba", ""))),
+                        }
+                    except Exception as error:
+                        resultado = {"ok": False, "error": str(error)}
+                        return self._enviar(
+                            400,
+                            "application/json; charset=utf-8",
+                            json.dumps(resultado, ensure_ascii=False).encode("utf-8"),
+                        )
+                elif ruta == "/test-github" and srv.probar_github:
+                    try:
+                        resultado = {
+                            "ok": True,
+                            "resultado": srv.probar_github(),
+                        }
+                    except Exception as error:
+                        resultado = {"ok": False, "error": str(error)}
+                        return self._enviar(
+                            400,
+                            "application/json; charset=utf-8",
+                            json.dumps(resultado, ensure_ascii=False).encode("utf-8"),
+                        )
+                elif ruta == "/detect-location" and srv.detectar_ubicacion:
+                    try:
+                        resultado = {
+                            "ok": True,
+                            "ubicacion": srv.detectar_ubicacion(),
+                        }
+                    except Exception as error:
+                        resultado = {"ok": False, "error": str(error)}
+                        return self._enviar(
+                            400,
+                            "application/json; charset=utf-8",
+                            json.dumps(resultado, ensure_ascii=False).encode("utf-8"),
+                        )
                 elif ruta == "/confirm":
                     srv.bus.responder(datos.get("ok"))
                 elif ruta == "/screen":
-                    config.COMPARTIENDO_PANTALLA = bool(datos.get("on"))
+                    activar = bool(datos.get("on"))
+                    config.COMPARTIENDO_PANTALLA = activar
+                    srv.bus.publish("pantalla", on=activar)
+                    if srv.accion_app:
+                        srv.accion_app("pantalla_sync")
+                elif ruta == "/accion" and srv.accion_app:
+                    srv.accion_app(str(datos.get("nombre", "")))
                 elif ruta == "/spotify" and srv.accion_spotify:
                     try:
                         srv.accion_spotify(str(datos.get("accion", "")))
@@ -202,7 +320,15 @@ class Servidor:
                     return self._enviar(404, "text/plain", b"No existe")
                 self._enviar(200, "application/json", json.dumps(resultado).encode())
 
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", self.puerto), Handler)
-        self.httpd.daemon_threads = True
+        base = config.HUD_PUERTO
+        for puerto in range(base, base + 25):  # si el puerto está ocupado, prueba el siguiente
+            try:
+                self.httpd = _ServidorExclusivo(("127.0.0.1", puerto), Handler)
+                self.puerto = puerto
+                break
+            except OSError:
+                continue
+        else:
+            raise OSError(f"No hay puertos libres entre {base} y {base + 24}")
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         threading.Thread(target=self._stats_loop, daemon=True).start()

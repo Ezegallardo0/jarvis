@@ -1,6 +1,7 @@
-"""Copiá este archivo como config_local.py y completá tus datos.
+"""Configuración avanzada opcional.
 
-config_local.py pisa lo que diga config.py y nunca se sobrescribe al actualizar.
+Las preferencias de uso se gestionan desde Jarvis. Este archivo solo sirve para
+sobrescribir valores predeterminados y no es necesario para configurar Spotify.
 """
 
 # Pegá acá el Client ID de tu app de Spotify (entre comillas)

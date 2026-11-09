@@ -11,3 +11,4 @@ httpx
 keyring
 piper-tts
 pywin32
+spotipy

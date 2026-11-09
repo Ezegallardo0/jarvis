@@ -95,24 +95,12 @@ def main():
     try:
         if oido:
             while True:
-                pedido = oido.esperar_activacion()
+                pedido = oido.escuchar_continuo()
                 if not pedido:
-                    voice.hablar("Decime.")
-                    pedido = oido.transcribir(oido.grabar_frase(espera_max=8))
-                    if not pedido:
-                        continue
+                    continue
                 print(f"Tú: {pedido}")
                 if not atender(pedido):
                     break
-                # Ventana de conversación: seguimiento sin repetir la palabra de activación
-                while True:
-                    audio = oido.grabar_frase(espera_max=config.VENTANA_CONVERSACION_SEG)
-                    pedido = oido.transcribir(audio)
-                    if not pedido:
-                        break
-                    print(f"Tú: {pedido}")
-                    if not atender(pedido):
-                        return
         else:
             while True:
                 pedido = input("Tú: ").strip()

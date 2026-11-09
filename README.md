@@ -23,9 +23,9 @@ Asistente para Windows. El reconocimiento de voz corre localmente con Whisper. L
 
 ## Uso
 
-- Doble clic en `run.bat` para abrir la interfaz. Elegí proveedor, pegá su API key si corresponde, seleccioná micrófono, salida y voz; después iniciá con voz o texto. La ventana de conversación tiene una estética HUD futurista propia y Jarvis responde con un tono más natural y cercano. Piper Claude es la voz masculina gratuita predeterminada; su modelo se descarga al probarla o al recibir la primera respuesta. Para ElevenLabs, ingresá la API key y el Voice ID de una voz disponible en tu cuenta. El botón "Probar ElevenLabs" usa esos campos directamente, muestra el código HTTP/detalle de error y reproduce el audio si la solicitud tiene éxito, aunque la voz seleccionada para conversar sea otra. Para usar ElevenLabs en la conversación, seleccioná esa voz en "Voz de respuesta". En modo voz escucha continuamente y responde sin esperar la palabra "Jarvis". Si hablás mientras Jarvis responde, detiene el audio, transcribe tu interrupción y te contesta. "Probar reconocimiento" muestra lo que Whisper transcribe.
-- Al abrir Jarvis aparece el panel principal; desde el menú lateral se accede a configuración e integraciones. En Integraciones podés configurar GitHub con un token fine-grained limitado a los repositorios necesarios y permisos Metadata, Issues, Pull requests y Contents de solo lectura. Jarvis permite buscar repositorios, issues, pull requests y código, pero no modifica GitHub. Google Drive se muestra como pendiente: todavía no tiene conexión OAuth activa.
-- En Integraciones podés escribir tu ciudad manualmente o pedir una detección aproximada por IP. Jarvis solicita confirmación antes de consultar ipapi.co; la ciudad/región resultante se guarda localmente y se usa como referencia para el clima.
+- Doble clic en `run.vbs` para abrir directamente el HUD, sin mostrar CMD ni una segunda interfaz. El botón **Configurar sistema** reúne el micrófono, parlantes, pruebas de audio y reconocimiento, proveedor y modelos de IA, claves, voz, GitHub, Spotify, ubicación y modelo visual. Las claves se guardan localmente en el Administrador de credenciales de Windows; al guardar se confirma que quedaron protegidas localmente y el campo las conserva mientras el panel permanece abierto. Podés escribir en el chat desde el primer momento; si Jarvis aún no está iniciado, el primer mensaje lo inicia en modo texto. Para hablar, seleccioná el micrófono, probalo en Ajustes y elegí **Iniciar con voz**. Mientras el modo de voz esté activo, Jarvis escucha continuamente: hablá normalmente, sin decir «Jarvis», y esperá su respuesta antes de continuar. El botón **Cambiar a voz/texto** permite alternar sin reiniciar y pausar el micrófono. El reactor pulsa y se expande mientras Jarvis responde; los sonidos breves de estado se pueden silenciar desde **Control**. Jarvis conversa con un tono más relajado y humor ligero cuando encaja. Jarvis prueba primero MME y DirectSound para el micrófono, con WASAPI como alternativa y evita WDM-KS. Piper Claude es la voz gratuita predeterminada y descarga su modelo la primera vez. Si cambiás micrófono, Whisper o proveedor/modelo de IA mientras Jarvis está activo, reinicialo para aplicar esos cambios.
+- En **Configurar sistema** podés configurar GitHub con un token fine-grained limitado a los repositorios necesarios y permisos Metadata, Issues, Pull requests y Contents de solo lectura. Jarvis permite buscar repositorios, issues, pull requests y código, pero no modifica GitHub. Google Drive se muestra como pendiente: todavía no tiene conexión OAuth activa.
+- En **Configurar sistema** podés escribir tu ciudad manualmente o pedir una detección aproximada por IP. Jarvis solicita confirmación antes de consultar ipapi.co; la ciudad/región resultante se guarda localmente y se usa como referencia para el clima.
 - ElevenLabs puede rechazar voces de biblioteca con HTTP 402 en cuentas gratuitas. En ese caso no es un error de Jarvis ni de la API key: necesitás un plan con acceso a síntesis API para esa voz. Piper sigue disponible sin costo ni API.
 - También podés ejecutar `python main.py --texto` para iniciar directamente en modo texto o `python main.py --probar-microfono` para medir la entrada predeterminada.
 - Podés pedir recordatorios por minutos (por ejemplo, "recordame en 10 minutos") o alertas por hora (por ejemplo, "avisame a las 18:30"). Jarvis debe quedar abierto para avisarte.
@@ -63,16 +63,18 @@ Abrir y cerrar apps permitidas, abrir enlaces en el navegador predeterminado, bu
 
 En `tools.py`, escribí una función y decorala con `@herramienta(...)`. El modelo la descubre automáticamente.
 
-## Ajustes útiles (`config.py`)
+## Ajustes avanzados
 
-- `MODELO`: modelo de Ollama. Más grande = más inteligente, más lento.
-- `WHISPER_MODELO`: `base` si el reconocimiento va lento, `medium` si querés más precisión.
-- `PALABRAS_ACTIVACION`: variantes de cómo Whisper puede escribir "Jarvis".
-- `MICROFONO`: vacío para usar el dispositivo predeterminado de Windows; también podés indicar parte del nombre o el índice de otro micrófono.
-- La interfaz guarda la selección de dispositivos en `~/.jarvis/dispositivos_audio.json`.
-- `JARVIS_AI_PROVIDER`: proveedor inicial, `gemini`, `openai` u `ollama`.
-- `GEMINI_API_KEY` / `OPENAI_API_KEY`: alternativa a pegar la clave en la interfaz.
-- `ELEVENLABS_API_KEY`: alternativa a pegar la clave de ElevenLabs en la interfaz.
-- `JARVIS_TTS_PROVIDER`: voz inicial, `piper` (predeterminada), `windows` o `elevenlabs`.
-- Las claves guardadas se pueden administrar desde el Administrador de credenciales de Windows.
-- `MODELO_VISION`: modelo de Ollama usado para analizar capturas de pantalla.
+- Las preferencias de audio, modelos, proveedores, idioma, ubicación e integraciones se gestionan desde **Configurar sistema** en el HUD y se guardan en `~/.jarvis/dispositivos_audio.json`.
+- Las claves guardadas se administran desde el Administrador de credenciales de Windows. También se aceptan las variables de entorno `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY` y `GITHUB_TOKEN`.
+- `config.py` queda disponible únicamente para opciones avanzadas no expuestas en la interfaz.
+
+## HUD holográfico
+
+Al iniciar Jarvis se abre únicamente una ventana tipo aplicación con el HUD: reactor animado que reacciona al estado (escuchando, procesando, respondiendo), medidores de CPU/memoria/disco/batería, subsistemas, chat, Spotify y pantalla compartida. Funciona sin internet (salvo la portada de Spotify).
+
+- Se abre con Edge o Chrome en modo aplicación. La interfaz nativa anterior ya no se muestra.
+- Las confirmaciones (ejecutar comandos, bloquear pantalla) aparecen como cuadro Sí/Cancelar dentro del HUD.
+- El interruptor "Pantalla compartida" muestra una vista previa en vivo y habilita `ver_pantalla`.
+- **Spotify:** creá una app en https://developer.spotify.com/dashboard, agregá la redirect URI `http://127.0.0.1:8888/callback` y pegá el Client ID en **Configurar sistema**. No hace falta el secret. Controlar la reproducción requiere cuenta Premium.
+- Seguridad: el HUD solo escucha en `127.0.0.1` y exige un token aleatorio por sesión; ninguna página web externa puede mandarle órdenes.

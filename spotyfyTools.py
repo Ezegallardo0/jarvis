@@ -20,7 +20,7 @@ _poller_activo = False
 
 AYUDA_CONFIG = (
     "Spotify no está configurado todavía. Creá una app en developer.spotify.com/dashboard, "
-    "copiá su Client ID y ponelo en config_local.py (mirá el README)."
+    "copiá su Client ID y guardalo desde Jarvis > Integraciones."
 )
 
 

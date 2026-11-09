@@ -1,7 +1,7 @@
-"""Configuración de Jarvis. Editá este archivo a tu gusto.
+"""Valores predeterminados y ajustes avanzados de Jarvis.
 
-Tus claves personales (Spotify) van en config_local.py, así no se pierden
-cuando actualices el proyecto. Mirá config_local.example.py.
+Las preferencias de uso se cambian desde la interfaz. config_local.py sigue
+disponible para quienes quieran sobrescribir estos valores predeterminados.
 """
 import os
 from pathlib import Path

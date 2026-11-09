@@ -302,8 +302,7 @@ def medir_microfono(dispositivo=None, segundos=5):
     import numpy as np
     import sounddevice as sd
 
-    if dispositivo is None:
-        dispositivo = Oido._elegir_microfono_con(sd)
+    dispositivo = Oido._elegir_microfono_con(sd, dispositivo)
     info = sd.query_devices(dispositivo)
     frecuencia = int(info["default_samplerate"])
     niveles, desbordados = [], []
@@ -352,12 +351,21 @@ def probar_microfono(dispositivo=None):
 def probar_reconocimiento(dispositivo=None):
     """Escucha una frase y devuelve lo que reconoce Whisper."""
     oido = Oido(dispositivo=dispositivo)
-    print("Hablá ahora; voy a escuchar hasta 8 segundos.")
-    audio = oido.grabar_frase(espera_max=8, max_seg=8)
-    if audio is None:
-        return "No detecté voz en la grabación. Revisá la entrada elegida y el nivel del micrófono."
+    print("Hablá durante ocho segundos; voy a transcribir la grabación completa.")
+    audio = oido.grabar_ventana(segundos=8)
+    nivel = float(oido.np.sqrt(oido.np.mean(audio**2))) if audio.size else 0
+    print(f"Nivel RMS capturado antes de normalizar: {nivel:.6f}")
+    if nivel < 0.00008:
+        return (
+            f"La entrada casi no recibió señal (nivel RMS {nivel:.6f}). "
+            "Revisá el volumen y el permiso del micrófono en Windows."
+        )
     texto = oido.transcribir(audio)
-    return texto or "Se grabó audio, pero Whisper no pudo reconocer palabras."
+    return (
+        f"Whisper reconoció: «{texto}»"
+        if texto
+        else f"Se capturó señal (RMS {nivel:.6f}), pero Whisper no reconoció palabras."
+    )
 
 
 class Oido:
@@ -377,62 +385,214 @@ class Oido:
         print("Cargando modelo de voz (la primera vez descarga unos cientos de MB)...")
         self.modelo = WhisperModel(config.WHISPER_MODELO, device="auto", compute_type="int8")
         self.ruido_ambiente = 0.00025
-        self.umbral = 0.00045
+        self.umbral = 0.00008
         self.calibrar()
 
     def _elegir_microfono(self, seleccion=None):
         return self._elegir_microfono_con(self.sd, seleccion)
 
     @staticmethod
-    def _elegir_microfono_con(sd, seleccion=None):
+    def _candidatos_microfono_con(sd, seleccion=None):
         dispositivos = sd.query_devices()
         buscado = config.MICROFONO if seleccion is None else seleccion
-        if buscado != "":
-            if isinstance(buscado, int):
-                indice = buscado
-                if 0 <= indice < len(dispositivos) and dispositivos[indice]["max_input_channels"]:
-                    return indice
-            else:
-                buscado = buscado.casefold()
-                for indice, dispositivo in enumerate(dispositivos):
-                    if dispositivo["max_input_channels"] and buscado in dispositivo["name"].casefold():
-                        return indice
-            disponibles = ", ".join(
-                f"{indice}: {dispositivo['name']}"
-                for indice, dispositivo in enumerate(dispositivos)
-                if dispositivo["max_input_channels"]
-            )
-            raise RuntimeError(
-                f"No encontré el micrófono '{buscado}'. Entradas disponibles: {disponibles}"
-            )
-        predeterminado = sd.default.device[0]
-        if predeterminado is None or predeterminado < 0:
-            predeterminado = next(
-                (indice for indice, dispositivo in enumerate(dispositivos)
-                 if dispositivo["max_input_channels"]),
+        apis = sd.query_hostapis()
+        dispositivo_base = None
+        hostapi_base = ""
+        if isinstance(buscado, dict):
+            nombre = str(buscado.get("name", "")).casefold()
+            hostapi_base = str(buscado.get("hostapi", ""))
+            dispositivo_base = next(
+                (
+                    (indice, dispositivo)
+                    for indice, dispositivo in enumerate(dispositivos)
+                    if dispositivo["max_input_channels"]
+                    and dispositivo["name"].casefold() == nombre
+                    and apis[dispositivo["hostapi"]]["name"].casefold()
+                    == hostapi_base.casefold()
+                ),
                 None,
             )
-        if predeterminado is None:
-            raise RuntimeError("Windows no detecta ningún dispositivo de entrada de audio.")
-        return predeterminado
+            if dispositivo_base is None:
+                dispositivo_base = next(
+                    (
+                        (indice, dispositivo)
+                        for indice, dispositivo in enumerate(dispositivos)
+                        if dispositivo["max_input_channels"]
+                        and dispositivo["name"].casefold() == nombre
+                    ),
+                    None,
+                )
+            if dispositivo_base is None:
+                raise RuntimeError(
+                    f"No encontré el micrófono guardado '{buscado.get('name', '')}'. "
+                    "Volvé a elegir una entrada desde los ajustes."
+                )
+        if buscado not in (None, ""):
+            if dispositivo_base is None and isinstance(buscado, int):
+                if 0 <= buscado < len(dispositivos) and dispositivos[buscado]["max_input_channels"]:
+                    dispositivo_base = (buscado, dispositivos[buscado])
+            elif dispositivo_base is None:
+                buscado = buscado.casefold()
+                dispositivo_base = next(
+                    (
+                        (indice, dispositivo)
+                        for indice, dispositivo in enumerate(dispositivos)
+                        if dispositivo["max_input_channels"]
+                        and buscado in dispositivo["name"].casefold()
+                    ),
+                    None,
+                )
+            if dispositivo_base is None:
+                disponibles = ", ".join(
+                    f"{indice}: {dispositivo['name']}"
+                    for indice, dispositivo in enumerate(dispositivos)
+                    if dispositivo["max_input_channels"]
+                )
+                raise RuntimeError(
+                    f"No encontré el micrófono '{buscado}'. Entradas disponibles: {disponibles}"
+                )
+        else:
+            predeterminado = sd.default.device[0]
+            if predeterminado is None or predeterminado < 0:
+                predeterminado = next(
+                    (
+                        indice
+                        for indice, dispositivo in enumerate(dispositivos)
+                        if dispositivo["max_input_channels"]
+                    ),
+                    None,
+                )
+            if predeterminado is None:
+                raise RuntimeError("Windows no detecta ningún dispositivo de entrada de audio.")
+            dispositivo_base = (predeterminado, dispositivos[predeterminado])
+            nombre_predeterminado = dispositivo_base[1]["name"].casefold()
+            parece_auricular_controlador = (
+                "controller" in nombre_predeterminado
+                or "auriculares co" in nombre_predeterminado
+            )
+            if parece_auricular_controlador:
+                headset = next(
+                    (
+                        (indice, dispositivo)
+                        for indice, dispositivo in enumerate(dispositivos)
+                        if dispositivo["max_input_channels"]
+                        and (
+                            "headset" in dispositivo["name"].casefold()
+                            or "h510" in dispositivo["name"].casefold()
+                        )
+                        and "controller" not in dispositivo["name"].casefold()
+                    ),
+                    None,
+                )
+                if headset is not None:
+                    dispositivo_base = headset
+
+        assert dispositivo_base is not None
+        indice_base, dispositivo_base_info = dispositivo_base
+        nombre_base = dispositivo_base_info["name"].casefold()
+
+        def mismo_nombre(nombre):
+            nombre = nombre.casefold()
+            return nombre == nombre_base or (
+                min(len(nombre), len(nombre_base)) >= 16
+                and (nombre.startswith(nombre_base) or nombre_base.startswith(nombre))
+            )
+
+        preferencia_api = {
+            "mme": 0,
+            "windows directsound": 1,
+            "windows wasapi": 2,
+            "windows wdm-ks": 3,
+        }
+        coincidencias = [
+            (indice, dispositivo)
+            for indice, dispositivo in enumerate(dispositivos)
+            if dispositivo["max_input_channels"]
+            and mismo_nombre(dispositivo["name"])
+        ]
+        if not coincidencias:
+            return [indice_base]
+        coincidencias.sort(
+            key=lambda par: (
+                preferencia_api.get(
+                    apis[par[1]["hostapi"]]["name"].casefold(), 4
+                ),
+                par[0],
+            )
+        )
+        return [indice for indice, _ in coincidencias]
+
+    @staticmethod
+    def _elegir_microfono_con(sd, seleccion=None):
+        return Oido._candidatos_microfono_con(sd, seleccion)[0]
 
     def calibrar(self):
         """Mide el ruido ambiente para fijar el umbral de detección de voz."""
-        audio = self.sd.rec(
-            int(self.frecuencia * 1.0),
-            samplerate=self.frecuencia,
-            channels=1,
-            dtype="float32",
-            device=self.dispositivo,
-        )
-        self.sd.wait()
+        errores = []
+        seleccion = {
+            "name": self.sd.query_devices(self.dispositivo)["name"],
+            "hostapi": self.sd.query_hostapis(
+                self.sd.query_devices(self.dispositivo)["hostapi"]
+            )["name"],
+        }
+        for dispositivo in self._candidatos_microfono_con(self.sd, seleccion):
+            info = self.sd.query_devices(dispositivo)
+            frecuencia = int(info["default_samplerate"])
+            try:
+                with self.sd.InputStream(
+                    samplerate=frecuencia,
+                    channels=1,
+                    dtype="float32",
+                    blocksize=max(1, frecuencia // 10),
+                    device=dispositivo,
+                ) as stream:
+                    bloques = [
+                        stream.read(max(1, frecuencia // 10))[0]
+                        for _ in range(10)
+                    ]
+                audio = self.np.concatenate(bloques)
+            except Exception as error:
+                errores.append(f"{info['name']} ({dispositivo}): {error}")
+                continue
+            self.dispositivo = dispositivo
+            self.frecuencia = frecuencia
+            break
+        else:
+            raise RuntimeError(
+                "No pude abrir el micrófono en Windows. Probá otra entrada o "
+                "conectá de nuevo el headset. " + " | ".join(errores)
+            )
         ruido = float(self.np.sqrt(self.np.mean(audio**2)))
         self.ruido_ambiente = ruido
-        self.umbral = max(0.00045, ruido * 1.8)
+        self.umbral = max(0.00008, ruido * 1.35)
         print(
             f"Nivel ambiente: {ruido:.5f}; umbral de voz: {self.umbral:.5f} "
             "(sensibilidad aumentada)"
         )
+
+    def grabar_ventana(self, segundos=8):
+        """Captura una ventana fija para probar el micrófono sin depender del detector de voz."""
+        bloque = max(1, int(self.frecuencia * 0.1))
+        bloques = []
+        with self.sd.InputStream(
+            samplerate=self.frecuencia,
+            channels=1,
+            dtype="float32",
+            blocksize=bloque,
+            device=self.dispositivo,
+        ) as stream:
+            for _ in range(max(1, int(segundos * self.frecuencia / bloque))):
+                audio, _ = stream.read(bloque)
+                bloques.append(audio.reshape(-1))
+        audio = self.np.concatenate(bloques)
+        if self.frecuencia != SR:
+            cantidad = round(len(audio) * SR / self.frecuencia)
+            audio = self.np.interp(
+                self.np.linspace(0, len(audio) - 1, cantidad),
+                self.np.arange(len(audio)),
+                audio,
+            ).astype(self.np.float32)
+        return audio
 
     def grabar_frase(self, espera_max=None, max_seg=15):
         """Graba hasta detectar una frase completa. Devuelve audio o None si pasó espera_max sin hablar."""
@@ -457,9 +617,9 @@ class Oido:
                 nivel = float(np.sqrt(np.mean(datos**2)))
                 if not hablando:
                     self.ruido_ambiente = (
-                        self.ruido_ambiente * 0.95 + nivel * 0.05
+                        self.ruido_ambiente * 0.99 + nivel * 0.01
                     )
-                    self.umbral = max(0.00045, self.ruido_ambiente * 1.8)
+                    self.umbral = max(0.00008, self.ruido_ambiente * 1.35)
                 if nivel >= self.umbral:
                     if not hablando:
                         buf = list(pre)
@@ -576,7 +736,13 @@ class Oido:
     def esperar_activacion(self, al_transcribir=None):
         """Bloquea hasta oír la palabra de activación. Devuelve lo que se dijo después (puede ser '')."""
         while True:
-            texto = self.transcribir(self.grabar_frase())
+            while self.pausar_escucha.is_set():
+                time.sleep(0.05)
+            with self.bloqueo_audio:
+                audio = self.grabar_frase(espera_max=1)
+                if self.pausar_escucha.is_set():
+                    continue
+                texto = self.transcribir(audio)
             if not texto:
                 continue
             if al_transcribir:
