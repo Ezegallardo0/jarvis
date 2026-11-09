@@ -49,7 +49,7 @@ SPOTIFY_REDIRECT_URI = "http://127.0.0.1:8888/callback"
 
 # --- Datos y seguridad ---
 CARPETA_DATOS = Path.home() / ".jarvis"
-# Solo podrá listar/leer archivos dentro de estas carpetas
+# Solo podrá listar, leer y crear archivos dentro de estas carpetas
 CARPETAS_PERMITIDAS = [Path.home()]
 
 # Aplicaciones que puede abrir (nombre que decís -> comando de Windows).

@@ -23,13 +23,15 @@ Asistente para Windows. El reconocimiento de voz corre localmente con Whisper. L
 
 ## Uso
 
-- Doble clic en `run.bat` para abrir la interfaz. Elegí proveedor, pegá su API key si corresponde, seleccioná micrófono, salida y voz; después iniciá con voz o texto. Piper Claude es la voz masculina gratuita predeterminada; su modelo se descarga al probarla o al recibir la primera respuesta. Para ElevenLabs, ingresá la API key y el Voice ID de una voz disponible en tu cuenta. El botón "Probar ElevenLabs" usa esos campos directamente, muestra el código HTTP/detalle de error y reproduce el audio si la solicitud tiene éxito, aunque la voz seleccionada para conversar sea otra. Para usar ElevenLabs en la conversación, seleccioná esa voz en "Voz de respuesta". En modo voz escucha continuamente y responde sin esperar la palabra "Jarvis". Si hablás mientras Jarvis responde, detiene el audio, transcribe tu interrupción y te contesta. "Probar reconocimiento" muestra lo que Whisper transcribe.
+- Doble clic en `run.bat` para abrir la interfaz. Elegí proveedor, pegá su API key si corresponde, seleccioná micrófono, salida y voz; después iniciá con voz o texto. La ventana de conversación tiene una estética HUD futurista propia y Jarvis responde con un tono más natural y cercano. Piper Claude es la voz masculina gratuita predeterminada; su modelo se descarga al probarla o al recibir la primera respuesta. Para ElevenLabs, ingresá la API key y el Voice ID de una voz disponible en tu cuenta. El botón "Probar ElevenLabs" usa esos campos directamente, muestra el código HTTP/detalle de error y reproduce el audio si la solicitud tiene éxito, aunque la voz seleccionada para conversar sea otra. Para usar ElevenLabs en la conversación, seleccioná esa voz en "Voz de respuesta". En modo voz escucha continuamente y responde sin esperar la palabra "Jarvis". Si hablás mientras Jarvis responde, detiene el audio, transcribe tu interrupción y te contesta. "Probar reconocimiento" muestra lo que Whisper transcribe.
 - ElevenLabs puede rechazar voces de biblioteca con HTTP 402 en cuentas gratuitas. En ese caso no es un error de Jarvis ni de la API key: necesitás un plan con acceso a síntesis API para esa voz. Piper sigue disponible sin costo ni API.
 - También podés ejecutar `python main.py --texto` para iniciar directamente en modo texto o `python main.py --probar-microfono` para medir la entrada predeterminada.
 - Podés pedir recordatorios por minutos (por ejemplo, "recordame en 10 minutos") o alertas por hora (por ejemplo, "avisame a las 18:30"). Jarvis debe quedar abierto para avisarte.
 - Puede buscar información actual en internet y consultar el clima de hoy o mañana; si falta la ciudad, te la pregunta.
 - Para que Jarvis vea la pantalla: en el inicio o en el chat, activá "Permitir análisis de pantalla", descargá el modelo visual (~3 GB) con el botón y después preguntale qué aparece en pantalla. El análisis corre localmente con Ollama; la captura solo se toma cuando pedís explícitamente que la mire.
 - Para salir: decí "salir" o Ctrl+C.
+
+Jarvis puede crear documentos Word `.docx` con el contenido que le dictes y abrirlos; generar dibujos PNG con formas y texto y abrirlos en Paint; y preparar correos en tu aplicación predeterminada. Por ejemplo: "creá un Word llamado Saludo y escribí Hola", "dibujá una casa en Paint" o "redactá un correo para ana@example.com". También puede enviar correos mediante Outlook clásico si tiene una cuenta configurada, pero siempre pide confirmación mostrando destinatario, asunto y cuerpo. Los archivos que crea se guardan bajo tu carpeta de usuario; las rutas indicadas por vos se validan contra `CARPETAS_PERMITIDAS`.
 
 La primera vez, Whisper descarga su modelo (unos cientos de MB). Gemini usa `gemini-3.5-flash-lite` y OpenAI usa `gpt-6-luna`, modelos rápidos que se pueden cambiar en `config.py`.
 
@@ -42,15 +44,16 @@ La herramienta de visión captura la pantalla bajo demanda y la analiza localmen
 
 ## Qué puede hacer
 
-Abrir y cerrar apps permitidas, abrir enlaces en el navegador predeterminado, buscar en Google, programar recordatorios por minutos o alertas para una hora, estado del sistema (CPU, RAM, disco, batería), volumen, capturas de pantalla, listar y leer archivos de tu carpeta de usuario, crear notas, memoria permanente de datos tuyos, bloquear la pantalla y ejecutar comandos de consola.
+Abrir y cerrar apps permitidas, abrir enlaces en el navegador predeterminado, buscar en Google, crear documentos Word, dibujar en Paint, redactar y enviar correos con confirmación, programar recordatorios por minutos o alertas para una hora, estado del sistema (CPU, RAM, disco, batería), volumen, capturas de pantalla, listar y leer archivos de tu carpeta de usuario, crear notas, memoria permanente de datos tuyos, bloquear la pantalla y ejecutar comandos de consola.
 
 ## Seguridad
 
 - Solo abre apps de la lista `APPS` en `config.py`.
-- Solo lee archivos dentro de `CARPETAS_PERMITIDAS`.
+- Solo lista y lee archivos dentro de `CARPETAS_PERMITIDAS`; los documentos y dibujos nuevos también se limitan a esas carpetas.
 - **Bloquear pantalla y ejecutar comandos piden confirmación por voz (sí/no) antes de actuar.**
 - **Cerrar una aplicación pide confirmación; Jarvis solicita el cierre normal de sus ventanas para permitir guardar cambios.**
 - **Abrir una aplicación de la lista permitida no pide confirmación, pero Jarvis solo la abre cuando se lo solicitás explícitamente.**
+- **Los correos se pueden dejar como borrador; para enviarlos desde Outlook clásico siempre pide confirmación explícita.**
 - Las alertas y recordatorios avisan mientras Jarvis está abierto; no se guardan al cerrar el programa.
 - No puede borrar archivos por sí solo.
 

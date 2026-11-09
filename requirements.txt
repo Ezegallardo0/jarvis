@@ -10,3 +10,4 @@ ddgs
 httpx
 keyring
 piper-tts
+pywin32

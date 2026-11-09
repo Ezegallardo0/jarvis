@@ -4,12 +4,15 @@ import datetime
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import threading
 import webbrowser
+import zipfile
 from pathlib import Path
-from urllib.parse import quote_plus, urlsplit
+from xml.sax.saxutils import escape
+from urllib.parse import quote, quote_plus, urlsplit
 
 import httpx
 import psutil
@@ -28,7 +31,12 @@ def CONFIRMAR(texto):  # main.py lo reemplaza (voz o teclado)
 
 
 def herramienta(
-    descripcion, parametros=None, requeridos=None, confirmar=False, requiere_pantalla=False
+    descripcion,
+    parametros=None,
+    requeridos=None,
+    confirmar=False,
+    requiere_pantalla=False,
+    texto_confirmacion=None,
 ):
     """Registra una función como herramienta que el modelo puede invocar."""
 
@@ -36,6 +44,7 @@ def herramienta(
         HERRAMIENTAS[fn.__name__] = {
             "fn": fn,
             "confirmar": confirmar,
+            "texto_confirmacion": texto_confirmacion,
             "requiere_pantalla": requiere_pantalla,
             "schema": {
                 "type": "function",
@@ -70,9 +79,17 @@ def ejecutar(nombre, args):
     if h["requiere_pantalla"] and not config.COMPARTIENDO_PANTALLA:
         return "El acceso a la pantalla está desactivado. Pedile al usuario que lo habilite en Jarvis."
     args = args or {}
-    if h["confirmar"] and not CONFIRMAR(f"Voy a ejecutar {nombre} con {json.dumps(args, ensure_ascii=False)}. ¿Confirmás?"):
-        return "El usuario canceló la acción."
     try:
+        if h["confirmar"]:
+            texto = h["texto_confirmacion"]
+            if callable(texto):
+                pregunta = texto(**args)
+            elif texto:
+                pregunta = texto.format(**args)
+            else:
+                pregunta = f"Voy a ejecutar {nombre} con {json.dumps(args, ensure_ascii=False)}. ¿Confirmás?"
+            if not CONFIRMAR(pregunta):
+                return "El usuario canceló la acción."
         return str(h["fn"](**args))
     except Exception as e:  # el modelo ve el error y puede explicarlo
         return f"Error al ejecutar {nombre}: {e}"
@@ -87,6 +104,89 @@ def _ruta_segura(ruta):
         except ValueError:
             continue
     raise PermissionError(f"Ruta fuera de las carpetas permitidas: {p}")
+
+
+def _nombre_archivo_seguro(nombre, predeterminado):
+    nombre = "".join(
+        caracter if caracter.isalnum() or caracter in " -_." else "_"
+        for caracter in nombre
+    ).strip(" .")
+    return nombre or predeterminado
+
+
+def _escapar_texto_xml(texto):
+    valido = (
+        caracter
+        for caracter in texto
+        if ord(caracter) in (0x09, 0x0A, 0x0D)
+        or 0x20 <= ord(caracter) <= 0xD7FF
+        or 0xE000 <= ord(caracter) <= 0xFFFD
+        or 0x10000 <= ord(caracter) <= 0x10FFFF
+    )
+    return escape("".join(valido))
+
+
+def _abrir_archivo(ruta):
+    os.startfile(str(ruta))
+
+
+def _ruta_disponible(ruta):
+    base = ruta
+    indice = 2
+    while ruta.exists() or ruta.is_symlink():
+        ruta = base.with_name(f"{base.stem} ({indice}){base.suffix}")
+        indice += 1
+    return ruta
+
+
+def _texto_docx(texto):
+    lineas = texto.splitlines() or [""]
+    return "".join(
+        "<w:p><w:r><w:t xml:space=\"preserve\">"
+        f"{_escapar_texto_xml(linea)}"
+        "</w:t></w:r></w:p>"
+        for linea in lineas
+    )
+
+
+def _guardar_docx(ruta, titulo, contenido):
+    cuerpo = (
+        "<w:p><w:r><w:rPr><w:b/><w:sz w:val=\"32\"/></w:rPr>"
+        "<w:t xml:space=\"preserve\">"
+        f"{_escapar_texto_xml(titulo)}"
+        "</w:t></w:r></w:p>"
+        f"{_texto_docx(contenido)}"
+    )
+    documento = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f"<w:body>{cuerpo}"
+        "<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>"
+        "<w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" "
+        "w:left=\"1440\" w:header=\"708\" w:footer=\"708\" w:gutter=\"0\"/>"
+        "</w:sectPr></w:body></w:document>"
+    )
+    with zipfile.ZipFile(ruta, "w", compression=zipfile.ZIP_DEFLATED) as archivo:
+        archivo.writestr(
+            "[Content_Types].xml",
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            '<Override PartName="/word/document.xml" '
+            'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+            "</Types>",
+        )
+        archivo.writestr(
+            "_rels/.rels",
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+            'Target="word/document.xml"/>'
+            "</Relationships>",
+        )
+        archivo.writestr("word/document.xml", documento)
 
 
 # ---------------------------------------------------------------- memoria
@@ -427,10 +527,300 @@ def leer_archivo(ruta):
 def crear_nota(titulo, contenido):
     carpeta = config.CARPETA_DATOS / "notas"
     carpeta.mkdir(parents=True, exist_ok=True)
-    seguro = "".join(c for c in titulo if c.isalnum() or c in " -_").strip() or "nota"
+    seguro = _nombre_archivo_seguro(titulo, "nota")
     ruta = carpeta / f"{seguro}.txt"
+    if ruta.exists():
+        ruta = carpeta / f"{seguro}_{datetime.datetime.now():%Y%m%d_%H%M%S}.txt"
     ruta.write_text(contenido, encoding="utf-8")
     return f"Nota guardada en {ruta}"
+
+
+@herramienta(
+    "Crea un documento de Microsoft Word .docx válido con el título y el contenido indicados. "
+    "Por defecto lo guarda en la carpeta documentos de Jarvis y lo abre con la aplicación asociada. "
+    "La ruta opcional debe estar dentro de las carpetas permitidas.",
+    {
+        "titulo": {"type": "string", "description": "Título y nombre sugerido del documento"},
+        "contenido": {"type": "string", "description": "Texto completo; cada salto de línea será un párrafo"},
+        "ruta": {"type": "string", "description": "Ruta .docx opcional dentro de la carpeta del usuario"},
+    },
+    ["titulo", "contenido"],
+)
+def crear_documento_word(titulo, contenido, ruta=""):
+    if len(contenido) > 50000:
+        raise ValueError("El documento supera el límite de 50.000 caracteres.")
+    if ruta.strip():
+        destino = Path(ruta).expanduser()
+        if not destino.is_absolute():
+            destino = Path.home() / destino
+        destino = _ruta_segura(destino)
+    else:
+        carpeta = _ruta_segura(config.CARPETA_DATOS / "documentos")
+        nombre = _nombre_archivo_seguro(titulo, "documento")
+        destino = carpeta / f"{nombre}.docx"
+    if destino.suffix.lower() != ".docx":
+        destino = destino.with_suffix(".docx")
+    destino = _ruta_segura(destino)
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    if destino.exists():
+        return f"Ya existe {destino}. No lo sobrescribí."
+    _guardar_docx(destino, titulo.strip() or "Documento", contenido)
+    try:
+        _abrir_archivo(destino)
+    except OSError as error:
+        return f"Documento Word creado en {destino}, pero Windows no pudo abrirlo: {error}"
+    return f"Documento Word creado y abierto: {destino}"
+
+
+_ELEMENTO_DIBUJO_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "tipo": {
+            "type": "string",
+            "enum": ["linea", "rectangulo", "elipse", "poligono", "texto"],
+        },
+        "x1": {"type": "number"},
+        "y1": {"type": "number"},
+        "x2": {"type": "number"},
+        "y2": {"type": "number"},
+        "puntos": {
+            "type": "array",
+            "items": {"type": "array", "items": {"type": "number"}},
+        },
+        "color": {"type": "string", "description": "Color de borde o trazo, por ejemplo #20C8FF"},
+        "relleno": {"type": "string", "description": "Color interior; vacío para transparente"},
+        "grosor": {"type": "integer"},
+        "texto": {"type": "string"},
+        "tamano_texto": {"type": "integer"},
+    },
+    "required": ["tipo"],
+}
+
+
+def _color_dibujo(nombre, predeterminado):
+    from PIL import ImageColor
+
+    color = nombre or predeterminado
+    try:
+        return ImageColor.getrgb(color) if color else None
+    except ValueError as error:
+        raise ValueError(f"Color no válido: {color}") from error
+
+
+def _coordenada(valor, limite):
+    numero = float(valor)
+    if not math.isfinite(numero) or not 0 <= numero <= limite:
+        raise ValueError(f"Coordenada fuera del lienzo (0 a {limite}).")
+    return round(numero)
+
+
+@herramienta(
+    "Dibuja una imagen usando formas y texto, la guarda como PNG en la carpeta dibujos de Jarvis "
+    "y la abre en Paint. Las coordenadas de cada elemento se expresan en píxeles desde la esquina superior izquierda. "
+    "Usá elementos tipo linea, rectangulo, elipse, poligono o texto.",
+    {
+        "titulo": {"type": "string", "description": "Nombre del archivo"},
+        "elementos": {
+            "type": "array",
+            "items": _ELEMENTO_DIBUJO_SCHEMA,
+            "description": "Formas en orden de dibujo. En polígonos, puntos es una lista de pares [x,y].",
+        },
+        "ancho": {"type": "integer", "description": "Ancho del lienzo en píxeles, máximo 2000"},
+        "alto": {"type": "integer", "description": "Alto del lienzo en píxeles, máximo 2000"},
+        "fondo": {"type": "string", "description": "Color de fondo, por ejemplo #07111C"},
+    },
+    ["titulo", "elementos"],
+)
+def dibujar_en_paint(titulo, elementos, ancho=1200, alto=800, fondo="#FFFFFF"):
+    from PIL import Image, ImageDraw, ImageFont
+
+    ancho, alto = int(ancho), int(alto)
+    if not 64 <= ancho <= 2000 or not 64 <= alto <= 2000:
+        raise ValueError("El lienzo debe medir entre 64 y 2000 píxeles por lado.")
+    if not elementos or len(elementos) > 100:
+        raise ValueError("Indicá entre 1 y 100 elementos para dibujar.")
+
+    imagen = Image.new("RGB", (ancho, alto), _color_dibujo(fondo, "#FFFFFF"))
+    dibujo = ImageDraw.Draw(imagen)
+    for elemento in elementos:
+        tipo = elemento.get("tipo")
+        color = _color_dibujo(elemento.get("color"), "#18212B")
+        relleno = _color_dibujo(elemento.get("relleno"), "")
+        grosor = int(elemento.get("grosor", 3))
+        if not 1 <= grosor <= 40:
+            raise ValueError("El grosor de línea debe estar entre 1 y 40.")
+        if tipo == "texto":
+            texto = str(elemento.get("texto", ""))[:1000]
+            tamano = int(elemento.get("tamano_texto", 32))
+            if not 8 <= tamano <= 128:
+                raise ValueError("El tamaño del texto debe estar entre 8 y 128.")
+            fuentes = (
+                Path(os.environ.get("WINDIR", r"C:\Windows"))
+                / "Fonts"
+                / "segoeui.ttf",
+                Path(os.environ.get("WINDIR", r"C:\Windows"))
+                / "Fonts"
+                / "arial.ttf",
+            )
+            fuente = next((ImageFont.truetype(str(p), tamano) for p in fuentes if p.is_file()), None)
+            if fuente is None:
+                fuente = ImageFont.load_default()
+            x = _coordenada(elemento.get("x1", 0), ancho)
+            y = _coordenada(elemento.get("y1", 0), alto)
+            dibujo.text((x, y), texto, fill=color, font=fuente)
+        elif tipo == "poligono":
+            puntos = elemento.get("puntos") or []
+            if not 3 <= len(puntos) <= 100:
+                raise ValueError("Un polígono debe tener entre 3 y 100 puntos.")
+            coordenadas = [
+                (
+                    _coordenada(punto[0], ancho),
+                    _coordenada(punto[1], alto),
+                )
+                for punto in puntos
+                if len(punto) == 2
+            ]
+            if len(coordenadas) != len(puntos):
+                raise ValueError("Cada punto del polígono debe tener coordenadas [x, y].")
+            dibujo.polygon(coordenadas, fill=relleno, outline=color)
+            dibujo.line(coordenadas + [coordenadas[0]], fill=color, width=grosor)
+        elif tipo in ("linea", "rectangulo", "elipse"):
+            coordenadas = (
+                _coordenada(elemento.get("x1", 0), ancho),
+                _coordenada(elemento.get("y1", 0), alto),
+                _coordenada(elemento.get("x2", 0), ancho),
+                _coordenada(elemento.get("y2", 0), alto),
+            )
+            if tipo == "linea":
+                dibujo.line(coordenadas, fill=color, width=grosor)
+            elif tipo == "rectangulo":
+                dibujo.rectangle(coordenadas, fill=relleno, outline=color, width=grosor)
+            else:
+                dibujo.ellipse(coordenadas, fill=relleno, outline=color, width=grosor)
+        else:
+            raise ValueError(f"Tipo de elemento no válido: {tipo}")
+
+    carpeta = _ruta_segura(config.CARPETA_DATOS / "dibujos")
+    carpeta.mkdir(parents=True, exist_ok=True)
+    nombre = _nombre_archivo_seguro(titulo, "dibujo")
+    ruta = _ruta_segura(_ruta_disponible(carpeta / f"{nombre}.png"))
+    imagen.save(ruta, format="PNG")
+
+    paint = Path(os.environ.get("WINDIR", r"C:\Windows")) / "System32" / "mspaint.exe"
+    if paint.is_file():
+        try:
+            subprocess.Popen([str(paint), str(ruta)])
+        except OSError as error:
+            return f"Dibujo guardado en {ruta}, pero Paint no pudo abrirlo: {error}"
+        return f"Dibujo guardado y abierto en Paint: {ruta}"
+    try:
+        _abrir_archivo(ruta)
+    except OSError as error:
+        return f"Dibujo guardado en {ruta}, pero Windows no pudo abrirlo: {error}"
+    return f"Dibujo guardado y abierto con la aplicación predeterminada: {ruta}. Paint no está instalado."
+
+
+def _validar_destinatarios(destinatarios):
+    partes = [parte.strip() for parte in re.split(r"[,;]", destinatarios) if parte.strip()]
+    if not partes or any(
+        not re.fullmatch(r"[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+", parte)
+        for parte in partes
+    ):
+        raise ValueError("Indicá una o más direcciones de correo válidas.")
+    return "; ".join(partes)
+
+
+def _datos_correo(destinatarios, asunto, cuerpo):
+    if len(asunto) > 200 or len(cuerpo) > 5000:
+        raise ValueError("El asunto debe tener hasta 200 caracteres y el mensaje hasta 5000.")
+    destino = _validar_destinatarios(destinatarios)
+    if len(destino) > 1000:
+        raise ValueError("La lista de destinatarios es demasiado larga.")
+    return destino
+
+
+def _confirmacion_envio_correo(destinatarios, asunto, cuerpo):
+    destino = _datos_correo(destinatarios, asunto, cuerpo)
+    return (
+        "Voy a enviar este correo desde Outlook.\n"
+        f"Para: {destino}\nAsunto: {asunto}\n\n{cuerpo}\n\n"
+        "¿Confirmás el envío?"
+    )
+
+
+@herramienta(
+    "Redacta un correo y lo deja abierto para que el usuario lo revise y envíe. "
+    "Usa la aplicación de correo predeterminada; no envía el mensaje.",
+    {
+        "destinatarios": {"type": "string", "description": "Una o más direcciones, separadas por coma"},
+        "asunto": {"type": "string"},
+        "cuerpo": {"type": "string"},
+    },
+    ["destinatarios", "asunto", "cuerpo"],
+)
+def redactar_correo(destinatarios, asunto, cuerpo):
+    destino = _datos_correo(destinatarios, asunto, cuerpo)
+    try:
+        import win32com.client
+        import pywintypes
+    except ImportError:
+        win32com = None
+    else:
+        win32com = win32com.client
+
+    if win32com:
+        try:
+            correo = win32com.Dispatch("Outlook.Application").CreateItem(0)
+        except pywintypes.com_error:
+            correo = None
+        if correo is not None:
+            correo.To = destino
+            correo.Subject = asunto
+            correo.Body = cuerpo
+            correo.Display()
+            return f"Dejé el correo abierto para revisar en Outlook: {destino}"
+
+    if len(cuerpo) > 1500:
+        raise RuntimeError(
+            "La aplicación de correo no permite un borrador tan largo mediante mailto. "
+            "Configurá Outlook clásico para abrir el borrador completo."
+        )
+    campos = quote_plus(asunto)
+    cuerpo_codificado = quote_plus(cuerpo)
+    para = quote(destino.replace("; ", ","), safe="@,")
+    enlace = f"mailto:{para}?subject={campos}&body={cuerpo_codificado}"
+    if not webbrowser.open(enlace):
+        raise OSError("No pude abrir Outlook ni la aplicación de correo predeterminada.")
+    return f"Dejé un borrador abierto para revisar: {destino}"
+
+
+@herramienta(
+    "Envía un correo con Outlook clásico. Usala solo cuando el usuario haya pedido enviarlo; "
+    "siempre se muestra una confirmación con destinatario, asunto y cuerpo antes de enviar.",
+    {
+        "destinatarios": {"type": "string", "description": "Una o más direcciones, separadas por coma"},
+        "asunto": {"type": "string"},
+        "cuerpo": {"type": "string"},
+    },
+    ["destinatarios", "asunto", "cuerpo"],
+    confirmar=True,
+    texto_confirmacion=_confirmacion_envio_correo,
+)
+def enviar_correo(destinatarios, asunto, cuerpo):
+    destino = _datos_correo(destinatarios, asunto, cuerpo)
+    try:
+        import win32com.client
+    except ImportError as error:
+        raise RuntimeError(
+            "Para enviar correos instalá pywin32 y configurá una cuenta en Outlook clásico. "
+            "También puedo dejarte el borrador abierto en la aplicación predeterminada."
+        ) from error
+    correo = win32com.client.Dispatch("Outlook.Application").CreateItem(0)
+    correo.To = destino
+    correo.Subject = asunto
+    correo.Body = cuerpo
+    correo.Send()
+    return f"Correo enviado desde Outlook a {destino}."
 
 
 @herramienta(

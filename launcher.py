@@ -1,5 +1,6 @@
 """Interfaz básica para elegir dispositivos de audio y arrancar Jarvis."""
 import json
+import math
 import os
 import queue
 import sys
@@ -30,25 +31,48 @@ import config
 import sounddevice as sd
 import voice
 
+FONDO = "#07111C"
+PANEL = "#0D1A28"
+PANEL_CLARO = "#122337"
+TEXTO = "#E8F2FA"
+TEXTO_SUAVE = "#8DA4B8"
+CIAN = "#47D7F5"
+
 
 class Lanzador:
     def __init__(self, raiz):
         self.raiz = raiz
-        raiz.title(f"{config.NOMBRE} - Inicio")
+        raiz.title(f"{config.NOMBRE} // ASISTENTE PERSONAL")
+        raiz.geometry("1080x760")
+        raiz.minsize(860, 620)
+        raiz.configure(bg=FONDO)
         raiz.resizable(True, True)
         raiz.protocol("WM_DELETE_WINDOW", self.cerrar)
+        self._configurar_estilos()
         self.cerrando = threading.Event()
         self.pedidos = queue.Queue()
         self.modo = None
         self.vision_descargando = False
+        self._fase_nucleo = 0
         self.compartir_pantalla_var = tk.BooleanVar(value=False)
         config.COMPARTIENDO_PANTALLA = False
 
-        principal = ttk.Frame(raiz, padding=16)
+        principal = ttk.Frame(raiz, padding=28, style="App.TFrame")
         self.principal = principal
         principal.grid(sticky="nsew")
-        ttk.Label(principal, text=f"{config.NOMBRE}", font=("Segoe UI", 18, "bold")).grid(
-            row=0, column=0, columnspan=2, sticky="w", pady=(0, 12)
+        ttk.Label(
+            principal,
+            text=f"{config.NOMBRE.upper()}  /  ASISTENTE PERSONAL",
+            style="Title.TLabel",
+        ).grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 4)
+        )
+        ttk.Label(
+            principal,
+            text="Prepará tu espacio. Cuando quieras, arrancamos.",
+            style="Muted.TLabel",
+        ).grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(0, 20)
         )
 
         entradas, salidas = self._dispositivos()
@@ -104,19 +128,19 @@ class Lanzador:
             value=config.ELEVENLABS_VOICE_ID
         )
 
-        ttk.Label(principal, text="Micrófono (entrada)").grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Label(principal, text="Micrófono (entrada)").grid(row=2, column=0, sticky="w", pady=4)
         self.entrada_menu = ttk.Combobox(
             principal, textvariable=self.entrada_var, values=list(self.entradas), state="readonly", width=56
         )
-        self.entrada_menu.grid(row=1, column=1, sticky="ew", pady=4)
+        self.entrada_menu.grid(row=2, column=1, sticky="ew", pady=4)
 
-        ttk.Label(principal, text="Parlante/auricular (salida)").grid(row=2, column=0, sticky="w", pady=4)
+        ttk.Label(principal, text="Parlante/auricular (salida)").grid(row=3, column=0, sticky="w", pady=4)
         self.salida_menu = ttk.Combobox(
             principal, textvariable=self.salida_var, values=list(self.salidas), state="readonly", width=56
         )
-        self.salida_menu.grid(row=2, column=1, sticky="ew", pady=4)
+        self.salida_menu.grid(row=3, column=1, sticky="ew", pady=4)
 
-        ttk.Label(principal, text="Modelo de IA").grid(row=3, column=0, sticky="w", pady=4)
+        ttk.Label(principal, text="Modelo de IA").grid(row=4, column=0, sticky="w", pady=4)
         self.proveedor_menu = ttk.Combobox(
             principal,
             textvariable=self.proveedor_var,
@@ -124,19 +148,19 @@ class Lanzador:
             state="readonly",
             width=56,
         )
-        self.proveedor_menu.grid(row=3, column=1, sticky="ew", pady=4)
+        self.proveedor_menu.grid(row=4, column=1, sticky="ew", pady=4)
         self.proveedor_menu.bind("<<ComboboxSelected>>", self._cambiar_proveedor)
 
-        ttk.Label(principal, text="API key del modelo (se guarda en Windows)").grid(row=4, column=0, sticky="w", pady=4)
+        ttk.Label(principal, text="API key del modelo (se guarda en Windows)").grid(row=5, column=0, sticky="w", pady=4)
         self.api_key_entry = ttk.Entry(principal, textvariable=self.api_key_var, show="*", width=56)
-        self.api_key_entry.grid(row=4, column=1, sticky="ew", pady=4)
+        self.api_key_entry.grid(row=5, column=1, sticky="ew", pady=4)
         ttk.Label(
             principal,
             text="Se almacena en el Administrador de credenciales de Windows, no en un archivo.",
-        ).grid(row=5, column=0, columnspan=2, sticky="w")
+        ).grid(row=6, column=0, columnspan=2, sticky="w")
         self._cambiar_proveedor()
 
-        ttk.Label(principal, text="Voz de respuesta").grid(row=6, column=0, sticky="w", pady=4)
+        ttk.Label(principal, text="Voz de respuesta").grid(row=7, column=0, sticky="w", pady=4)
         self.proveedor_tts_menu = ttk.Combobox(
             principal,
             textvariable=self.proveedor_tts_var,
@@ -144,44 +168,44 @@ class Lanzador:
             state="readonly",
             width=56,
         )
-        self.proveedor_tts_menu.grid(row=6, column=1, sticky="ew", pady=4)
+        self.proveedor_tts_menu.grid(row=7, column=1, sticky="ew", pady=4)
 
         ttk.Label(principal, text="API key de ElevenLabs (se guarda en Windows)").grid(
-            row=7, column=0, sticky="w", pady=4
+            row=8, column=0, sticky="w", pady=4
         )
         self.elevenlabs_api_key_entry = ttk.Entry(
             principal, textvariable=self.elevenlabs_api_key_var, show="*", width=56
         )
-        self.elevenlabs_api_key_entry.grid(row=7, column=1, sticky="ew", pady=4)
+        self.elevenlabs_api_key_entry.grid(row=8, column=1, sticky="ew", pady=4)
         ttk.Label(principal, text="Voice ID de ElevenLabs").grid(
-            row=8, column=0, sticky="w", pady=4
+            row=9, column=0, sticky="w", pady=4
         )
         self.elevenlabs_voice_id_entry = ttk.Entry(
             principal, textvariable=self.elevenlabs_voice_id_var, width=56
         )
-        self.elevenlabs_voice_id_entry.grid(row=8, column=1, sticky="ew", pady=4)
+        self.elevenlabs_voice_id_entry.grid(row=9, column=1, sticky="ew", pady=4)
         ttk.Label(
             principal,
             text="Copiá el Voice ID de la voz elegida en ElevenLabs. Se guarda en la configuración local.",
-        ).grid(row=9, column=0, columnspan=2, sticky="w")
+        ).grid(row=10, column=0, columnspan=2, sticky="w")
         ttk.Label(
             principal,
             text=f"Voz local predeterminada: Claude ({config.PIPER_MODELO_VOZ}), gratis y sin conexión.",
-        ).grid(row=10, column=0, columnspan=2, sticky="w")
+        ).grid(row=11, column=0, columnspan=2, sticky="w")
         ttk.Checkbutton(
             principal,
             text="Permitir que Jarvis analice la pantalla cuando se lo pida (captura bajo demanda)",
             variable=self.compartir_pantalla_var,
             command=self._cambiar_permiso_pantalla,
-        ).grid(row=11, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ).grid(row=12, column=0, columnspan=2, sticky="w", pady=(8, 0))
         ttk.Button(
             principal,
             text=f"Descargar modelo visual (~3 GB): {config.MODELO_VISION}",
             command=self.preparar_vision,
-        ).grid(row=12, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ).grid(row=13, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
         acciones = ttk.Frame(principal)
-        acciones.grid(row=13, column=0, columnspan=2, sticky="ew", pady=(16, 8))
+        acciones.grid(row=14, column=0, columnspan=2, sticky="ew", pady=(16, 8))
         ttk.Button(acciones, text="Probar micrófono", command=self.probar_microfono).grid(
             row=0, column=0, padx=(0, 6)
         )
@@ -199,21 +223,31 @@ class Lanzador:
         ttk.Button(
             acciones, text="Probar ElevenLabs", command=self.probar_elevenlabs
         ).grid(row=0, column=4, padx=6)
-        ttk.Button(acciones, text="Iniciar con voz", command=lambda: self.iniciar(False)).grid(
+        ttk.Button(
+            acciones,
+            text="Iniciar con voz",
+            command=lambda: self.iniciar(False),
+            style="Accent.TButton",
+        ).grid(
             row=1, column=0, sticky="w", pady=(8, 0)
         )
-        ttk.Button(acciones, text="Iniciar en modo texto", command=lambda: self.iniciar(True)).grid(
+        ttk.Button(
+            acciones,
+            text="Iniciar en modo texto",
+            command=lambda: self.iniciar(True),
+            style="Accent.TButton",
+        ).grid(
             row=1, column=1, sticky="w", padx=6, pady=(8, 0)
         )
 
         self.estado = tk.StringVar(value="Seleccioná los dispositivos y probalos antes de iniciar.")
-        ttk.Label(principal, textvariable=self.estado, wraplength=650).grid(
-            row=14, column=0, columnspan=2, sticky="w", pady=(8, 0)
+        ttk.Label(principal, textvariable=self.estado, wraplength=780).grid(
+            row=15, column=0, columnspan=2, sticky="w", pady=(8, 0)
         )
         ttk.Label(
             principal,
             text="La prueba del micrófono dura 5 segundos: hablá durante la medición.",
-        ).grid(row=15, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ).grid(row=16, column=0, columnspan=2, sticky="w", pady=(8, 0))
         self.api_key_entry.bind("<FocusOut>", self._guardar_claves_al_perder_foco)
         self.elevenlabs_api_key_entry.bind("<FocusOut>", self._guardar_claves_al_perder_foco)
 
@@ -221,6 +255,92 @@ class Lanzador:
             self.estado.set("Windows no informa entradas de audio. Revisá permisos y conexión del micrófono.")
         raiz.columnconfigure(0, weight=1)
         raiz.rowconfigure(0, weight=1)
+
+    def _configurar_estilos(self):
+        estilos = ttk.Style(self.raiz)
+        estilos.theme_use("clam")
+        estilos.configure(".", background=FONDO, foreground=TEXTO, font=("Segoe UI", 10))
+        estilos.configure("App.TFrame", background=FONDO)
+        estilos.configure("TFrame", background=FONDO)
+        estilos.configure("Card.TFrame", background=PANEL)
+        estilos.configure("TLabel", background=FONDO, foreground=TEXTO)
+        estilos.configure("Muted.TLabel", foreground=TEXTO_SUAVE, font=("Segoe UI", 10))
+        estilos.configure("Title.TLabel", font=("Segoe UI Semibold", 22), foreground=TEXTO)
+        estilos.configure("Subtitle.TLabel", font=("Segoe UI", 10), foreground=TEXTO_SUAVE)
+        estilos.configure(
+            "Card.Title.TLabel",
+            background=PANEL,
+            foreground=TEXTO,
+            font=("Segoe UI Semibold", 22),
+        )
+        estilos.configure(
+            "Card.Subtitle.TLabel",
+            background=PANEL,
+            foreground=TEXTO_SUAVE,
+            font=("Segoe UI", 10),
+        )
+        estilos.configure(
+            "TButton",
+            background=PANEL_CLARO,
+            foreground=TEXTO,
+            padding=(12, 8),
+            borderwidth=0,
+            focusthickness=0,
+        )
+        estilos.map(
+            "TButton",
+            background=[("active", "#1A344B"), ("disabled", PANEL)],
+            foreground=[("disabled", TEXTO_SUAVE)],
+        )
+        estilos.configure(
+            "Accent.TButton",
+            background="#0E7895",
+            foreground="#FFFFFF",
+            font=("Segoe UI Semibold", 10),
+            padding=(16, 9),
+        )
+        estilos.map("Accent.TButton", background=[("active", "#1298B8")])
+        estilos.configure(
+            "TEntry",
+            fieldbackground=PANEL,
+            foreground=TEXTO,
+            insertcolor=TEXTO,
+            padding=8,
+            borderwidth=1,
+        )
+        estilos.configure(
+            "TCombobox",
+            fieldbackground=PANEL,
+            background=PANEL_CLARO,
+            foreground=TEXTO,
+            arrowcolor=CIAN,
+            padding=7,
+        )
+        estilos.map(
+            "TCombobox",
+            fieldbackground=[("readonly", PANEL)],
+            foreground=[("readonly", TEXTO)],
+            selectbackground=[("readonly", PANEL)],
+            selectforeground=[("readonly", TEXTO)],
+        )
+        estilos.configure(
+            "TCheckbutton",
+            background=FONDO,
+            foreground=TEXTO_SUAVE,
+            padding=4,
+        )
+        estilos.map(
+            "TCheckbutton",
+            background=[("active", FONDO)],
+            foreground=[("active", CIAN)],
+        )
+        estilos.configure(
+            "Vertical.TScrollbar",
+            background=PANEL_CLARO,
+            troughcolor=FONDO,
+            borderwidth=0,
+            arrowsize=12,
+        )
 
     def _cambiar_permiso_pantalla(self):
         config.COMPARTIENDO_PANTALLA = self.compartir_pantalla_var.get()
@@ -646,52 +766,171 @@ class Lanzador:
         ).start()
 
     def _crear_chat(self):
-        self.chat = ttk.Frame(self.raiz, padding=12)
+        self.raiz.title(f"{config.NOMBRE} // ENLACE ACTIVO")
+        self.chat = ttk.Frame(self.raiz, padding=22, style="App.TFrame")
         self.chat.grid(row=0, column=0, sticky="nsew")
         self.chat.columnconfigure(0, weight=1)
         self.chat.rowconfigure(1, weight=1)
-        encabezado = ttk.Frame(self.chat)
-        encabezado.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        encabezado = ttk.Frame(self.chat, style="Card.TFrame", padding=(18, 12))
+        encabezado.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        encabezado.columnconfigure(1, weight=1)
+        self._orb_canvas = tk.Canvas(
+            encabezado,
+            width=104,
+            height=104,
+            bg=PANEL,
+            highlightthickness=0,
+        )
+        self._orb_canvas.grid(row=0, column=0, rowspan=2, padx=(0, 18))
         ttk.Label(
             encabezado,
-            text=f"{config.NOMBRE} - modo {self.modo}",
-            font=("Segoe UI", 15, "bold"),
-        ).grid(row=0, column=0, sticky="w")
+            text=config.NOMBRE.upper(),
+            style="Card.Title.TLabel",
+        ).grid(row=0, column=1, sticky="sw")
+        ttk.Label(
+            encabezado,
+            text=f"ASISTENTE PERSONAL  /  MODO {self.modo.upper()}",
+            style="Card.Subtitle.TLabel",
+        ).grid(row=1, column=1, sticky="nw", pady=(2, 0))
         ttk.Checkbutton(
             encabezado,
             text="Permitir análisis de pantalla",
             variable=self.compartir_pantalla_var,
             command=self._cambiar_permiso_pantalla,
-        ).grid(row=0, column=1, sticky="e", padx=(12, 0))
-        encabezado.columnconfigure(0, weight=1)
-        conversacion = ttk.Frame(self.chat)
+        ).grid(row=0, column=2, rowspan=2, sticky="e", padx=(12, 0))
+        conversacion = tk.Frame(
+            self.chat,
+            bg=PANEL,
+            highlightbackground="#193147",
+            highlightthickness=1,
+            padx=22,
+            pady=18,
+        )
         conversacion.grid(row=1, column=0, sticky="nsew")
         conversacion.columnconfigure(0, weight=1)
         conversacion.rowconfigure(0, weight=1)
-        self.historial_ui = tk.Text(conversacion, wrap="word", state="disabled", height=20)
+        self.historial_ui = tk.Text(
+            conversacion,
+            wrap="word",
+            state="disabled",
+            height=20,
+            bg=PANEL,
+            fg=TEXTO,
+            insertbackground=CIAN,
+            selectbackground="#1D5368",
+            selectforeground="#FFFFFF",
+            font=("Segoe UI", 11),
+            padx=8,
+            pady=8,
+            relief="flat",
+            borderwidth=0,
+            spacing1=3,
+            spacing3=8,
+            highlightthickness=0,
+        )
+        self.historial_ui.tag_configure(
+            "assistant",
+            foreground=CIAN,
+            font=("Segoe UI Semibold", 9),
+            spacing1=14,
+            spacing3=5,
+        )
+        self.historial_ui.tag_configure(
+            "user",
+            foreground="#B8C6D4",
+            font=("Segoe UI Semibold", 9),
+            spacing1=12,
+            spacing3=5,
+        )
+        self.historial_ui.tag_configure("body", foreground=TEXTO, lmargin1=2, lmargin2=2)
         self.historial_ui.grid(row=0, column=0, sticky="nsew")
         scroll = ttk.Scrollbar(conversacion, command=self.historial_ui.yview)
         scroll.grid(row=0, column=1, sticky="ns")
         self.historial_ui.configure(yscrollcommand=scroll.set)
-        entrada = ttk.Frame(self.chat)
-        entrada.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        entrada = ttk.Frame(self.chat, style="Card.TFrame", padding=(12, 10))
+        entrada.grid(row=2, column=0, sticky="ew", pady=(14, 0))
         entrada.columnconfigure(0, weight=1)
         self.mensaje = tk.StringVar()
         self.campo_mensaje = ttk.Entry(entrada, textvariable=self.mensaje)
         self.campo_mensaje.grid(row=0, column=0, sticky="ew")
         self.campo_mensaje.bind("<Return>", lambda _: self.enviar())
-        ttk.Button(entrada, text="Enviar", command=self.enviar).grid(row=0, column=1, padx=(8, 0))
+        ttk.Button(
+            entrada,
+            text="Enviar  >",
+            command=self.enviar,
+            style="Accent.TButton",
+        ).grid(row=0, column=1, padx=(10, 0))
         self.estado_chat = tk.StringVar()
-        ttk.Label(self.chat, textvariable=self.estado_chat, wraplength=680).grid(
-            row=3, column=0, sticky="w", pady=(8, 0)
+        ttk.Label(
+            self.chat,
+            textvariable=self.estado_chat,
+            wraplength=900,
+            style="Muted.TLabel",
+        ).grid(
+            row=3, column=0, sticky="w", pady=(10, 0)
         )
         self.campo_mensaje.focus_set()
+        self._animar_nucleo()
+
+    def _animar_nucleo(self):
+        canvas = getattr(self, "_orb_canvas", None)
+        if canvas is None or not canvas.winfo_exists() or self.cerrando.is_set():
+            return
+        canvas.delete("all")
+        centro_x = centro_y = 52
+        self._fase_nucleo = (self._fase_nucleo + 7) % 360
+        canvas.create_oval(9, 9, 95, 95, outline="#1A4257", width=1)
+        canvas.create_oval(18, 18, 86, 86, outline="#1F6077", width=1)
+        canvas.create_arc(
+            13,
+            13,
+            91,
+            91,
+            start=self._fase_nucleo,
+            extent=92,
+            style="arc",
+            outline=CIAN,
+            width=2,
+        )
+        canvas.create_arc(
+            23,
+            23,
+            81,
+            81,
+            start=-self._fase_nucleo * 1.4,
+            extent=72,
+            style="arc",
+            outline="#32AFCB",
+            width=2,
+        )
+        for indice in range(24):
+            angulo = math.radians(indice * 15 + self._fase_nucleo)
+            interior = 40
+            exterior = interior + (4 if indice % 3 == 0 else 1)
+            canvas.create_line(
+                centro_x + math.cos(angulo) * interior,
+                centro_y + math.sin(angulo) * interior,
+                centro_x + math.cos(angulo) * exterior,
+                centro_y + math.sin(angulo) * exterior,
+                fill="#347D91" if indice % 3 else CIAN,
+                width=1,
+            )
+        canvas.create_oval(34, 34, 70, 70, fill="#102B3D", outline="#257D96", width=1)
+        canvas.create_oval(42, 42, 62, 62, fill=CIAN, outline="#B7F5FF", width=1)
+        canvas.create_oval(48, 48, 56, 56, fill="#E8FCFF", outline="")
+        self.raiz.after(70, self._animar_nucleo)
 
     def _agregar_mensaje(self, quien, texto):
         def agregar():
             if not self.cerrando.is_set():
                 self.historial_ui.configure(state="normal")
-                self.historial_ui.insert("end", f"{quien}: {texto}\n\n")
+                es_jarvis = quien == config.NOMBRE
+                etiqueta = "assistant" if es_jarvis else "user"
+                nombre = "JARVIS" if es_jarvis else "TÚ"
+                if "voz" in quien.lower():
+                    nombre += "  /  VOZ"
+                self.historial_ui.insert("end", f"{nombre}\n", etiqueta)
+                self.historial_ui.insert("end", f"{texto}\n\n", "body")
                 self.historial_ui.configure(state="disabled")
                 self.historial_ui.see("end")
 

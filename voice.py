@@ -32,6 +32,26 @@ def normalizar(texto):
     return re.sub(r"[^\w\s]", " ", texto)
 
 
+def _ajustar_nivel_audio(audio):
+    """Amplifica habla tenue sin permitir que el aumento exceda 8x."""
+    import numpy as np
+
+    audio = np.asarray(audio, dtype=np.float32)
+    if not audio.size:
+        return audio
+    bloque = max(1, SR // 50)
+    niveles = [
+        float(np.sqrt(np.mean(audio[inicio:inicio + bloque] ** 2)))
+        for inicio in range(0, len(audio), bloque)
+        if audio[inicio:inicio + bloque].size
+    ]
+    nivel_referencia = float(np.percentile(niveles, 90)) if niveles else 0
+    if nivel_referencia <= 0:
+        return audio
+    ganancia = min(8.0, max(1.0, 0.06 / nivel_referencia))
+    return np.clip(audio * ganancia, -1.0, 1.0)
+
+
 def hablar(texto, api_key=None, oido=None):
     print(f"{config.NOMBRE}: {texto}")
     if not config.USAR_VOZ:
@@ -356,7 +376,8 @@ class Oido:
         print(f"Frecuencia de captura: {self.frecuencia} Hz (se convierte a {SR} Hz para Whisper)")
         print("Cargando modelo de voz (la primera vez descarga unos cientos de MB)...")
         self.modelo = WhisperModel(config.WHISPER_MODELO, device="auto", compute_type="int8")
-        self.umbral = 0.001
+        self.ruido_ambiente = 0.00025
+        self.umbral = 0.00045
         self.calibrar()
 
     def _elegir_microfono(self, seleccion=None):
@@ -406,8 +427,12 @@ class Oido:
         )
         self.sd.wait()
         ruido = float(self.np.sqrt(self.np.mean(audio**2)))
-        self.umbral = max(0.001, ruido * 3)
-        print(f"Nivel ambiente: {ruido:.4f}; umbral de voz: {self.umbral:.4f}")
+        self.ruido_ambiente = ruido
+        self.umbral = max(0.00045, ruido * 1.8)
+        print(
+            f"Nivel ambiente: {ruido:.5f}; umbral de voz: {self.umbral:.5f} "
+            "(sensibilidad aumentada)"
+        )
 
     def grabar_frase(self, espera_max=None, max_seg=15):
         """Graba hasta detectar una frase completa. Devuelve audio o None si pasó espera_max sin hablar."""
@@ -430,7 +455,12 @@ class Oido:
                 if self.pausar_escucha.is_set():
                     break
                 nivel = float(np.sqrt(np.mean(datos**2)))
-                if nivel > self.umbral:
+                if not hablando:
+                    self.ruido_ambiente = (
+                        self.ruido_ambiente * 0.95 + nivel * 0.05
+                    )
+                    self.umbral = max(0.00045, self.ruido_ambiente * 1.8)
+                if nivel >= self.umbral:
                     if not hablando:
                         buf = list(pre)
                     hablando, silencio = True, 0
@@ -440,7 +470,7 @@ class Oido:
                     silencio += 1
                     if silencio >= 8:  # ~0,8 s de silencio = fin de frase
                         break
-                else:
+                else: 
                     pre = (pre + [datos])[-3:]
                     if espera_max and time.time() - inicio > espera_max:
                         return None
@@ -458,19 +488,32 @@ class Oido:
                 np.arange(len(audio)),
                 audio,
             ).astype(np.float32)
-        return audio
+        return _ajustar_nivel_audio(audio)
 
     def transcribir(self, audio):
         if audio is None:
             return ""
-        segmentos, _ = self.modelo.transcribe(audio, language=config.IDIOMA, beam_size=1, vad_filter=True)
+        audio = _ajustar_nivel_audio(audio)
+        segmentos, _ = self.modelo.transcribe(
+            audio,
+            language=config.IDIOMA,
+            beam_size=3,
+            vad_filter=True,
+            vad_parameters={
+                "threshold": 0.35,
+                "min_speech_duration_ms": 100,
+                "min_silence_duration_ms": 350,
+                "speech_pad_ms": 300,
+            },
+        )
         return " ".join(s.text.strip() for s in segmentos).strip()
 
     def reproducir_interrumpible(self, audio, samplerate, dispositivo_salida):
         """Reproduce la respuesta y la corta si detecta voz del usuario."""
         np, sd = self.np, self.sd
-        bloque = max(1, int(self.frecuencia * 0.1))
-        umbral_interrupcion = max(0.006, self.umbral * 2.0)
+        bloque = max(1, int(self.frecuencia * 0.05))
+        umbral_interrupcion = max(0.0008, min(self.umbral * 1.25, 0.003))
+        umbral_fin_frase = max(0.0004, self.umbral * 0.7)
         previos = []
         frase = []
         actividad = 0
@@ -499,10 +542,10 @@ class Oido:
                     datos, _ = stream.read(bloque)
                     nivel = float(np.sqrt(np.mean(datos**2)))
                     if not hablando:
-                        previos = (previos + [datos.copy()])[-3:]
+                        previos = (previos + [datos.copy()])[-6:]
                         if nivel >= umbral_interrupcion:
                             actividad += 1
-                            if actividad >= 2:
+                            if actividad >= 3:
                                 hablando = True
                                 frase = list(previos)
                                 sd.stop()
@@ -511,8 +554,8 @@ class Oido:
                     else:
                         frase.append(datos.copy())
                         bloques_frase += 1
-                        silencio = silencio + 1 if nivel < self.umbral else 0
-                        if silencio >= 8 or bloques_frase >= 150:
+                        silencio = silencio + 1 if nivel < umbral_fin_frase else 0
+                        if silencio >= 10 or bloques_frase >= 400:
                             break
         except Exception:
             sd.stop()
@@ -528,7 +571,7 @@ class Oido:
                 np.arange(len(audio_usuario)),
                 audio_usuario,
             ).astype(np.float32)
-        return InterrupcionVoz(self.transcribir(audio_usuario))
+        return InterrupcionVoz(self.transcribir(_ajustar_nivel_audio(audio_usuario)))
 
     def esperar_activacion(self, al_transcribir=None):
         """Bloquea hasta oír la palabra de activación. Devuelve lo que se dijo después (puede ser '')."""
