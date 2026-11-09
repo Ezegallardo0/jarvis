@@ -32,6 +32,33 @@ def normalizar(texto):
     return re.sub(r"[^\w\s]", " ", texto)
 
 
+def cambiar_modo_silencio(texto):
+    """Aplica comandos hablados para silenciar o reactivar la voz de respuesta."""
+    pedido = normalizar(texto).strip()
+    comandos_silencio = (
+        "modo silencio",
+        "silenciar",
+        "silencia",
+        "mute",
+        "mutea",
+    )
+    comandos_voz = (
+        "modo voz",
+        "modo normal",
+        "quitar silencio",
+        "desactivar silencio",
+        "desmutear",
+        "activar voz",
+    )
+    if pedido.startswith(comandos_silencio):
+        config.VOZ_SILENCIADA = True
+        return "Modo silencio activado. Sigo escuchando; decí «modo voz» para volver a oír mis respuestas."
+    if pedido.startswith(comandos_voz):
+        config.VOZ_SILENCIADA = False
+        return "Modo voz activado. Ya podés escuchar mis respuestas."
+    return None
+
+
 def _ajustar_nivel_audio(audio):
     """Amplifica habla tenue sin permitir que el aumento exceda 8x."""
     import numpy as np
@@ -54,7 +81,7 @@ def _ajustar_nivel_audio(audio):
 
 def hablar(texto, api_key=None, oido=None):
     print(f"{config.NOMBRE}: {texto}")
-    if not config.USAR_VOZ:
+    if not config.USAR_VOZ or config.VOZ_SILENCIADA:
         return None
     limpio = texto
     if config.PROVEEDOR_TTS == "elevenlabs":
@@ -81,7 +108,9 @@ def hablar(texto, api_key=None, oido=None):
             if "spanish" in nombre or "español" in nombre or "es-" in nombre or "_es_" in nombre:
                 motor.setProperty("voice", v.id)
                 break
-        motor.setProperty("rate", 175)
+        motor.setProperty(
+            "rate", round(175 * max(70, min(130, config.VELOCIDAD_VOZ)) / 100)
+        )
         with tempfile.TemporaryDirectory() as carpeta:
             ruta = Path(carpeta) / "respuesta.wav"
             motor.save_to_file(limpio, str(ruta))
@@ -164,6 +193,8 @@ def _reproducir_audio(audio, frecuencia, oido=None):
     import numpy as np
     import sounddevice as sd
 
+    volumen = max(0, min(100, config.VOLUMEN_VOZ)) / 100
+    audio = np.asarray(audio, dtype=np.float32) * volumen
     salida = (
         sd.query_devices(kind="output")
         if config.AUDIO_SALIDA is None
@@ -197,12 +228,20 @@ def _reproducir_audio(audio, frecuencia, oido=None):
 
 
 def _hablar_piper(texto, oido=None):
+    from piper.config import SynthesisConfig
+
     with _PIPER_LOCK:
         voz = _cargar_voz_piper()
         with tempfile.TemporaryDirectory() as carpeta:
             ruta = Path(carpeta) / "respuesta.wav"
             with wave.open(str(ruta), "wb") as archivo:
-                voz.synthesize_wav(texto, archivo)
+                voz.synthesize_wav(
+                    texto,
+                    archivo,
+                    syn_config=SynthesisConfig(
+                        length_scale=100 / max(70, min(130, config.VELOCIDAD_VOZ))
+                    ),
+                )
             audio, frecuencia = _leer_wav(ruta)
             return _reproducir_audio(audio, frecuencia, oido)
 
@@ -241,7 +280,13 @@ def _hablar_elevenlabs(texto, api_key, oido=None, voice_id=None):
             url,
             params={"output_format": "pcm_24000"},
             headers={"xi-api-key": clave, "Content-Type": "application/json"},
-            json={"text": texto, "model_id": "eleven_multilingual_v2"},
+            json={
+                "text": texto,
+                "model_id": "eleven_multilingual_v2",
+                "voice_settings": {
+                    "speed": max(0.7, min(1.2, config.VELOCIDAD_VOZ / 100))
+                },
+            },
             timeout=60,
         )
     except httpx.RequestError as error:
@@ -628,7 +673,7 @@ class Oido:
                 elif hablando:
                     buf.append(datos)
                     silencio += 1
-                    if silencio >= 8:  # ~0,8 s de silencio = fin de frase
+                    if silencio >= 6:  # ~0,6 s de silencio = fin de frase
                         break
                 else: 
                     pre = (pre + [datos])[-3:]
@@ -657,7 +702,7 @@ class Oido:
         segmentos, _ = self.modelo.transcribe(
             audio,
             language=config.IDIOMA,
-            beam_size=3,
+            beam_size=1,
             vad_filter=True,
             vad_parameters={
                 "threshold": 0.35,

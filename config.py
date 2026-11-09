@@ -21,10 +21,13 @@ MODELO_OPENAI = "gpt-6-luna"
 
 # --- Voz ---
 USAR_VOZ = True            # main.py --texto lo pone en False
+VOZ_SILENCIADA = False     # modo silencio: conserva el micrófono, desactiva las respuestas habladas
 PROVEEDOR_TTS = os.environ.get("JARVIS_TTS_PROVIDER", "piper").lower()
 ELEVENLABS_VOICE_ID = os.environ.get(
     "ELEVENLABS_VOICE_ID", "wBXNqKUATyqu0RtYt25i"
 ).strip()
+VOLUMEN_VOZ = 100
+VELOCIDAD_VOZ = 100
 PIPER_MODELO_VOZ = "es_MX-claude-high"
 WHISPER_MODELO = "small"   # tiny / base / small / medium (más grande = más preciso y lento)
 IDIOMA = "es"
@@ -37,6 +40,8 @@ GITHUB_TOKEN = ""          # Se carga desde el Administrador de credenciales de 
 # --- Interfaz (HUD) ---
 HUD_PUERTO = 8765
 HUD_ABRIR_NAVEGADOR = True     # abre el HUD solo al iniciar
+VOLUMEN_EFECTOS = 45
+TEMA_HUD = "cian"
 
 # --- Visión / compartir pantalla ---
 # Modelo que "mira" tu pantalla. Descargalo con: ollama pull qwen2.5vl:3b  (3,2 GB)
@@ -51,7 +56,7 @@ SPOTIFY_REDIRECT_URI = "http://127.0.0.1:8888/callback"
 
 # --- Datos y seguridad ---
 CARPETA_DATOS = Path.home() / ".jarvis"
-# Solo podrá listar, leer y crear archivos dentro de estas carpetas
+# Solo podrá buscar, leer y modificar archivos dentro de estas carpetas.
 CARPETAS_PERMITIDAS = [Path.home()]
 
 # Aplicaciones que puede abrir (nombre que decís -> comando de Windows).

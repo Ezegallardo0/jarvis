@@ -30,6 +30,14 @@ guardalo y abrilo en Paint. Para un correo, redactá asunto y cuerpo completos: 
 borrador abierto para revisión; enviar_correo solo se usa cuando el usuario pide enviarlo explícitamente
 y siempre requiere su confirmación final. Si falta destinatario, contenido u otro dato esencial, preguntá
 antes de actuar. No afirmes que creaste, dibujaste o enviaste algo hasta que la herramienta lo confirme.
+Para una tarea con varios pasos, identificá internamente el orden necesario y ejecutá las acciones
+dependientes una por vez, usando el resultado de cada herramienta para decidir el siguiente paso.
+Agrupá solo acciones independientes cuando sea seguro. Después de crear, editar o mover algo,
+comprobá el resultado con una herramienta de lectura o listado disponible si eso permite verificarlo.
+Si un paso falla, no continúes con acciones que dependan de él ni repitas una operación sensible cuyo
+resultado sea incierto; explicá qué se completó y qué no. Informá únicamente resultados confirmados
+por las herramientas y pedí los datos esenciales que falten antes de actuar. No muestres un plan largo
+salvo que el usuario lo pida o sea útil para aclarar una decisión.
 Para buscar repositorios, issues o pull requests en GitHub, usá sus herramientas de búsqueda; nunca
 afirmes que tenés acceso a Drive u otra integración si no está conectada.
 Para cerrar aplicaciones usa cerrar_aplicacion; para avisos relativos usa poner_recordatorio y para una hora exacta usa crear_alerta. Los enlaces se abren con abrir_web y las búsquedas con buscar_en_google.
@@ -118,11 +126,15 @@ class Cerebro:
         self.historial = resto
 
     def responder(self, texto):
+        if tools.detencion_solicitada():
+            return "Detención solicitada. No voy a iniciar nuevas acciones."
         if self.proveedor != "ollama":
             return self._responder_api(texto)
         self.historial.append({"role": "user", "content": texto})
         self._recortar()
         for _ in range(6):  # máx. rondas de herramientas por pedido
+            if tools.detencion_solicitada():
+                return "Detención recibida. No ejecutaré más acciones de esta solicitud."
             resp = self.cliente.chat(
                 model=config.MODELO,
                 messages=[self._sistema()] + self.historial,
@@ -137,12 +149,22 @@ class Cerebro:
                 ]
             self.historial.append(entrada)
             if not msg.tool_calls:
+                if tools.detencion_solicitada():
+                    return "Detención recibida. No ejecutaré más acciones de esta solicitud."
                 return (msg.content or "").strip() or "Listo."
+            cancelada = False
             for c in msg.tool_calls:
                 nombre = c.function.name
-                resultado = tools.ejecutar(nombre, dict(c.function.arguments))
+                if tools.detencion_solicitada():
+                    resultado = "Acción cancelada antes de empezar por solicitud del usuario."
+                    cancelada = True
+                else:
+                    resultado = tools.ejecutar(nombre, dict(c.function.arguments))
+                    cancelada = cancelada or tools.detencion_solicitada()
                 print(f"  [herramienta] {nombre} -> {resultado[:120]}")
                 self.historial.append({"role": "tool", "tool_name": nombre, "content": resultado})
+            if cancelada:
+                return "Detención recibida. No ejecutaré más acciones de esta solicitud."
         return "Me trabé con ese pedido, ¿podés reformularlo?"
 
     def _responder_api(self, texto):
@@ -150,6 +172,8 @@ class Cerebro:
         self._recortar()
         modelo = config.MODELO_GEMINI if self.proveedor == "gemini" else config.MODELO_OPENAI
         for _ in range(6):
+            if tools.detencion_solicitada():
+                return "Detención recibida. No ejecutaré más acciones de esta solicitud."
             opciones = {
                 "model": modelo,
                 "messages": [self._sistema()] + self.historial,
@@ -169,23 +193,35 @@ class Cerebro:
             llamada = mensaje.model_dump(exclude_none=True)
             self.historial.append(llamada)
             if not mensaje.tool_calls:
+                if tools.detencion_solicitada():
+                    return "Detención recibida. No ejecutaré más acciones de esta solicitud."
                 return (mensaje.content or "").strip() or "Listo."
+            cancelada = False
             for llamada_herramienta in mensaje.tool_calls:
-                try:
-                    argumentos = json.loads(llamada_herramienta.function.arguments or "{}")
-                except json.JSONDecodeError as error:
-                    raise ValueError(
-                        f"El modelo devolvió argumentos inválidos para "
-                        f"{llamada_herramienta.function.name}: {error}"
-                    ) from error
                 nombre = llamada_herramienta.function.name
-                resultado = tools.ejecutar(nombre, argumentos)
+                if tools.detencion_solicitada():
+                    resultado = "Acción cancelada antes de empezar por solicitud del usuario."
+                    cancelada = True
+                else:
+                    try:
+                        argumentos = json.loads(
+                            llamada_herramienta.function.arguments or "{}"
+                        )
+                    except json.JSONDecodeError as error:
+                        raise ValueError(
+                            f"El modelo devolvió argumentos inválidos para "
+                            f"{nombre}: {error}"
+                        ) from error
+                    resultado = tools.ejecutar(nombre, argumentos)
+                    cancelada = cancelada or tools.detencion_solicitada()
                 print(f"  [herramienta] {nombre} -> {resultado[:120]}")
                 self.historial.append({
                     "role": "tool",
                     "tool_call_id": llamada_herramienta.id,
                     "content": resultado,
                 })
+            if cancelada:
+                return "Detención recibida. No ejecutaré más acciones de esta solicitud."
         return "Me trabé con ese pedido, ¿podés reformularlo?"
 
     def _explicar_error_api(self, error):

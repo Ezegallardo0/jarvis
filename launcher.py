@@ -68,6 +68,7 @@ class Lanzador:
         self.cerrando = threading.Event()
         self.pedidos = queue.Queue()
         self._pedidos_lock = threading.Lock()
+        self._pedido_en_curso = False
         self._respuesta_lista = threading.Event()
         self._respuesta_lista.set()
         self.bus = ui.Bus()
@@ -98,6 +99,10 @@ class Lanzador:
             config.OLLAMA_HOST,
             config.WHISPER_MODELO,
             config.IDIOMA,
+            config.VOLUMEN_VOZ,
+            config.VELOCIDAD_VOZ,
+            config.VOLUMEN_EFECTOS,
+            config.TEMA_HUD,
         ) = self._leer_seleccion()
         try:
             config.GITHUB_TOKEN = self._clave_guardada_o_entorno("github")
@@ -191,7 +196,7 @@ class Lanzador:
             elevenlabs_voice_id,
             ubicacion,
             spotify_client_id,
-        ) = self._leer_seleccion()
+        ) = self._leer_seleccion()[:7]
         config.MICROFONO = microfono
         config.AUDIO_SALIDA = salida
         config.PROVEEDOR_IA = proveedor
@@ -1276,6 +1281,27 @@ class Lanzador:
             )
 
     @staticmethod
+    def _leer_preferencia_entera(datos, clave, predeterminado, minimo, maximo):
+        valor = datos.get(clave, predeterminado)
+        if isinstance(valor, bool):
+            return predeterminado
+        try:
+            valor = int(valor)
+        except (TypeError, ValueError):
+            return predeterminado
+        return max(minimo, min(maximo, valor))
+
+    @staticmethod
+    def _validar_preferencia_entera(datos, clave, predeterminado, minimo, maximo):
+        valor = datos.get(clave, predeterminado)
+        if isinstance(valor, bool) or not isinstance(valor, int) or not minimo <= valor <= maximo:
+            raise ValueError(
+                f"El valor de {clave.replace('_', ' ')} debe ser un entero "
+                f"entre {minimo} y {maximo}."
+            )
+        return valor
+
+    @staticmethod
     def _leer_seleccion():
         ruta = config.CARPETA_DATOS / "dispositivos_audio.json"
         try:
@@ -1296,6 +1322,10 @@ class Lanzador:
                 config.OLLAMA_HOST,
                 config.WHISPER_MODELO,
                 config.IDIOMA,
+                config.VOLUMEN_VOZ,
+                config.VELOCIDAD_VOZ,
+                config.VOLUMEN_EFECTOS,
+                config.TEMA_HUD,
             )
         except (OSError, ValueError) as error:
             messagebox.showerror("Configuración de audio", f"No pude leer la selección guardada:\n{error}")
@@ -1314,6 +1344,10 @@ class Lanzador:
                 config.OLLAMA_HOST,
                 config.WHISPER_MODELO,
                 config.IDIOMA,
+                config.VOLUMEN_VOZ,
+                config.VELOCIDAD_VOZ,
+                config.VOLUMEN_EFECTOS,
+                config.TEMA_HUD,
             )
         return (
             datos.get("microfono", config.MICROFONO),
@@ -1334,6 +1368,20 @@ class Lanzador:
             datos.get("ollama_host", config.OLLAMA_HOST),
             datos.get("modelo_whisper", config.WHISPER_MODELO),
             datos.get("idioma", config.IDIOMA),
+            Lanzador._leer_preferencia_entera(
+                datos, "volumen_voz", config.VOLUMEN_VOZ, 0, 100
+            ),
+            Lanzador._leer_preferencia_entera(
+                datos, "velocidad_voz", config.VELOCIDAD_VOZ, 70, 130
+            ),
+            Lanzador._leer_preferencia_entera(
+                datos, "volumen_efectos", config.VOLUMEN_EFECTOS, 0, 100
+            ),
+            (
+                datos["tema_hud"]
+                if datos.get("tema_hud") in {"cian", "violeta", "verde"}
+                else config.TEMA_HUD
+            ),
         )
 
     def _guardar(self):
@@ -1371,6 +1419,14 @@ class Lanzador:
                     "ollama_host": config.OLLAMA_HOST,
                     "modelo_whisper": config.WHISPER_MODELO,
                     "idioma": config.IDIOMA,
+                    "volumen_voz": config.VOLUMEN_VOZ,
+                    "velocidad_voz": config.VELOCIDAD_VOZ,
+                    "volumen_efectos": config.VOLUMEN_EFECTOS,
+                    "tema_hud": config.TEMA_HUD,
+                    "volumen_voz": config.VOLUMEN_VOZ,
+                    "velocidad_voz": config.VELOCIDAD_VOZ,
+                    "volumen_efectos": config.VOLUMEN_EFECTOS,
+                    "tema_hud": config.TEMA_HUD,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -1663,7 +1719,11 @@ class Lanzador:
         self.bus.publish("estado", valor=valor, texto=texto)
 
     def _encolar_pedido(self, texto, origen):
+        import tools
+
         with self._pedidos_lock:
+            if not self._pedido_en_curso:
+                tools.reiniciar_detencion()
             self._respuesta_lista.clear()
             self.pedidos.put((texto, origen))
 
@@ -1744,12 +1804,36 @@ class Lanzador:
             self._iniciar_escucha(oido)
 
         while not self.cerrando.is_set():
-            try:
-                pedido, origen = self.pedidos.get(timeout=0.2)
-            except queue.Empty:
+            with self._pedidos_lock:
+                try:
+                    pedido, origen = self.pedidos.get_nowait()
+                except queue.Empty:
+                    pedido = origen = None
+                else:
+                    self._pedido_en_curso = True
+                    tools.reiniciar_detencion()
+            if pedido is None:
+                time.sleep(0.2)
                 continue
+            self.bus.publish("detencion", activa=False, pendientes=0)
             if origen == "voz":
                 self._agregar_mensaje("Tú (voz)", pedido)
+            respuesta_modo = voice.cambiar_modo_silencio(pedido)
+            if respuesta_modo:
+                self._agregar_mensaje(config.NOMBRE, respuesta_modo)
+                self._estado(
+                    "Modo silencio activo; sigo escuchando."
+                    if config.VOZ_SILENCIADA
+                    else "Escuchando; hablá cuando quieras."
+                )
+                if not config.VOZ_SILENCIADA and self.modo == "voz":
+                    self._hablar(respuesta_modo)
+                with self._pedidos_lock:
+                    self._pedido_en_curso = False
+                    if self.pedidos.empty():
+                        self._respuesta_lista.set()
+                self.bus.publish("detencion", activa=False, pendientes=0)
+                continue
             self._estado("Procesando...")
             try:
                 try:
@@ -1770,8 +1854,10 @@ class Lanzador:
                 )
             finally:
                 with self._pedidos_lock:
+                    self._pedido_en_curso = False
                     if self.pedidos.empty():
                         self._respuesta_lista.set()
+                self.bus.publish("detencion", activa=False, pendientes=0)
 
     def _notificar(self, texto):
         self._agregar_mensaje(config.NOMBRE, texto)
@@ -1781,6 +1867,8 @@ class Lanzador:
                 self._estado(error)
 
     def _hablar(self, texto):
+        if config.VOZ_SILENCIADA:
+            return None
         oido = getattr(self, "oido", None)
         self.bus.publish("estado", valor="hablando", texto="Respondiendo…")
         if oido:
@@ -2033,6 +2121,10 @@ class Lanzador:
             "ollama_host": config.OLLAMA_HOST,
             "modelo_whisper": config.WHISPER_MODELO,
             "idioma": config.IDIOMA,
+            "volumen_voz": config.VOLUMEN_VOZ,
+            "velocidad_voz": config.VELOCIDAD_VOZ,
+            "volumen_efectos": config.VOLUMEN_EFECTOS,
+            "tema_hud": config.TEMA_HUD,
         }
 
     def _guardar_configuracion_hud(self, datos):
@@ -2093,6 +2185,18 @@ class Lanzador:
             raise ValueError("Completá los modelos de IA, Ollama, Whisper y el idioma.")
         if not ollama_host.startswith(("http://", "https://")):
             raise ValueError("La dirección de Ollama debe comenzar con http:// o https://.")
+        volumen_voz = self._validar_preferencia_entera(
+            datos, "volumen_voz", config.VOLUMEN_VOZ, 0, 100
+        )
+        velocidad_voz = self._validar_preferencia_entera(
+            datos, "velocidad_voz", config.VELOCIDAD_VOZ, 70, 130
+        )
+        volumen_efectos = self._validar_preferencia_entera(
+            datos, "volumen_efectos", config.VOLUMEN_EFECTOS, 0, 100
+        )
+        tema_hud = str(datos.get("tema_hud", config.TEMA_HUD)).lower()
+        if tema_hud not in {"cian", "violeta", "verde"}:
+            raise ValueError("Elegí un tema visual disponible.")
         clave_ia = str(datos.get("api_key", "")).strip()
         clave_elevenlabs = str(datos.get("elevenlabs_api_key", "")).strip()
         token_github = str(datos.get("github_token", "")).strip()
@@ -2138,6 +2242,10 @@ class Lanzador:
         config.OLLAMA_HOST = ollama_host
         config.WHISPER_MODELO = modelo_whisper
         config.IDIOMA = idioma
+        config.VOLUMEN_VOZ = volumen_voz
+        config.VELOCIDAD_VOZ = velocidad_voz
+        config.VOLUMEN_EFECTOS = volumen_efectos
+        config.TEMA_HUD = tema_hud
         config.GITHUB_TOKEN = self._clave_guardada_o_entorno("github")
         config.CARPETA_DATOS.mkdir(parents=True, exist_ok=True)
         ruta = config.CARPETA_DATOS / "dispositivos_audio.json"
@@ -2160,6 +2268,10 @@ class Lanzador:
                     "ollama_host": ollama_host,
                     "modelo_whisper": modelo_whisper,
                     "idioma": idioma,
+                    "volumen_voz": volumen_voz,
+                    "velocidad_voz": velocidad_voz,
+                    "volumen_efectos": volumen_efectos,
+                    "tema_hud": tema_hud,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -2280,6 +2392,8 @@ class Lanzador:
             github=bool(config.GITHUB_TOKEN),
             spotify=bool(spotyfyTools and spotyfyTools.configurado()),
             vision=bool(config.COMPARTIENDO_PANTALLA),
+            tema=config.TEMA_HUD,
+            volumen_efectos=config.VOLUMEN_EFECTOS,
         )
 
     def _accion_hud(self, nombre):
@@ -2295,8 +2409,57 @@ class Lanzador:
             self.raiz.after(0, lambda: self._iniciar_desde_hud(nombre == "iniciar_texto"))
         elif nombre == "alternar_modo":
             self.raiz.after(0, self.alternar_modo)
+        elif nombre == "detener_automatizacion":
+            self._detener_automatizacion()
         elif nombre == "salir":
             self.raiz.after(0, self.cerrar)
+
+    def _detener_automatizacion(self):
+        import tools
+
+        descartados = 0
+        with self._pedidos_lock:
+            tools.solicitar_detencion()
+            while True:
+                try:
+                    self.pedidos.get_nowait()
+                    descartados += 1
+                except queue.Empty:
+                    break
+            en_curso = self._pedido_en_curso
+            if not en_curso:
+                self._respuesta_lista.set()
+        try:
+            tools.registrar_accion("detener_automatizacion", "solicitada")
+            aviso_registro = ""
+        except OSError as error:
+            aviso_registro = (
+                f" Advertencia: no pude guardar esta detención en el registro ({error})."
+            )
+        self.bus.responder(False)
+        self.bus.publish(
+            "detencion",
+            activa=en_curso,
+            pendientes=descartados,
+        )
+        self._agregar_mensaje(
+            config.NOMBRE,
+            (
+                "Detención solicitada. Pararé entre acciones y descarté "
+                f"{descartados} pedido(s) pendiente(s).{aviso_registro}"
+                if en_curso
+                else (
+                    "No había una automatización en curso; descarté "
+                    f"{descartados} pedido(s) pendiente(s).{aviso_registro}"
+                )
+            ),
+        )
+        if en_curso:
+            self._estado(
+                "Detención solicitada. Esperando que termine la operación actual..."
+            )
+        else:
+            self._estado("Sin automatizaciones pendientes.")
 
     def _mostrar_ajustes_desde_hud(self):
         self.bus.publish("ajustes")
@@ -2391,6 +2554,15 @@ class Lanzador:
         self.raiz.after(2000, self._hud_vigilar)
 
     def cerrar(self):
+        with self._pedidos_lock:
+            tools = sys.modules.get("tools")
+            if tools is not None:
+                tools.solicitar_detencion()
+            while True:
+                try:
+                    self.pedidos.get_nowait()
+                except queue.Empty:
+                    break
         self.cerrando.set()
         self.raiz.destroy()
 

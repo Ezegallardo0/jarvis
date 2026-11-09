@@ -15,6 +15,8 @@
   --f-hud:"Bahnschrift","Segoe UI",system-ui,sans-serif;
   --f-mono:"Cascadia Mono",Consolas,"Courier New",monospace;
 }
+body[data-tema="violeta"]{--cy:#c89bff;--cy-d:#8055b8;--cy-g:rgba(200,155,255,.55);--ln:rgba(200,155,255,.26);--ln2:rgba(200,155,255,.10)}
+body[data-tema="verde"]{--cy:#54f2b2;--cy-d:#158c64;--cy-g:rgba(84,242,178,.5);--ln:rgba(84,242,178,.25);--ln2:rgba(84,242,178,.10)}
 body[data-estado="pensando"]{--cy:#ffb347;--cy-d:#a8630a;--cy-g:rgba(255,179,71,.55);--ln:rgba(255,179,71,.28);--ln2:rgba(255,179,71,.10)}
 body[data-estado="desconectado"]{--cy:#ff4d5e;--cy-d:#8a2030;--cy-g:rgba(255,77,94,.5);--ln:rgba(255,77,94,.3);--ln2:rgba(255,77,94,.1)}
 
@@ -188,10 +190,15 @@ footer button{padding:0 34px}
 #settings-modal.abierto{display:grid}
 #settings-modal .panel{width:min(900px,96vw);max-height:92vh;overflow:auto;padding:24px}
 #settings-modal .settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
-#settings-modal .settings-card{min-width:0;border:1px solid var(--ln);background:rgba(4,20,34,.55);padding:14px}
+#settings-modal .settings-card{min-width:0;border:1px solid var(--ln);background:rgba(4,20,34,.55);padding:14px;transition:transform .2s,border-color .2s,box-shadow .2s}
+#settings-modal .settings-card:hover{transform:translateY(-2px);border-color:var(--cy);box-shadow:0 6px 20px rgba(0,0,0,.2)}
 #settings-modal .settings-card h3{color:var(--cy);font-size:12px;letter-spacing:.2em;margin-bottom:10px}
 #settings-modal label{display:block;color:var(--dim);font-size:11px;margin:9px 0 5px}
 #settings-modal input:not([type=checkbox]),#settings-modal select{width:100%;background:#04121f;border:1px solid var(--ln);color:var(--tx);padding:9px;font:inherit;outline:none}
+#settings-modal input[type=range]{accent-color:var(--cy);padding:0}
+#settings-modal .range-row{display:flex;align-items:center;gap:12px}
+#settings-modal .range-row input{flex:1}
+#settings-modal .range-row output{min-width:44px;color:var(--cy);font:12px var(--f-mono);text-align:right}
 #settings-modal input:focus,#settings-modal select:focus{border-color:var(--cy)}
 #settings-modal .settings-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 #settings-modal .settings-actions button,#settings-modal .ctl button{font-size:11px;letter-spacing:.08em}
@@ -340,6 +347,7 @@ footer button{padding:0 34px}
       </div>
       <div class="ctl">
         <button id="btn-sonidos" type="button" aria-pressed="true" title="Activar o desactivar los sonidos de la interfaz">Sonidos: sí</button>
+        <button id="btn-detener" class="peligro" type="button" title="Detener la tarea actual y descartar pedidos pendientes">Detener automatización</button>
       </div>
     </section>
   </div>
@@ -419,6 +427,23 @@ footer button{padding:0 34px}
         <div class="settings-actions"><button data-test-audio="voz">Probar voz</button></div>
       </section>
       <section class="settings-card">
+        <h3>APARIENCIA Y SONIDOS</h3>
+        <label for="cfg-tema">Tema del HUD</label>
+        <select id="cfg-tema">
+          <option value="cian">Cian · clásico</option>
+          <option value="violeta">Violeta</option>
+          <option value="verde">Verde</option>
+        </select>
+        <label for="cfg-volumen-voz">Volumen de voz</label>
+        <div class="range-row"><input id="cfg-volumen-voz" type="range" min="0" max="100" step="1"><output id="cfg-volumen-voz-valor"></output></div>
+        <label for="cfg-velocidad-voz">Velocidad de voz</label>
+        <div class="range-row"><input id="cfg-velocidad-voz" type="range" min="70" max="130" step="5"><output id="cfg-velocidad-voz-valor"></output></div>
+        <label for="cfg-volumen-efectos">Volumen de efectos</label>
+        <div class="range-row"><input id="cfg-volumen-efectos" type="range" min="0" max="100" step="1"><output id="cfg-volumen-efectos-valor"></output></div>
+        <label class="check-row"><input id="cfg-sonidos-activos" type="checkbox"> Activar sonidos de interacción</label>
+        <p class="hint">Incluye sonidos sutiles al pasar o hacer clic en botones, recibir órdenes, completar respuestas y mostrar confirmaciones.</p>
+      </section>
+      <section class="settings-card">
         <h3>INTEGRACIONES</h3>
         <label for="cfg-github">Token de GitHub</label>
         <input id="cfg-github" type="password" autocomplete="new-password" placeholder="Vacío = conservar el guardado">
@@ -494,6 +519,7 @@ const NS = 'http://www.w3.org/2000/svg';
 const CLAVE_SONIDOS = 'jarvis-sonidos';
 let sonidosActivos = localStorage.getItem(CLAVE_SONIDOS) !== 'no';
 let contextoAudio = null;
+let volumenEfectos = 0.45;
 function actualizarBotonSonidos(){
   $('btn-sonidos').textContent = 'Sonidos: ' + (sonidosActivos ? 'sí' : 'no');
   $('btn-sonidos').setAttribute('aria-pressed', String(sonidosActivos));
@@ -508,7 +534,7 @@ function habilitarAudio(){
   }
 }
 function tono(frecuencia, demora=0, duracion=.09, volumen=.018){
-  if(!sonidosActivos) return;
+  if(!sonidosActivos || volumenEfectos <= 0) return;
   habilitarAudio();
   if(!contextoAudio) return;
   const ctx = contextoAudio;
@@ -520,7 +546,7 @@ function tono(frecuencia, demora=0, duracion=.09, volumen=.018){
     oscilador.type = 'sine';
     oscilador.frequency.setValueAtTime(frecuencia, inicio);
     ganancia.gain.setValueAtTime(.0001, inicio);
-    ganancia.gain.exponentialRampToValueAtTime(volumen, inicio + .012);
+    ganancia.gain.exponentialRampToValueAtTime(volumen * volumenEfectos, inicio + .012);
     ganancia.gain.exponentialRampToValueAtTime(.0001, inicio + duracion);
     oscilador.connect(ganancia);
     ganancia.connect(ctx.destination);
@@ -538,12 +564,37 @@ function sonidoEstado(estado){
     tono(880, .085, .12, .016);
   }
 }
+function sonidoEvento(tipo){
+  if(tipo === 'hover') tono(740, 0, .035, .006);
+  else if(tipo === 'clic') tono(560, 0, .045, .009);
+  else if(tipo === 'orden') tono(520, 0, .07, .012);
+  else if(tipo === 'completado'){
+    tono(740, 0, .07, .012);
+    tono(990, .075, .1, .012);
+  }else if(tipo === 'notificacion'){
+    tono(620, 0, .08, .01);
+    tono(820, .09, .11, .01);
+  }
+}
+function establecerSonidos(activos){
+  sonidosActivos = activos;
+  localStorage.setItem(CLAVE_SONIDOS, sonidosActivos ? 'sí' : 'no');
+  actualizarBotonSonidos();
+}
+function aplicarTema(tema){
+  document.body.dataset.tema = ['cian','violeta','verde'].includes(tema) ? tema : 'cian';
+}
+document.addEventListener('pointerover', e => {
+  const boton = e.target instanceof Element ? e.target.closest('button') : null;
+  if(boton && !boton.contains(e.relatedTarget)) sonidoEvento('hover');
+});
+document.addEventListener('click', e => {
+  if(e.target instanceof Element && e.target.closest('button')) sonidoEvento('clic');
+});
 addEventListener('pointerdown', habilitarAudio, {once:true});
 addEventListener('keydown', habilitarAudio, {once:true});
 $('btn-sonidos').onclick = () => {
-  sonidosActivos = !sonidosActivos;
-  localStorage.setItem(CLAVE_SONIDOS, sonidosActivos ? 'sí' : 'no');
-  actualizarBotonSonidos();
+  establecerSonidos(!sonidosActivos);
   if(sonidosActivos) tono(660, 0, .1, .018);
 };
 actualizarBotonSonidos();
@@ -600,6 +651,7 @@ function escribir(el, texto){
   }, 16);
 }
 function addMsg(rol, texto, voz){
+  sonidoEvento(rol === 'usuario' ? 'orden' : 'completado');
   const d = document.createElement('div');
   d.className = 'm' + (rol === 'usuario' ? ' u' : '');
   const s = document.createElement('small');
@@ -665,6 +717,8 @@ function sub(k, estado, texto){
   const b = $('s-'+k); if(b) b.textContent = texto;
 }
 function pintarInfo(d){
+  if(d.tema) aplicarTema(d.tema);
+  if(Number.isFinite(d.volumen_efectos)) volumenEfectos = d.volumen_efectos / 100;
   $('chip-modo').textContent = 'Modo ' + (d.modo === 'voz' ? 'voz' : 'texto');
   $('chip-modo').classList.add('on');
   $('btn-modo').textContent = d.modo === 'voz' ? 'Cambiar a texto' : 'Cambiar a voz';
@@ -713,8 +767,12 @@ const manejadores = {
   info: d => { pintarInfo(d); $('portada').classList.add('fuera'); },
   ajustes: () => abrirAjustes(),
   pantalla: d => { pintarPantalla(!!d.on, false); sub('vision', d.on ? 'ok' : '', d.on ? 'habilitada' : 'desactivada'); },
-  confirmar: d => { $('modal-txt').textContent = d.texto; $('modal').style.display = 'grid'; },
+  confirmar: d => { sonidoEvento('notificacion'); $('modal-txt').textContent = d.texto; $('modal').style.display = 'grid'; },
   confirmar_fin: () => { $('modal').style.display = 'none'; },
+  detencion: d => {
+    $('btn-detener').disabled = !!d.activa;
+    $('btn-detener').textContent = d.activa ? 'Deteniendo…' : 'Detener automatización';
+  },
 };
 const es = new EventSource('/events?t=' + encodeURIComponent(T));
 es.onmessage = e => { const d = JSON.parse(e.data); (manejadores[d.tipo] || (()=>{}))(d); };
@@ -732,6 +790,14 @@ $('no').onclick = () => { post('/confirm', {ok:false}); $('modal').style.display
 document.querySelectorAll('[data-sp]').forEach(b => b.onclick = () => post('/spotify', {accion: b.dataset.sp}));
 $('btn-ajustes').onclick = () => post('/accion', {nombre:'ajustes'});
 $('btn-modo').onclick = () => post('/accion', {nombre:'alternar_modo'});
+$('btn-detener').onclick = async () => {
+  $('btn-detener').disabled = true;
+  $('btn-detener').textContent = 'Solicitando…';
+  if(!await post('/accion', {nombre:'detener_automatizacion'})){
+    $('btn-detener').disabled = false;
+    $('btn-detener').textContent = 'Detener automatización';
+  }
+};
 $('ini-voz').onclick = () => { $('ini-aviso').textContent = 'Iniciando con el micrófono seleccionado…'; post('/accion', {nombre:'iniciar_voz'}); };
 $('ini-txt').onclick = () => { $('ini-aviso').textContent = 'Iniciando el chat…'; post('/accion', {nombre:'iniciar_texto'}); };
 $('ini-ajustes').onclick = () => post('/accion', {nombre:'ajustes'});
@@ -777,6 +843,14 @@ async function abrirAjustes(){
     $('cfg-modelo-openai').value = d.modelo_openai || '';
     $('cfg-modelo-whisper').value = d.modelo_whisper || 'small';
     $('cfg-idioma').value = d.idioma || 'es';
+    $('cfg-volumen-voz').value = d.volumen_voz ?? 100;
+    $('cfg-velocidad-voz').value = d.velocidad_voz ?? 100;
+    $('cfg-volumen-efectos').value = d.volumen_efectos ?? 45;
+    $('cfg-tema').value = d.tema_hud || 'cian';
+    $('cfg-sonidos-activos').checked = sonidosActivos;
+    actualizarEtiquetasVolumen();
+    aplicarTema($('cfg-tema').value);
+    volumenEfectos = Number($('cfg-volumen-efectos').value) / 100;
     $('cfg-api-status').textContent = d.api_key_guardada ? 'Hay una clave guardada para este proveedor.' : 'No hay una clave guardada para este proveedor.';
     $('cfg-elevenlabs-status').textContent = d.elevenlabs_key_guardada ? 'Hay una clave de ElevenLabs guardada.' : 'ElevenLabs sin configurar.';
     $('cfg-github-status').textContent = d.github_token_guardado ? 'Token de GitHub guardado.' : 'GitHub sin configurar.';
@@ -784,6 +858,17 @@ async function abrirAjustes(){
   }catch(e){ $('settings-status').textContent = 'No se pudo leer la configuración: ' + e.message; }
 }
 function cerrarAjustes(){ $('settings-modal').classList.remove('abierto'); }
+$('cfg-tema').onchange = () => aplicarTema($('cfg-tema').value);
+$('cfg-sonidos-activos').onchange = () => establecerSonidos($('cfg-sonidos-activos').checked);
+function actualizarEtiquetasVolumen(){
+  $('cfg-volumen-voz-valor').textContent = $('cfg-volumen-voz').value + '%';
+  $('cfg-velocidad-voz-valor').textContent = $('cfg-velocidad-voz').value + '%';
+  $('cfg-volumen-efectos-valor').textContent = $('cfg-volumen-efectos').value + '%';
+  volumenEfectos = Number($('cfg-volumen-efectos').value) / 100;
+}
+for(const id of ['cfg-volumen-voz','cfg-velocidad-voz','cfg-volumen-efectos']){
+  $(id).oninput = actualizarEtiquetasVolumen;
+}
 $('cfg-cerrar').onclick = cerrarAjustes;
 $('settings-modal').addEventListener('click', e => { if(e.target === $('settings-modal')) cerrarAjustes(); });
 $('cfg-github-dashboard').onclick = () => window.open('https://github.com/settings/personal-access-tokens/new','_blank','noopener');
@@ -835,7 +920,11 @@ function configuracionFormulario(){
     modelo_gemini:$('cfg-modelo-gemini').value,
     modelo_openai:$('cfg-modelo-openai').value,
     modelo_whisper:$('cfg-modelo-whisper').value,
-    idioma:$('cfg-idioma').value
+    idioma:$('cfg-idioma').value,
+    volumen_voz:Number($('cfg-volumen-voz').value),
+    velocidad_voz:Number($('cfg-velocidad-voz').value),
+    volumen_efectos:Number($('cfg-volumen-efectos').value),
+    tema_hud:$('cfg-tema').value
   };
 }
 async function guardarAjustes(){

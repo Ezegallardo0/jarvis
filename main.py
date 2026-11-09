@@ -85,6 +85,10 @@ def main():
         if any(s in voice.normalizar(pedido) for s in SALIDAS):
             voice.hablar("Hasta luego.")
             return False
+        respuesta_modo = voice.cambiar_modo_silencio(pedido)
+        if respuesta_modo:
+            voice.hablar(respuesta_modo)
+            return True
         try:
             voice.hablar(cerebro.responder(pedido))
         except Exception as e:

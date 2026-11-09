@@ -8,6 +8,8 @@ import re
 import shutil
 import subprocess
 import threading
+import tempfile
+import time
 import webbrowser
 import zipfile
 from pathlib import Path
@@ -20,6 +22,12 @@ import psutil
 import config
 
 HERRAMIENTAS = {}
+_REGISTRO_LOCK = threading.Lock()
+_EVENTO_DETENCION = threading.Event()
+_EXTENSIONES_TEXTO = {
+    ".csv", ".css", ".html", ".js", ".json", ".md", ".py", ".txt", ".xml"
+}
+_MAX_TEXTO_ARCHIVO = 500_000
 
 
 def NOTIFICAR(texto):  # main.py lo reemplaza para hablar en voz alta
@@ -28,6 +36,27 @@ def NOTIFICAR(texto):  # main.py lo reemplaza para hablar en voz alta
 
 def CONFIRMAR(texto):  # main.py lo reemplaza (voz o teclado)
     return input(f"{texto} [s/n]: ").strip().lower().startswith(("s", "y"))
+
+
+class AutomatizacionDetenida(Exception):
+    """Señala una cancelación cooperativa solicitada desde el HUD."""
+
+
+def solicitar_detencion():
+    _EVENTO_DETENCION.set()
+
+
+def reiniciar_detencion():
+    _EVENTO_DETENCION.clear()
+
+
+def detencion_solicitada():
+    return _EVENTO_DETENCION.is_set()
+
+
+def _verificar_detencion():
+    if detencion_solicitada():
+        raise AutomatizacionDetenida("Detención solicitada por el usuario.")
 
 
 def herramienta(
@@ -78,8 +107,15 @@ def ejecutar(nombre, args):
         return f"Herramienta desconocida: {nombre}"
     if h["requiere_pantalla"] and not config.COMPARTIENDO_PANTALLA:
         return "El acceso a la pantalla está desactivado. Pedile al usuario que lo habilite en Jarvis."
+    if detencion_solicitada():
+        return "Acción cancelada antes de empezar por solicitud del usuario."
     args = args or {}
     try:
+        registrar_accion(nombre, "iniciada")
+    except OSError as error:
+        return f"No ejecuté {nombre}: no pude guardar el registro de acciones ({error})."
+    try:
+        _verificar_detencion()
         if h["confirmar"]:
             texto = h["texto_confirmacion"]
             if callable(texto):
@@ -89,10 +125,33 @@ def ejecutar(nombre, args):
             else:
                 pregunta = f"Voy a ejecutar {nombre} con {json.dumps(args, ensure_ascii=False)}. ¿Confirmás?"
             if not CONFIRMAR(pregunta):
+                registrar_accion(nombre, "cancelada")
                 return "El usuario canceló la acción."
-        return str(h["fn"](**args))
+        _verificar_detencion()
+        resultado = str(h["fn"](**args))
+    except AutomatizacionDetenida:
+        try:
+            registrar_accion(nombre, "cancelada")
+        except OSError as error:
+            return f"Acción cancelada; no pude completar el registro ({error})."
+        return "Acción cancelada por solicitud del usuario."
     except Exception as e:  # el modelo ve el error y puede explicarlo
+        try:
+            registrar_accion(nombre, "error")
+        except OSError as error_registro:
+            return (
+                f"Error al ejecutar {nombre}: {e}. Además, no pude completar "
+                f"el registro de acciones ({error_registro})."
+            )
         return f"Error al ejecutar {nombre}: {e}"
+    try:
+        registrar_accion(nombre, "completada")
+    except OSError as error:
+        return (
+            f"{resultado} La acción terminó, pero no pude completar su registro "
+            f"({error})."
+        )
+    return resultado
 
 
 def _ruta_segura(ruta):
@@ -104,6 +163,240 @@ def _ruta_segura(ruta):
         except ValueError:
             continue
     raise PermissionError(f"Ruta fuera de las carpetas permitidas: {p}")
+
+
+def _ruta_usuario(ruta):
+    texto = str(ruta).strip()
+    if not texto:
+        raise ValueError("Indicá una ruta.")
+    original = Path(texto).expanduser()
+    if not original.is_absolute():
+        original = Path.home() / original
+    if original.is_symlink():
+        raise PermissionError("No se permiten operaciones sobre enlaces simbólicos.")
+    return _ruta_segura(original)
+
+
+def _validar_archivo_texto(ruta):
+    if ruta.suffix.lower() not in _EXTENSIONES_TEXTO:
+        extensiones = ", ".join(sorted(_EXTENSIONES_TEXTO))
+        raise ValueError(f"Solo se admiten archivos de texto: {extensiones}.")
+    if not ruta.is_file():
+        raise ValueError("La ruta no es un archivo regular.")
+    if ruta.stat().st_size > _MAX_TEXTO_ARCHIVO:
+        raise ValueError("El archivo supera el límite de 500.000 bytes.")
+
+
+def _validar_contenido_texto(contenido):
+    if len(contenido.encode("utf-8")) > _MAX_TEXTO_ARCHIVO:
+        raise ValueError("El contenido supera el límite de 500.000 bytes en UTF-8.")
+
+
+def _confirmar_cambio(accion, ruta, destino=""):
+    sufijo = f" hacia {destino}" if destino else ""
+    return (
+        f"Voy a {accion} «{ruta}»{sufijo}. "
+        "Esta operación modifica archivos. ¿Confirmás?"
+    )
+
+
+def _confirmar_eliminacion(ruta):
+    return (
+        f"Voy a eliminar permanentemente «{ruta}». "
+        "No se puede deshacer. ¿Confirmás explícitamente?"
+    )
+
+
+def registrar_accion(nombre, estado):
+    ruta = config.CARPETA_DATOS / "registro_acciones.jsonl"
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    if ruta.is_symlink():
+        raise OSError("El archivo de registro no puede ser un enlace simbólico.")
+    entrada = {
+        "fecha": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+        "herramienta": nombre,
+        "estado": estado,
+    }
+    with _REGISTRO_LOCK, ruta.open("a", encoding="utf-8") as archivo:
+        archivo.write(json.dumps(entrada, ensure_ascii=False) + "\n")
+
+
+def _cargar_api_windows():
+    try:
+        import win32api
+        import win32con
+        import win32gui
+    except ImportError as error:
+        raise RuntimeError("Falta pywin32; reinstalá las dependencias de Jarvis.") from error
+    return win32api, win32con, win32gui
+
+
+def _mover_cursor(x, y, win32api):
+    win32api.SetCursorPos((x, y))
+    if tuple(win32api.GetCursorPos()) != (x, y):
+        raise OSError("Windows no colocó el cursor en las coordenadas solicitadas.")
+
+
+def _buscar_ventana(titulo):
+    _, _, win32gui = _cargar_api_windows()
+    consulta = str(titulo).strip().casefold()
+    if not consulta:
+        raise ValueError("Indicá el título de la ventana.")
+    coincidencias = []
+
+    def agregar(hwnd, _):
+        if win32gui.IsWindowVisible(hwnd):
+            nombre = win32gui.GetWindowText(hwnd).strip()
+            if nombre:
+                coincidencias.append((hwnd, nombre))
+        return True
+
+    win32gui.EnumWindows(agregar, None)
+    exactas = [(hwnd, nombre) for hwnd, nombre in coincidencias if nombre.casefold() == consulta]
+    candidatas = exactas or [
+        (hwnd, nombre)
+        for hwnd, nombre in coincidencias
+        if consulta in nombre.casefold()
+    ]
+    if not candidatas:
+        raise LookupError(f"No encontré una ventana visible que coincida con «{titulo}».")
+    if len(candidatas) > 1:
+        opciones = "; ".join(nombre for _, nombre in candidatas[:10])
+        raise ValueError(f"El título coincide con varias ventanas: {opciones}. Indicá uno más preciso.")
+    return candidatas[0]
+
+
+def _activar_ventana(hwnd, win32con, win32gui):
+    win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+    win32gui.SetForegroundWindow(hwnd)
+    if win32gui.GetForegroundWindow() != hwnd:
+        raise OSError("Windows no permitió activar la ventana solicitada.")
+
+
+def _validar_coordenadas(x, y, win32api):
+    if isinstance(x, bool) or not isinstance(x, int) or isinstance(y, bool) or not isinstance(y, int):
+        raise ValueError("Las coordenadas deben ser números enteros.")
+    izquierda = win32api.GetSystemMetrics(76)
+    arriba = win32api.GetSystemMetrics(77)
+    ancho = win32api.GetSystemMetrics(78)
+    alto = win32api.GetSystemMetrics(79)
+    if ancho <= 0 or alto <= 0 or not izquierda <= x < izquierda + ancho or not arriba <= y < arriba + alto:
+        raise ValueError("Las coordenadas quedan fuera del escritorio visible.")
+
+
+def _confirmar_clic(x, y, accion):
+    return f"Voy a {accion} en la posición ({x}, {y}) de la pantalla. ¿Confirmás?"
+
+
+def _confirmar_escritura(ventana, texto):
+    return (
+        f"Voy a escribir este texto en la ventana «{ventana}»:\n"
+        f"{texto}\n¿Confirmás?"
+    )
+
+
+_ATAJOS_PERMITIDOS = {
+    "ctrl+a": (0x11, 0x41),
+    "ctrl+c": (0x11, 0x43),
+    "ctrl+f": (0x11, 0x46),
+    "ctrl+o": (0x11, 0x4F),
+    "ctrl+p": (0x11, 0x50),
+    "ctrl+s": (0x11, 0x53),
+    "ctrl+v": (0x11, 0x56),
+    "ctrl+x": (0x11, 0x58),
+    "ctrl+y": (0x11, 0x59),
+    "ctrl+z": (0x11, 0x5A),
+    "ctrl+shift+s": (0x11, 0x10, 0x53),
+    "ctrl+tab": (0x11, 0x09),
+}
+_TECLAS_PERMITIDAS = {
+    "enter": 0x0D, "tab": 0x09, "escape": 0x1B,
+    "backspace": 0x08, "delete": 0x2E, "space": 0x20,
+    "home": 0x24, "end": 0x23, "pageup": 0x21, "pagedown": 0x22,
+    "left": 0x25, "up": 0x26, "right": 0x27, "down": 0x28,
+}
+_COMANDOS_CONSULTA = {
+    "hostname": "hostname.exe",
+    "tasklist": "tasklist.exe",
+    "whoami": "whoami.exe",
+}
+
+
+def _confirmacion_comando(comando):
+    normalizado = str(comando).strip().casefold()
+    if normalizado not in _COMANDOS_CONSULTA:
+        raise ValueError(
+            "Solo se permiten consultas exactas sin argumentos: "
+            + ", ".join(sorted(_COMANDOS_CONSULTA))
+            + ". Para otras tareas, usá las herramientas específicas de Jarvis."
+        )
+    return f"Voy a ejecutar la consulta permitida «{normalizado}». ¿Confirmás?"
+
+
+def _confirmacion_clic(x, y, tipo):
+    acciones = {
+        "izquierdo": "hacer clic",
+        "derecho": "hacer clic derecho",
+        "doble": "hacer doble clic",
+    }
+    if tipo not in acciones:
+        raise ValueError("Tipo de clic no permitido.")
+    api, _, _ = _cargar_api_windows()
+    _validar_coordenadas(x, y, api)
+    return _confirmar_clic(x, y, acciones[tipo])
+
+
+def _confirmacion_arrastre(x_inicio, y_inicio, x_fin, y_fin):
+    api, _, _ = _cargar_api_windows()
+    _validar_coordenadas(x_inicio, y_inicio, api)
+    _validar_coordenadas(x_fin, y_fin, api)
+    return (
+        f"Voy a arrastrar desde ({x_inicio}, {y_inicio}) hasta "
+        f"({x_fin}, {y_fin}). ¿Confirmás?"
+    )
+
+
+def _confirmacion_desplazamiento(x, y, pasos):
+    if isinstance(pasos, bool) or not isinstance(pasos, int) or not -20 <= pasos <= 20 or pasos == 0:
+        raise ValueError("Los pasos deben ser un entero entre -20 y 20, distinto de cero.")
+    api, _, _ = _cargar_api_windows()
+    _validar_coordenadas(x, y, api)
+    direccion = "hacia arriba" if pasos > 0 else "hacia abajo"
+    return (
+        f"Voy a desplazar {abs(pasos)} pasos {direccion} en ({x}, {y}). "
+        "¿Confirmás?"
+    )
+
+
+def _confirmacion_escritura(ventana, texto):
+    texto = _normalizar_texto_escritorio(texto)
+    return _confirmar_escritura(ventana, texto)
+
+
+def _confirmacion_atajo(ventana, atajo):
+    normalizado = str(atajo).lower().strip()
+    if normalizado not in _ATAJOS_PERMITIDOS:
+        raise ValueError("Ese atajo no está permitido.")
+    return f"Voy a pulsar {normalizado} en la ventana «{ventana}». ¿Confirmás?"
+
+
+def _confirmacion_tecla(ventana, tecla, repeticiones=1):
+    if tecla not in _TECLAS_PERMITIDAS:
+        raise ValueError("Esa tecla no está permitida.")
+    if isinstance(repeticiones, bool) or not isinstance(repeticiones, int) or not 1 <= repeticiones <= 20:
+        raise ValueError("Las repeticiones deben ser un entero entre 1 y 20.")
+    return f"Voy a pulsar {tecla} {repeticiones} vez/veces en «{ventana}». ¿Confirmás?"
+
+
+def _normalizar_texto_escritorio(texto):
+    if not isinstance(texto, str):
+        raise ValueError("El texto debe ser una cadena.")
+    texto = texto.replace("\r\n", "\n").replace("\r", "\n")
+    if len(texto) > 500:
+        raise ValueError("El texto debe tener hasta 500 caracteres.")
+    if any(ord(caracter) < 0x20 and caracter not in "\n\t" for caracter in texto):
+        raise ValueError("El texto contiene caracteres de control no permitidos.")
+    return texto
 
 
 def _nombre_archivo_seguro(nombre, predeterminado):
@@ -549,6 +842,224 @@ def control_volumen(accion, pasos=5):
     return f"Volumen: {accion}."
 
 
+@herramienta(
+    "Mueve el cursor a coordenadas absolutas del escritorio virtual de Windows. No hace clic.",
+    {"x": {"type": "integer"}, "y": {"type": "integer"}},
+    ["x", "y"],
+)
+def mover_cursor(x, y):
+    _verificar_detencion()
+    win32api, _, _ = _cargar_api_windows()
+    _validar_coordenadas(x, y, win32api)
+    _mover_cursor(x, y, win32api)
+    return f"Cursor movido a ({x}, {y})."
+
+
+@herramienta(
+    "Hace un clic izquierdo, derecho o doble clic en coordenadas del escritorio. Usala solo cuando el usuario indique el elemento y pide confirmación.",
+    {
+        "x": {"type": "integer"},
+        "y": {"type": "integer"},
+        "tipo": {"type": "string", "enum": ["izquierdo", "derecho", "doble"]},
+    },
+    ["x", "y", "tipo"],
+    confirmar=True,
+    texto_confirmacion=_confirmacion_clic,
+)
+def hacer_clic(x, y, tipo):
+    _verificar_detencion()
+    if tipo not in {"izquierdo", "derecho", "doble"}:
+        raise ValueError("Tipo de clic no permitido.")
+    win32api, _, _ = _cargar_api_windows()
+    _validar_coordenadas(x, y, win32api)
+    _mover_cursor(x, y, win32api)
+    abajo, arriba = (0x0008, 0x0010) if tipo == "derecho" else (0x0002, 0x0004)
+    cantidad = 2 if tipo == "doble" else 1
+    for indice in range(cantidad):
+        _verificar_detencion()
+        win32api.mouse_event(abajo, 0, 0, 0, 0)
+        win32api.mouse_event(arriba, 0, 0, 0, 0)
+        if indice + 1 < cantidad:
+            time.sleep(0.06)
+    return f"Clic {tipo} realizado en ({x}, {y})."
+
+
+@herramienta(
+    "Arrastra el botón izquierdo desde una coordenada a otra. Pide confirmación antes de mover elementos.",
+    {
+        "x_inicio": {"type": "integer"},
+        "y_inicio": {"type": "integer"},
+        "x_fin": {"type": "integer"},
+        "y_fin": {"type": "integer"},
+    },
+    ["x_inicio", "y_inicio", "x_fin", "y_fin"],
+    confirmar=True,
+    texto_confirmacion=_confirmacion_arrastre,
+)
+def arrastrar_mouse(x_inicio, y_inicio, x_fin, y_fin):
+    _verificar_detencion()
+    win32api, _, _ = _cargar_api_windows()
+    _validar_coordenadas(x_inicio, y_inicio, win32api)
+    _validar_coordenadas(x_fin, y_fin, win32api)
+    _mover_cursor(x_inicio, y_inicio, win32api)
+    win32api.mouse_event(0x0002, 0, 0, 0, 0)
+    try:
+        time.sleep(0.05)
+        _verificar_detencion()
+        _mover_cursor(x_fin, y_fin, win32api)
+    finally:
+        win32api.mouse_event(0x0004, 0, 0, 0, 0)
+    return f"Arrastre realizado desde ({x_inicio}, {y_inicio}) hasta ({x_fin}, {y_fin})."
+
+
+@herramienta(
+    "Desplaza la página bajo las coordenadas indicadas. Pasos positivos suben y negativos bajan; el rango permitido es -20 a 20.",
+    {
+        "x": {"type": "integer"},
+        "y": {"type": "integer"},
+        "pasos": {"type": "integer", "description": "Cantidad y dirección de pasos de rueda"},
+    },
+    ["x", "y", "pasos"],
+    confirmar=True,
+    texto_confirmacion=_confirmacion_desplazamiento,
+)
+def desplazar_pagina(x, y, pasos):
+    _verificar_detencion()
+    if isinstance(pasos, bool) or not isinstance(pasos, int) or not -20 <= pasos <= 20 or pasos == 0:
+        raise ValueError("Los pasos deben ser un entero entre -20 y 20, distinto de cero.")
+    win32api, _, _ = _cargar_api_windows()
+    _validar_coordenadas(x, y, win32api)
+    _mover_cursor(x, y, win32api)
+    delta = (120 * pasos) & 0xFFFFFFFF
+    win32api.mouse_event(0x0800, 0, 0, delta, 0)
+    return f"Página desplazada {pasos} paso(s)."
+
+
+@herramienta(
+    "Escribe hasta 500 caracteres en una ventana visible indicada por su título. Siempre muestra el texto y pide confirmación.",
+    {
+        "ventana": {"type": "string", "description": "Título exacto o único de la ventana destino"},
+        "texto": {"type": "string", "description": "Texto a escribir; se permiten saltos de línea y tabulaciones"},
+    },
+    ["ventana", "texto"],
+    confirmar=True,
+    texto_confirmacion=_confirmacion_escritura,
+)
+def escribir_texto(ventana, texto):
+    _verificar_detencion()
+    texto = _normalizar_texto_escritorio(texto)
+    win32api, win32con, win32gui = _cargar_api_windows()
+    hwnd, titulo = _buscar_ventana(ventana)
+    _activar_ventana(hwnd, win32con, win32gui)
+    for caracter in texto:
+        _verificar_detencion()
+        if caracter == "\n":
+            win32api.keybd_event(0x0D, 0, 0, 0)
+            win32api.keybd_event(0x0D, 0, 0x0002, 0)
+        elif caracter == "\t":
+            win32api.keybd_event(0x09, 0, 0, 0)
+            win32api.keybd_event(0x09, 0, 0x0002, 0)
+        else:
+            codificado = caracter.encode("utf-16-le")
+            for indice in range(0, len(codificado), 2):
+                unidad = int.from_bytes(codificado[indice:indice + 2], "little")
+                win32api.keybd_event(0, unidad, 0x0004, 0)
+                win32api.keybd_event(0, unidad, 0x0006, 0)
+    return f"Texto escrito en «{titulo}»."
+
+
+@herramienta(
+    "Ejecuta solo atajos de teclado permitidos en una ventana visible indicada por su título; siempre pide confirmación.",
+    {
+        "ventana": {"type": "string", "description": "Título exacto o único de la ventana destino"},
+        "atajo": {
+            "type": "string",
+            "enum": sorted(_ATAJOS_PERMITIDOS),
+            "description": "Atajo permitido, por ejemplo ctrl+c, ctrl+v, ctrl+a, ctrl+s o ctrl+tab",
+        },
+    },
+    ["ventana", "atajo"],
+    confirmar=True,
+    texto_confirmacion=_confirmacion_atajo,
+)
+def ejecutar_atajo(ventana, atajo):
+    _verificar_detencion()
+    teclas = _ATAJOS_PERMITIDOS.get(atajo.lower().strip())
+    if not teclas:
+        raise ValueError("Ese atajo no está permitido.")
+    win32api, win32con, win32gui = _cargar_api_windows()
+    hwnd, titulo = _buscar_ventana(ventana)
+    _activar_ventana(hwnd, win32con, win32gui)
+    pulsadas = []
+    try:
+        for tecla in teclas:
+            _verificar_detencion()
+            win32api.keybd_event(tecla, 0, 0, 0)
+            pulsadas.append(tecla)
+    finally:
+        for tecla in reversed(pulsadas):
+            win32api.keybd_event(tecla, 0, 0x0002, 0)
+    return f"Atajo {atajo} enviado a «{titulo}»."
+
+
+@herramienta(
+    "Pulsa una tecla de navegación o edición en una ventana visible indicada por su título. Pide confirmación.",
+    {
+        "ventana": {"type": "string", "description": "Título exacto o único de la ventana destino"},
+        "tecla": {
+            "type": "string",
+            "enum": list(_TECLAS_PERMITIDAS),
+        },
+        "repeticiones": {"type": "integer", "description": "Cantidad de pulsaciones, de 1 a 20"},
+    },
+    ["ventana", "tecla"],
+    confirmar=True,
+    texto_confirmacion=_confirmacion_tecla,
+)
+def presionar_tecla(ventana, tecla, repeticiones=1):
+    _verificar_detencion()
+    codigo = _TECLAS_PERMITIDAS.get(tecla)
+    if codigo is None:
+        raise ValueError("Esa tecla no está permitida.")
+    if isinstance(repeticiones, bool) or not isinstance(repeticiones, int) or not 1 <= repeticiones <= 20:
+        raise ValueError("Las repeticiones deben ser un entero entre 1 y 20.")
+    win32api, win32con, win32gui = _cargar_api_windows()
+    hwnd, titulo = _buscar_ventana(ventana)
+    _activar_ventana(hwnd, win32con, win32gui)
+    for _ in range(repeticiones):
+        _verificar_detencion()
+        try:
+            win32api.keybd_event(codigo, 0, 0, 0)
+        finally:
+            win32api.keybd_event(codigo, 0, 0x0002, 0)
+    return f"Tecla {tecla} pulsada en «{titulo}»."
+
+
+@herramienta(
+    "Activa, minimiza, maximiza o restaura una ventana visible cuyo título coincida de forma única.",
+    {
+        "titulo": {"type": "string", "description": "Título exacto o único de la ventana"},
+        "accion": {"type": "string", "enum": ["activar", "minimizar", "maximizar", "restaurar"]},
+    },
+    ["titulo", "accion"],
+)
+def controlar_ventana(titulo, accion):
+    if accion not in {"activar", "minimizar", "maximizar", "restaurar"}:
+        raise ValueError("Acción de ventana no permitida.")
+    _, win32con, win32gui = _cargar_api_windows()
+    hwnd, nombre = _buscar_ventana(titulo)
+    if accion == "activar":
+        _activar_ventana(hwnd, win32con, win32gui)
+    else:
+        estados = {
+            "minimizar": win32con.SW_MINIMIZE,
+            "maximizar": win32con.SW_MAXIMIZE,
+            "restaurar": win32con.SW_RESTORE,
+        }
+        win32gui.ShowWindow(hwnd, estados[accion])
+    return f"Ventana «{nombre}»: {accion}."
+
+
 @herramienta("Saca una captura de pantalla y la guarda en la carpeta de Jarvis.")
 def captura_pantalla():
     from PIL import ImageGrab
@@ -577,8 +1088,230 @@ def listar_archivos(carpeta):
     ["ruta"],
 )
 def leer_archivo(ruta):
-    p = _ruta_segura(ruta)
+    p = _ruta_usuario(ruta)
+    _validar_archivo_texto(p)
     return p.read_text(encoding="utf-8", errors="replace")[:4000]
+
+
+@herramienta(
+    "Busca archivos y carpetas por nombre dentro de una carpeta permitida, sin abrirlos. Devuelve hasta 50 coincidencias.",
+    {
+        "consulta": {"type": "string", "description": "Parte del nombre a buscar"},
+        "carpeta": {"type": "string", "description": "Carpeta donde buscar; por defecto la carpeta del usuario"},
+    },
+    ["consulta"],
+)
+def buscar_archivos(consulta, carpeta=""):
+    consulta = consulta.strip().casefold()
+    if not consulta:
+        raise ValueError("Indicá un nombre o parte del nombre para buscar.")
+    raiz = _ruta_usuario(carpeta or str(Path.home()))
+    if not raiz.is_dir():
+        raise ValueError("La ruta de búsqueda no es una carpeta.")
+
+    resultados = []
+    revisados = 0
+    maximo_revisados = 20_000
+
+    def error_busqueda(error):
+        raise error
+
+    for actual, directorios, archivos in os.walk(
+        raiz, topdown=True, followlinks=False, onerror=error_busqueda
+    ):
+        _verificar_detencion()
+        directorios[:] = [
+            nombre
+            for nombre in directorios
+            if nombre.casefold()
+            not in {".git", ".venv", "venv", "__pycache__", "node_modules", "appdata"}
+            and not (Path(actual) / nombre).is_symlink()
+        ]
+        for nombre in sorted(directorios + archivos, key=str.casefold):
+            _verificar_detencion()
+            revisados += 1
+            if consulta in nombre.casefold():
+                resultados.append(str(Path(actual) / nombre))
+                if len(resultados) == 50:
+                    return "Encontré los primeros 50 resultados:\n" + "\n".join(resultados)
+            if revisados >= maximo_revisados:
+                parcial = "\n".join(resultados) if resultados else "No encontré coincidencias"
+                return (
+                    f"{parcial}\nBúsqueda parcial: se alcanzó el límite "
+                    f"de {maximo_revisados} elementos."
+                )
+    return "\n".join(resultados) if resultados else "No encontré coincidencias."
+
+
+@herramienta(
+    "Crea una carpeta nueva dentro de las carpetas permitidas; no sobrescribe elementos existentes.",
+    {"ruta": {"type": "string", "description": "Ruta de la carpeta nueva"}},
+    ["ruta"],
+)
+def crear_carpeta(ruta):
+    _verificar_detencion()
+    destino = _ruta_usuario(ruta)
+    if destino.exists():
+        raise FileExistsError(f"Ya existe: {destino}")
+    destino.mkdir(parents=True)
+    return f"Carpeta creada: {destino}"
+
+
+@herramienta(
+    "Crea un archivo de texto nuevo sin sobrescribir. Se admiten .txt, .md, .csv, .json, .py, .html, .css, .js y .xml.",
+    {
+        "ruta": {"type": "string", "description": "Ruta completa o relativa a la carpeta del usuario"},
+        "contenido": {"type": "string", "description": "Contenido del archivo (máx. 500.000 caracteres)"},
+    },
+    ["ruta", "contenido"],
+)
+def crear_archivo(ruta, contenido):
+    _verificar_detencion()
+    _validar_contenido_texto(contenido)
+    destino = _ruta_usuario(ruta)
+    if destino.suffix.lower() not in _EXTENSIONES_TEXTO:
+        raise ValueError("La extensión del archivo no está permitida para escritura.")
+    if not destino.parent.is_dir():
+        raise FileNotFoundError("La carpeta de destino no existe; creala primero.")
+    with destino.open("x", encoding="utf-8", newline="") as archivo:
+        archivo.write(contenido)
+    return f"Archivo creado: {destino}"
+
+
+@herramienta(
+    "Edita el contenido completo de un archivo de texto permitido. Solicita confirmación antes de reemplazarlo.",
+    {
+        "ruta": {"type": "string", "description": "Ruta del archivo de texto"},
+        "contenido": {"type": "string", "description": "Contenido nuevo completo (máx. 500.000 caracteres)"},
+    },
+    ["ruta", "contenido"],
+    confirmar=True,
+    texto_confirmacion=lambda ruta, **_: _confirmar_cambio(
+        "reemplazar el contenido de", ruta
+    ),
+)
+def editar_archivo(ruta, contenido):
+    _verificar_detencion()
+    _validar_contenido_texto(contenido)
+    destino = _ruta_usuario(ruta)
+    _validar_archivo_texto(destino)
+    temporal = None
+    try:
+        archivo_temporal = tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="",
+            prefix=f".{destino.name}.",
+            suffix=".jarvis-tmp",
+            dir=destino.parent,
+            delete=False,
+        )
+        temporal = Path(archivo_temporal.name)
+        with archivo_temporal as archivo:
+            archivo.write(contenido)
+        _verificar_detencion()
+        temporal.replace(destino)
+    finally:
+        if temporal is not None:
+            temporal.unlink(missing_ok=True)
+    return f"Archivo actualizado: {destino}"
+
+
+@herramienta(
+    "Renombra un archivo o carpeta dentro de la misma ubicación. Solicita confirmación antes de cambiarlo.",
+    {
+        "ruta": {"type": "string", "description": "Ruta del elemento que se renombra"},
+        "nombre_nuevo": {"type": "string", "description": "Nuevo nombre, sin una ruta"},
+    },
+    ["ruta", "nombre_nuevo"],
+    confirmar=True,
+    texto_confirmacion=lambda ruta, nombre_nuevo: _confirmar_cambio(
+        "renombrar", ruta, nombre_nuevo
+    ),
+)
+def renombrar_elemento(ruta, nombre_nuevo):
+    _verificar_detencion()
+    origen = _ruta_usuario(ruta)
+    if not origen.exists():
+        raise FileNotFoundError(f"No existe: {origen}")
+    nombre = Path(nombre_nuevo).name
+    if nombre != nombre_nuevo.strip() or nombre in {"", ".", ".."}:
+        raise ValueError("Indicá solo el nuevo nombre, sin carpetas.")
+    nombre = _nombre_archivo_seguro(nombre, "")
+    if not nombre:
+        raise ValueError("El nuevo nombre no puede estar vacío.")
+    if not Path(nombre).suffix and origen.is_file():
+        nombre += origen.suffix
+    destino = _ruta_segura(origen.with_name(nombre))
+    if destino.exists():
+        raise FileExistsError(f"Ya existe: {destino}")
+    origen.rename(destino)
+    return f"Elemento renombrado: {origen} → {destino}"
+
+
+@herramienta(
+    "Mueve un archivo o carpeta a una carpeta permitida existente. Solicita confirmación antes de moverlo.",
+    {
+        "ruta": {"type": "string", "description": "Ruta del elemento que se mueve"},
+        "carpeta_destino": {"type": "string", "description": "Carpeta de destino existente"},
+    },
+    ["ruta", "carpeta_destino"],
+    confirmar=True,
+    texto_confirmacion=lambda ruta, carpeta_destino: _confirmar_cambio(
+        "mover", ruta, carpeta_destino
+    ),
+)
+def mover_elemento(ruta, carpeta_destino):
+    _verificar_detencion()
+    origen = _ruta_usuario(ruta)
+    destino = _ruta_usuario(carpeta_destino)
+    if not origen.exists():
+        raise FileNotFoundError(f"No existe: {origen}")
+    if not destino.is_dir():
+        raise ValueError("La carpeta de destino no existe.")
+    final = _ruta_segura(destino / origen.name)
+    if final == origen:
+        raise ValueError("El elemento ya está en esa carpeta.")
+    if final.exists():
+        raise FileExistsError(f"Ya existe un elemento con ese nombre: {final}")
+    shutil.move(str(origen), str(final))
+    return f"Elemento movido a: {final}"
+
+
+@herramienta(
+    "Elimina permanentemente un archivo o una carpeta vacía dentro de las carpetas permitidas. Siempre pide confirmación explícita.",
+    {"ruta": {"type": "string", "description": "Ruta exacta del archivo o carpeta"}},
+    ["ruta"],
+    confirmar=True,
+    texto_confirmacion=lambda ruta: _confirmar_eliminacion(ruta),
+)
+def eliminar_elemento(ruta):
+    _verificar_detencion()
+    destino = _ruta_usuario(ruta)
+    if not destino.exists():
+        raise FileNotFoundError(f"No existe: {destino}")
+    if destino.is_dir():
+        destino.rmdir()
+    else:
+        destino.unlink()
+    return f"Elemento eliminado: {destino}"
+
+
+@herramienta(
+    "Muestra las últimas acciones de Jarvis sin incluir el contenido de archivos ni argumentos privados.",
+    {"limite": {"type": "integer", "description": "Cantidad de registros a mostrar (1 a 100)"}},
+)
+def consultar_registro_acciones(limite=20):
+    if isinstance(limite, bool) or not isinstance(limite, int) or not 1 <= limite <= 100:
+        raise ValueError("El límite debe ser un entero entre 1 y 100.")
+    ruta = config.CARPETA_DATOS / "registro_acciones.jsonl"
+    if not ruta.is_file():
+        return "Todavía no hay acciones registradas."
+    lineas = ruta.read_text(encoding="utf-8").splitlines()[-limite:]
+    return "\n".join(
+        f"{entrada['fecha']} · {entrada['herramienta']} · {entrada['estado']}"
+        for entrada in (json.loads(linea) for linea in lineas)
+    ) or "Todavía no hay acciones registradas."
 
 
 @herramienta(
@@ -949,12 +1682,36 @@ def bloquear_pantalla():
 
 
 @herramienta(
-    "Ejecuta un comando de consola de Windows y devuelve su salida. Úsalo solo si ninguna otra herramienta sirve.",
-    {"comando": {"type": "string", "description": "Comando de cmd/PowerShell"}},
+    "Ejecuta una consulta de diagnóstico de Windows de una lista fija. No admite argumentos, shell ni scripts.",
+    {
+        "comando": {
+            "type": "string",
+            "enum": sorted(_COMANDOS_CONSULTA),
+            "description": "Consulta exacta permitida, sin argumentos",
+        }
+    },
     ["comando"],
     confirmar=True,
+    texto_confirmacion=_confirmacion_comando,
 )
 def ejecutar_comando(comando):
-    r = subprocess.run(comando, shell=True, capture_output=True, text=True, timeout=30, errors="replace")
+    nombre = str(comando).strip().casefold()
+    ejecutable = _COMANDOS_CONSULTA.get(nombre)
+    if not ejecutable:
+        raise ValueError("La consulta no está permitida.")
+    raiz_windows = os.environ.get("SystemRoot")
+    if not raiz_windows:
+        raise RuntimeError("Windows no informó la ubicación del sistema.")
+    ruta_ejecutable = Path(raiz_windows) / "System32" / ejecutable
+    if not ruta_ejecutable.is_file():
+        raise FileNotFoundError(f"No encontré la utilidad de Windows {ejecutable}.")
+    r = subprocess.run(
+        [str(ruta_ejecutable)],
+        shell=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        errors="replace",
+    )
     salida = (r.stdout + r.stderr).strip()
     return salida[:2000] or f"(sin salida, código {r.returncode})"
