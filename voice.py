@@ -1,6 +1,7 @@
 """Voz: reconocimiento (faster-whisper, local) y síntesis (pyttsx3, local)."""
 import re
 import tempfile
+import threading
 import time
 import unicodedata
 import wave
@@ -121,25 +122,37 @@ def probar_microfono(dispositivo=None):
         print("Se detectó señal de audio en el micrófono.")
 
 
+def probar_reconocimiento(dispositivo=None):
+    """Escucha una frase y devuelve lo que reconoce Whisper."""
+    oido = Oido(dispositivo=dispositivo)
+    print("Hablá ahora; voy a escuchar hasta 8 segundos.")
+    audio = oido.grabar_frase(espera_max=8, max_seg=8)
+    if audio is None:
+        return "No detecté voz en la grabación. Revisá la entrada elegida y el nivel del micrófono."
+    texto = oido.transcribir(audio)
+    return texto or "Se grabó audio, pero Whisper no pudo reconocer palabras."
+
+
 class Oido:
-    def __init__(self):
+    def __init__(self, dispositivo=None):
         import numpy as np
         import sounddevice as sd
         from faster_whisper import WhisperModel
 
         self.np, self.sd = np, sd
-        self.dispositivo = self._elegir_microfono()
+        self.pausar_escucha = threading.Event()
+        self.dispositivo = self._elegir_microfono(dispositivo)
         info = self.sd.query_devices(self.dispositivo)
         print(f"Micrófono: {info['name']} (dispositivo {self.dispositivo})")
         self.frecuencia = int(info["default_samplerate"])
         print(f"Frecuencia de captura: {self.frecuencia} Hz (se convierte a {SR} Hz para Whisper)")
         print("Cargando modelo de voz (la primera vez descarga unos cientos de MB)...")
         self.modelo = WhisperModel(config.WHISPER_MODELO, device="auto", compute_type="int8")
-        self.umbral = 0.004
+        self.umbral = 0.001
         self.calibrar()
 
-    def _elegir_microfono(self):
-        return self._elegir_microfono_con(self.sd)
+    def _elegir_microfono(self, seleccion=None):
+        return self._elegir_microfono_con(self.sd, seleccion)
 
     @staticmethod
     def _elegir_microfono_con(sd, seleccion=None):
@@ -185,11 +198,13 @@ class Oido:
         )
         self.sd.wait()
         ruido = float(self.np.sqrt(self.np.mean(audio**2)))
-        self.umbral = max(0.004, ruido * 3)
+        self.umbral = max(0.001, ruido * 3)
         print(f"Nivel ambiente: {ruido:.4f}; umbral de voz: {self.umbral:.4f}")
 
     def grabar_frase(self, espera_max=None, max_seg=15):
         """Graba hasta detectar una frase completa. Devuelve audio o None si pasó espera_max sin hablar."""
+        while self.pausar_escucha.is_set():
+            time.sleep(0.1)
         np = self.np
         bloque = max(1, int(self.frecuencia * 0.1))
         pre, buf = [], []
@@ -204,6 +219,8 @@ class Oido:
         ) as s:
             while True:
                 datos, _ = s.read(bloque)
+                if self.pausar_escucha.is_set():
+                    break
                 nivel = float(np.sqrt(np.mean(datos**2)))
                 if nivel > self.umbral:
                     if not hablando:
@@ -221,6 +238,8 @@ class Oido:
                         return None
                 if hablando and len(buf) * 0.1 > max_seg:
                     break
+        if self.pausar_escucha.is_set() or not buf:
+            return None
         audio = np.concatenate(buf).flatten()
         if len(audio) <= self.frecuencia * 0.4:
             return None
@@ -239,12 +258,14 @@ class Oido:
         segmentos, _ = self.modelo.transcribe(audio, language=config.IDIOMA, beam_size=1, vad_filter=True)
         return " ".join(s.text.strip() for s in segmentos).strip()
 
-    def esperar_activacion(self):
+    def esperar_activacion(self, al_transcribir=None):
         """Bloquea hasta oír la palabra de activación. Devuelve lo que se dijo después (puede ser '')."""
         while True:
             texto = self.transcribir(self.grabar_frase())
             if not texto:
                 continue
+            if al_transcribir:
+                al_transcribir(texto)
             norm = normalizar(texto)
             for palabra in config.PALABRAS_ACTIVACION:
                 if palabra in norm:

@@ -4,8 +4,27 @@ Uso:
     python main.py            # modo voz (di "Jarvis, ...")
     python main.py --texto    # modo texto (teclado)
 """
-import argparse
+import os
 import sys
+from pathlib import Path
+
+if __name__ == "__main__":
+    proyecto = Path(__file__).resolve().parent
+    entorno = proyecto / "venv"
+    if Path(sys.prefix).resolve() != entorno.resolve():
+        nombre_python = "pythonw.exe" if Path(sys.executable).name.lower() == "pythonw.exe" else "python.exe"
+        ejecutable = entorno / "Scripts" / nombre_python
+        if not ejecutable.is_file():
+            raise RuntimeError(
+                f"No encontré el entorno virtual del proyecto en {entorno}. "
+                "Crealo e instalá requirements.txt antes de iniciar Jarvis."
+            )
+        os.execv(
+            str(ejecutable),
+            [str(ejecutable), str(Path(__file__).resolve()), *sys.argv[1:]],
+        )
+
+import argparse
 
 import config
 import tools

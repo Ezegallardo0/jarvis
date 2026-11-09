@@ -1,12 +1,13 @@
-"""Cerebro: conversa con el modelo local de Ollama y usa herramientas."""
+"""Cerebro: conversa con Ollama o modelos cloud compatibles con OpenAI."""
 import datetime
-
-import ollama
+import json
+import os
+import sys
 
 import config
 import tools
 
-PROMPT = """Sos {nombre}, un asistente personal autónomo que corre de forma local en la PC Windows de tu usuario.
+PROMPT = """Sos {nombre}, un asistente personal que corre en la PC Windows de tu usuario.
 Respondé en español rioplatense, breve y directo (2 o 3 oraciones como máximo salvo que pidan más).
 Tus respuestas se leen en voz alta: no uses markdown, listas, símbolos ni emojis.
 Cuando el usuario pida una acción sobre la PC, usá las herramientas. Nunca inventes resultados:
@@ -18,12 +19,46 @@ Datos que el usuario te pidió recordar:
 
 
 class Cerebro:
-    def __init__(self):
-        self.cliente = ollama.Client(host=config.OLLAMA_HOST)
+    def __init__(self, provider=None, api_key=None):
+        self.proveedor = (provider or config.PROVEEDOR_IA).lower()
+        self.api_key = api_key
+        self.cliente = None
         self.historial = []
+        if self.proveedor == "ollama":
+            import ollama
+
+            self.cliente = ollama.Client(host=config.OLLAMA_HOST)
+        elif self.proveedor in ("gemini", "openai"):
+            try:
+                from openai import OpenAI
+            except ModuleNotFoundError as error:
+                if error.name != "openai":
+                    raise
+                raise RuntimeError(
+                    "Falta la dependencia del proveedor cloud. Cerrá Jarvis y ejecutá "
+                    f'"{sys.executable}" -m pip install -r requirements.txt; '
+                    "después volvé a abrir run.bat."
+                ) from error
+
+            clave = api_key or (
+                os.environ.get("GEMINI_API_KEY")
+                if self.proveedor == "gemini"
+                else os.environ.get("OPENAI_API_KEY")
+            )
+            if not clave:
+                nombre = "GEMINI_API_KEY" if self.proveedor == "gemini" else "OPENAI_API_KEY"
+                raise ValueError(f"Falta la clave de API. Ingresala en Jarvis o configurá {nombre}.")
+            opciones = {"api_key": clave}
+            if self.proveedor == "gemini":
+                opciones["base_url"] = "https://generativelanguage.googleapis.com/v1beta/openai/"
+            self.cliente = OpenAI(**opciones)
+        else:
+            raise ValueError(f"Proveedor de IA no válido: {self.proveedor}")
 
     def verificar(self):
         """Devuelve None si todo está bien, o un mensaje de error útil."""
+        if self.proveedor != "ollama":
+            return None
         try:
             modelos = [m.model for m in self.cliente.list().models]
         except Exception:
@@ -50,6 +85,8 @@ class Cerebro:
         self.historial = resto
 
     def responder(self, texto):
+        if self.proveedor != "ollama":
+            return self._responder_api(texto)
         self.historial.append({"role": "user", "content": texto})
         self._recortar()
         for _ in range(6):  # máx. rondas de herramientas por pedido
@@ -74,3 +111,83 @@ class Cerebro:
                 print(f"  [herramienta] {nombre} -> {resultado[:120]}")
                 self.historial.append({"role": "tool", "tool_name": nombre, "content": resultado})
         return "Me trabé con ese pedido, ¿podés reformularlo?"
+
+    def _responder_api(self, texto):
+        self.historial.append({"role": "user", "content": texto})
+        self._recortar()
+        modelo = config.MODELO_GEMINI if self.proveedor == "gemini" else config.MODELO_OPENAI
+        for _ in range(6):
+            opciones = {
+                "model": modelo,
+                "messages": [self._sistema()] + self.historial,
+                "tools": tools.esquemas(),
+                "tool_choice": "auto",
+            }
+            if self.proveedor == "openai":
+                opciones["reasoning_effort"] = "none"
+                opciones["max_completion_tokens"] = 400
+            else:
+                opciones["max_tokens"] = 400
+            try:
+                respuesta = self.cliente.chat.completions.create(**opciones)
+            except Exception as error:
+                raise RuntimeError(self._explicar_error_api(error)) from error
+            mensaje = respuesta.choices[0].message
+            llamada = mensaje.model_dump(exclude_none=True)
+            self.historial.append(llamada)
+            if not mensaje.tool_calls:
+                return (mensaje.content or "").strip() or "Listo."
+            for llamada_herramienta in mensaje.tool_calls:
+                try:
+                    argumentos = json.loads(llamada_herramienta.function.arguments or "{}")
+                except json.JSONDecodeError as error:
+                    raise ValueError(
+                        f"El modelo devolvió argumentos inválidos para "
+                        f"{llamada_herramienta.function.name}: {error}"
+                    ) from error
+                nombre = llamada_herramienta.function.name
+                resultado = tools.ejecutar(nombre, argumentos)
+                print(f"  [herramienta] {nombre} -> {resultado[:120]}")
+                self.historial.append({
+                    "role": "tool",
+                    "tool_call_id": llamada_herramienta.id,
+                    "content": resultado,
+                })
+        return "Me trabé con ese pedido, ¿podés reformularlo?"
+
+    def _explicar_error_api(self, error):
+        codigo = getattr(error, "status_code", None)
+        detalle = getattr(error, "message", None) or str(error)
+        detalle = detalle.replace(self.api_key or "", "[API key oculta]") if self.api_key else detalle
+        detalle = detalle[:500]
+        if self.proveedor == "openai":
+            if codigo == 401:
+                return "OpenAI rechazó la API key (401). Verificá que sea una clave de API válida y activa."
+            if codigo == 403:
+                return "OpenAI denegó el acceso (403). Revisá permisos del proyecto y acceso al modelo."
+            if codigo == 404:
+                return (
+                    f"OpenAI no encontró el modelo '{config.MODELO_OPENAI}' (404). "
+                    "Revisá MODELO_OPENAI en config.py y el acceso de tu proyecto."
+                )
+            if codigo == 429:
+                return (
+                    "OpenAI rechazó la solicitud por cuota o límite (429). "
+                    "Revisá facturación y límites de la API."
+                )
+        elif codigo == 401:
+            return "Gemini rechazó la API key (401). Revisá que sea una clave válida de Google AI Studio."
+        elif codigo == 403:
+            return "Gemini denegó el acceso (403). Revisá permisos, región y habilitación de la API."
+        elif codigo == 404:
+            return (
+                f"Gemini no encontró el modelo '{config.MODELO_GEMINI}' (404). "
+                "Revisá MODELO_GEMINI en config.py."
+            )
+        elif codigo == 429:
+            return "Gemini rechazó la solicitud por cuota o límite (429). Revisá la cuota de tu proyecto."
+        if codigo is not None:
+            return f"Error de API de {self.proveedor} (HTTP {codigo}): {detalle}"
+        if "connection" in type(error).__name__.lower() or "timeout" in type(error).__name__.lower():
+            return f"No pude conectar con {self.proveedor}. Revisá internet y volvé a intentar."
+        return f"Error de {self.proveedor}: {detalle}"

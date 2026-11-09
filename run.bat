@@ -10,5 +10,16 @@ if not exist "venv\Scripts\pythonw.exe" (
     exit /b 1
 )
 
+venv\Scripts\python.exe -c "import openai" >nul 2>nul
+if errorlevel 1 (
+    echo Instalando las dependencias de Jarvis en su entorno virtual...
+    "venv\Scripts\python.exe" -m pip install -r requirements.txt
+    if errorlevel 1 (
+        echo ERROR: No se pudieron instalar las dependencias. Revisa la conexion y vuelve a intentar.
+        pause
+        exit /b 1
+    )
+)
+
 start "" "venv\Scripts\pythonw.exe" "launcher.py" %*
 exit /b 0
