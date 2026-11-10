@@ -1,4 +1,9 @@
-"""Cerebro: conversa con Ollama o modelos cloud compatibles con OpenAI."""
+"""Cerebro: conversa con Ollama o modelos cloud compatibles con OpenAI.
+
+Cuando hay 2 o más API keys configuradas se activa el modo Ensemble:
+las IAs trabajan en paralelo (o en cadena) para ofrecer mejores respuestas.
+"""
+import concurrent.futures
 import datetime
 import json
 import os
@@ -51,8 +56,38 @@ Fecha y hora actual: {ahora}.
 Datos que el usuario te pidió recordar:
 {memoria}"""
 
+# Prompt de síntesis para el modo ensemble "mejor"
+PROMPT_SINTESIS = """Recibiste {n} respuestas de distintas IAs al mismo mensaje del usuario.
+Tu tarea es sintetizar la mejor respuesta posible:
+- Tomá lo más preciso, útil y completo de cada respuesta.
+- Si hay contradicciones, elegí la versión más confiable o mencionala brevemente.
+- Mantené el tono conversacional en español rioplatense, sin markdown ni emojis.
+- Sé conciso; no expliques que sos una síntesis ni menciones las fuentes.
+
+Respuestas recibidas:
+{respuestas}"""
+
+
+def _sistema_base():
+    memoria = "\n".join(f"- {d}" for d in tools.cargar_memoria()) or "(nada todavía)"
+    ahora = datetime.datetime.now().strftime("%A %d/%m/%Y %H:%M")
+    return {
+        "role": "system",
+        "content": PROMPT.format(
+            nombre=config.NOMBRE,
+            ahora=ahora,
+            memoria=memoria,
+            ubicacion=config.UBICACION or "",
+        ),
+    }
+
 
 class Cerebro:
+    """Cerebro único: un proveedor principal con fallback opcional.
+
+    Se usa cuando solo hay 1 API key o el modo ensemble está desactivado.
+    """
+
     def __init__(
         self,
         provider=None,
@@ -107,6 +142,15 @@ class Cerebro:
                 variable = ai_providers.PROVEEDORES[proveedor].variable_entorno
                 api_key = os.environ.get(variable, "")
             if not api_key:
+                try:
+                    import keyring
+                    if sys.platform == "win32":
+                        from keyring.backends.Windows import WinVaultKeyring
+                        keyring.set_keyring(WinVaultKeyring())
+                    api_key = keyring.get_password("Jarvis", proveedor) or ""
+                except Exception:
+                    pass
+            if not api_key:
                 nombre = ai_providers.PROVEEDORES[proveedor].nombre
                 raise ValueError(f"Falta la API key de {nombre}. Ingresala desde Configuración.")
             if self.proveedor != proveedor or self.api_key != api_key or self.cliente is None:
@@ -153,17 +197,7 @@ class Cerebro:
         return None
 
     def _sistema(self):
-        memoria = "\n".join(f"- {d}" for d in tools.cargar_memoria()) or "(nada todavía)"
-        ahora = datetime.datetime.now().strftime("%A %d/%m/%Y %H:%M")
-        return {
-            "role": "system",
-            "content": PROMPT.format(
-                nombre=config.NOMBRE,
-                ahora=ahora,
-                memoria=memoria,
-                ubicacion=config.UBICACION or "",
-            ),
-        }
+        return _sistema_base()
 
     def _recortar(self):
         if len(self.historial) <= 30:
@@ -343,3 +377,428 @@ class Cerebro:
             proveedor_alternativo=None,
         )
         return True
+
+
+# ---------------------------------------------------------------------------
+# Motor ensemble: consulta múltiples IAs en paralelo y sintetiza
+# ---------------------------------------------------------------------------
+
+def _consultar_proveedor_simple(proveedor, api_key, mensajes, timeout=30):
+    """Llama a un proveedor y devuelve (proveedor, texto_respuesta | None, error | None)."""
+    try:
+        cliente = ai_providers.crear_cliente(proveedor, api_key, timeout=timeout)
+        modelo = ai_providers.obtener_modelo(proveedor)
+        opciones = ai_providers.crear_opciones_solicitud(proveedor, modelo, mensajes)
+        respuesta = cliente.chat.completions.create(**opciones)
+        texto = (respuesta.choices[0].message.content or "").strip()
+        return proveedor, texto, None
+    except Exception as error:
+        return proveedor, None, error
+
+
+class CerebroEnsemble:
+    """Cerebro multi-IA: coordina Gemini, Grok, OpenAI y Cursor en conjunto.
+
+    Estrategias disponibles (config.ESTRATEGIA_ENSEMBLE):
+    - "mejor":    Consulta todos en paralelo y sintetiza la mejor respuesta
+                  usando el proveedor principal. Máxima calidad.
+    - "rapido":   Devuelve la primera respuesta que llegue. Máxima velocidad.
+    - "verificar": El proveedor principal responde; los demás verifican y
+                  el principal decide si ajustar. Balance calidad/costo.
+    - "votar":    Cuando hay 3+ proveedores, elige la respuesta que más se
+                  repite (similitud). Con 2 proveedores actúa como "mejor".
+
+    Las herramientas (tool_calls) siempre las ejecuta solo el proveedor principal
+    para evitar efectos duplicados.
+    """
+
+    def __init__(self, proveedores_claves: dict[str, str], proveedor_principal: str):
+        """
+        Args:
+            proveedores_claves: {codigo_proveedor: api_key}
+            proveedor_principal: código del proveedor que actúa como orquestador
+        """
+        if not proveedores_claves:
+            raise ValueError(
+                "Necesitás al menos una API key configurada para iniciar Jarvis. "
+                "Ingresala desde Configuración → IA."
+            )
+        self.proveedores_claves = proveedores_claves
+        self.proveedor_principal = proveedor_principal
+        self.historial: list[dict] = []
+        # Instancia del cerebro simple para manejar herramientas y el flujo principal
+        api_key_principal = proveedores_claves.get(proveedor_principal, "")
+        self._cerebro_principal = Cerebro(
+            provider=proveedor_principal,
+            api_key=api_key_principal,
+        )
+        # Clientes extra para los proveedores secundarios (sin herramientas)
+        self._clientes_extra: dict[str, object] = {}
+        for codigo, clave in proveedores_claves.items():
+            if codigo == proveedor_principal:
+                continue
+            try:
+                self._clientes_extra[codigo] = ai_providers.crear_cliente(codigo, clave)
+            except Exception as err:
+                print(f"  [ensemble] No se pudo iniciar {codigo}: {err}")
+
+    @property
+    def _estrategia(self):
+        return getattr(config, "ESTRATEGIA_ENSEMBLE", "mejor").lower()
+
+    def verificar(self):
+        return self._cerebro_principal.verificar()
+
+    def configurar(
+        self,
+        provider,
+        api_key=None,
+        proveedor_alternativo=None,
+        clave_alternativa=None,
+    ):
+        """Redirige al cerebro principal para mantener compatibilidad con el launcher."""
+        self._cerebro_principal.configurar(
+            provider, api_key, proveedor_alternativo, clave_alternativa
+        )
+        self.proveedor_principal = self._cerebro_principal.proveedor
+
+    def responder(self, texto):
+        if tools.detencion_solicitada():
+            return "Detención solicitada. No voy a iniciar nuevas acciones."
+
+        proveedores_secundarios = list(self._clientes_extra.keys())
+
+        # Si no hay IAs secundarias disponibles, delegar al cerebro principal
+        if not proveedores_secundarios:
+            return self._cerebro_principal.responder(texto)
+
+        estrategia = self._estrategia
+
+        if estrategia == "rapido":
+            return self._responder_rapido(texto)
+        elif estrategia == "verificar":
+            return self._responder_verificar(texto)
+        elif estrategia == "votar":
+            return self._responder_votar(texto)
+        else:  # "mejor" (default)
+            return self._responder_mejor(texto)
+
+    def _mensajes_actuales(self, texto, incluir_nuevo=True):
+        """Construye la lista de mensajes (sistema + historial + nueva pregunta)."""
+        # Usar historial del cerebro principal (ya tiene el historial sincronizado)
+        historial = list(self._cerebro_principal.historial)
+        # Filtrar solo mensajes de texto para los proveedores secundarios
+        historial_limpio = [
+            m for m in historial
+            if m.get("role") in ("user", "assistant")
+            and not m.get("tool_calls")
+            and m.get("content", "").strip()
+        ]
+        mensajes = [_sistema_base()] + historial_limpio
+        if incluir_nuevo:
+            mensajes.append({"role": "user", "content": texto})
+        return mensajes
+
+    def _responder_mejor(self, texto):
+        """Consulta todos los proveedores en paralelo y sintetiza la mejor respuesta."""
+        print(f"  [ensemble:mejor] Consultando {1 + len(self._clientes_extra)} IAs en paralelo...")
+
+        mensajes = self._mensajes_actuales(texto)
+        tareas = {}
+
+        # El proveedor principal puede usar herramientas (ruta completa)
+        # Los secundarios responden en modo texto simple
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=len(self._clientes_extra) + 1
+        ) as executor:
+            # Secundarios: solo texto, sin herramientas
+            for codigo, clave in self.proveedores_claves.items():
+                if codigo == self.proveedor_principal:
+                    continue
+                tareas[executor.submit(
+                    _consultar_proveedor_simple, codigo, clave, mensajes, 25
+                )] = codigo
+
+            # Esperar resultados secundarios
+            respuestas_extra = {}
+            for futuro in concurrent.futures.as_completed(tareas, timeout=30):
+                proveedor, texto_resp, error = futuro.result()
+                if texto_resp:
+                    respuestas_extra[proveedor] = texto_resp
+                    print(f"  [ensemble:mejor] {proveedor} respondió ({len(texto_resp)} chars)")
+                elif error:
+                    print(f"  [ensemble:mejor] {proveedor} falló: {error}")
+
+        # El principal siempre responde (con soporte de herramientas)
+        respuesta_principal = self._cerebro_principal.responder(texto)
+
+        if not respuestas_extra:
+            # Solo el principal respondió, sin síntesis necesaria
+            return respuesta_principal
+
+        # Sintetizar usando el principal como árbitro
+        return self._sintetizar(texto, respuesta_principal, respuestas_extra)
+
+    def _responder_rapido(self, texto):
+        """Devuelve la primera respuesta que llegue de cualquier proveedor."""
+        print(f"  [ensemble:rapido] Carrera entre {1 + len(self._clientes_extra)} IAs...")
+
+        mensajes = self._mensajes_actuales(texto)
+
+        # Lanzar todos los secundarios en paralelo
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=len(self._clientes_extra)
+        ) as executor:
+            futuros = {
+                executor.submit(_consultar_proveedor_simple, codigo, clave, mensajes, 20): codigo
+                for codigo, clave in self.proveedores_claves.items()
+                if codigo != self.proveedor_principal
+            }
+
+            # Tomar la primera respuesta válida
+            for futuro in concurrent.futures.as_completed(futuros, timeout=25):
+                proveedor, texto_resp, error = futuro.result()
+                if texto_resp:
+                    nombre = ai_providers.PROVEEDORES[proveedor].nombre
+                    print(f"  [ensemble:rapido] Ganó {proveedor}")
+                    # Agregar al historial del cerebro principal para mantener coherencia
+                    self._cerebro_principal.historial.append(
+                        {"role": "user", "content": texto}
+                    )
+                    self._cerebro_principal.historial.append(
+                        {"role": "assistant", "content": texto_resp}
+                    )
+                    self._cerebro_principal._recortar()
+                    return texto_resp
+
+        # Si todos fallaron, usar el principal
+        return self._cerebro_principal.responder(texto)
+
+    def _responder_verificar(self, texto):
+        """Principal responde, secundarios verifican, principal decide si ajustar."""
+        print(f"  [ensemble:verificar] Principal responde, {len(self._clientes_extra)} verifican...")
+
+        # El principal responde primero (con herramientas si las necesita)
+        respuesta_principal = self._cerebro_principal.responder(texto)
+
+        if tools.detencion_solicitada() or not self._clientes_extra:
+            return respuesta_principal
+
+        # Los secundarios evalúan la respuesta
+        mensajes_verificacion = [
+            _sistema_base(),
+            {"role": "user", "content": texto},
+            {"role": "assistant", "content": respuesta_principal},
+            {
+                "role": "user",
+                "content": (
+                    "¿La respuesta anterior es correcta, completa y precisa? "
+                    "Si tiene errores importantes, corrígela brevemente. "
+                    "Si está bien, responde solo: OK"
+                ),
+            },
+        ]
+
+        correcciones = []
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=len(self._clientes_extra)
+        ) as executor:
+            futuros = {
+                executor.submit(
+                    _consultar_proveedor_simple, codigo, clave, mensajes_verificacion, 20
+                ): codigo
+                for codigo, clave in self.proveedores_claves.items()
+                if codigo != self.proveedor_principal
+            }
+            for futuro in concurrent.futures.as_completed(futuros, timeout=25):
+                proveedor, texto_resp, error = futuro.result()
+                if texto_resp and texto_resp.strip().upper() != "OK":
+                    correcciones.append((proveedor, texto_resp))
+                    print(f"  [ensemble:verificar] {proveedor} sugirió corrección")
+
+        if not correcciones:
+            return respuesta_principal
+
+        # Si hay correcciones, el principal las integra
+        detalle_correcciones = "\n".join(
+            f"- {ai_providers.PROVEEDORES.get(p, type('', (), {'nombre': p})()).nombre}: {r}"
+            for p, r in correcciones
+        )
+        mensajes_ajuste = self._mensajes_actuales(
+            f"Revisá tu respuesta anterior considerando estas observaciones:\n{detalle_correcciones}\n"
+            f"Mejorala si corresponde o confirmá que es correcta. No expliques el proceso.",
+            incluir_nuevo=True,
+        )
+
+        try:
+            cliente_p = self._cerebro_principal.cliente
+            modelo_p = self._cerebro_principal.modelo
+            proveedor_p = self._cerebro_principal.proveedor
+            opciones = ai_providers.crear_opciones_solicitud(proveedor_p, modelo_p, mensajes_ajuste)
+            resp_ajustada = cliente_p.chat.completions.create(**opciones)
+            ajustada = (resp_ajustada.choices[0].message.content or "").strip()
+            if ajustada:
+                # Actualizar historial
+                self._cerebro_principal.historial.append(
+                    {"role": "assistant", "content": ajustada}
+                )
+                self._cerebro_principal._recortar()
+                return ajustada
+        except Exception as err:
+            print(f"  [ensemble:verificar] Error al ajustar: {err}")
+
+        return respuesta_principal
+
+    def _responder_votar(self, texto):
+        """Con 3+ IAs elige por similitud; con 2 actúa como 'mejor'."""
+        total = 1 + len(self._clientes_extra)
+        if total < 3:
+            return self._responder_mejor(texto)
+
+        print(f"  [ensemble:votar] Votación entre {total} IAs...")
+
+        mensajes = self._mensajes_actuales(texto)
+        todas_respuestas: list[tuple[str, str]] = []
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=total) as executor:
+            futuros = {
+                executor.submit(_consultar_proveedor_simple, codigo, clave, mensajes, 25): codigo
+                for codigo, clave in self.proveedores_claves.items()
+                if codigo != self.proveedor_principal
+            }
+            # Lanzar también el principal en modo texto simple para la votación
+            futuro_principal = executor.submit(
+                _consultar_proveedor_simple,
+                self.proveedor_principal,
+                self.proveedores_claves[self.proveedor_principal],
+                mensajes,
+                25,
+            )
+            futuros[futuro_principal] = self.proveedor_principal
+
+            for futuro in concurrent.futures.as_completed(futuros, timeout=30):
+                proveedor, texto_resp, error = futuro.result()
+                if texto_resp:
+                    todas_respuestas.append((proveedor, texto_resp))
+
+        if not todas_respuestas:
+            return self._cerebro_principal.responder(texto)
+
+        # Elegir la respuesta con mayor similaridad con las demás (voto por promedio)
+        ganadora = self._elegir_por_voto(todas_respuestas)
+        proveedor_ganador, texto_ganador = ganadora
+
+        # Sincronizar historial del cerebro principal
+        self._cerebro_principal.historial.append({"role": "user", "content": texto})
+        self._cerebro_principal.historial.append({"role": "assistant", "content": texto_ganador})
+        self._cerebro_principal._recortar()
+
+        return texto_ganador
+
+    @staticmethod
+    def _elegir_por_voto(respuestas: list[tuple[str, str]]) -> tuple[str, str]:
+        """Elige la respuesta con mayor similitud promedio con las demás (Jaccard sobre tokens)."""
+        if len(respuestas) == 1:
+            return respuestas[0]
+
+        def jaccard(a: str, b: str) -> float:
+            ta = set(a.lower().split())
+            tb = set(b.lower().split())
+            inter = len(ta & tb)
+            union = len(ta | tb)
+            return inter / union if union else 0.0
+
+        mejor_score = -1.0
+        mejor = respuestas[0]
+        for i, (p, r) in enumerate(respuestas):
+            score = sum(
+                jaccard(r, r2)
+                for j, (_, r2) in enumerate(respuestas)
+                if j != i
+            ) / max(len(respuestas) - 1, 1)
+            if score > mejor_score:
+                mejor_score = score
+                mejor = (p, r)
+        return mejor
+
+    def _sintetizar(
+        self,
+        texto_original: str,
+        respuesta_principal: str,
+        respuestas_extra: dict[str, str],
+    ) -> str:
+        """Usa el proveedor principal para sintetizar las respuestas de todas las IAs."""
+        todas = {self.proveedor_principal: respuesta_principal, **respuestas_extra}
+        partes = []
+        for codigo, resp in todas.items():
+            nombre = ai_providers.PROVEEDORES.get(
+                codigo, type("P", (), {"nombre": codigo})()
+            ).nombre
+            partes.append(f"[{nombre}]: {resp}")
+
+        bloque = "\n\n".join(partes)
+        prompt_sintesis = PROMPT_SINTESIS.format(n=len(todas), respuestas=bloque)
+
+        mensajes_sintesis = [
+            {"role": "system", "content": prompt_sintesis},
+            {"role": "user", "content": texto_original},
+        ]
+
+        try:
+            cliente_p = self._cerebro_principal.cliente
+            modelo_p = self._cerebro_principal.modelo
+            proveedor_p = self._cerebro_principal.proveedor
+            opciones = ai_providers.crear_opciones_solicitud(
+                proveedor_p, modelo_p, mensajes_sintesis
+            )
+            resp = cliente_p.chat.completions.create(**opciones)
+            sintetizada = (resp.choices[0].message.content or "").strip()
+            if sintetizada:
+                print(f"  [ensemble:mejor] Síntesis completada ({len(sintetizada)} chars)")
+                return sintetizada
+        except Exception as err:
+            print(f"  [ensemble:mejor] Error en síntesis: {err}")
+
+        # Si falla la síntesis, devolver la del principal
+        return respuesta_principal
+
+
+def crear_cerebro(obtener_clave_fn) -> "Cerebro | CerebroEnsemble":
+    """Fábrica: devuelve un CerebroEnsemble si hay 2+ keys, o un Cerebro simple.
+
+    Args:
+        obtener_clave_fn: función(proveedor) -> str que lee la API key.
+
+    Returns:
+        Cerebro o CerebroEnsemble listo para usar.
+
+    Raises:
+        ValueError: si no hay ninguna API key configurada.
+    """
+    activo, proveedores = ai_providers.ensemble_activo(obtener_clave_fn)
+
+    if not proveedores:
+        # Verificar si hay al menos uno (para el error claro)
+        principal = config.PROVEEDOR_IA
+        if principal == "ollama":
+            return Cerebro(provider="ollama")
+        raise ValueError(
+            "Necesitás al menos una API key configurada para usar Jarvis. "
+            "Ingresala desde el HUD → Ajustes → IA."
+        )
+
+    principal = config.PROVEEDOR_IA if config.PROVEEDOR_IA in proveedores else proveedores[0]
+
+    if not activo or len(proveedores) < 2:
+        # Solo una key → cerebro simple
+        clave = obtener_clave_fn(principal)
+        return Cerebro(provider=principal, api_key=clave)
+
+    # Ensemble
+    claves = {p: obtener_clave_fn(p) for p in proveedores}
+    print(
+        f"  [ensemble] Modo activo con {len(claves)} IAs: "
+        + ", ".join(ai_providers.PROVEEDORES[p].nombre for p in claves if p in ai_providers.PROVEEDORES)
+        + f" (estrategia: {getattr(config, 'ESTRATEGIA_ENSEMBLE', 'mejor')})"
+    )
+    return CerebroEnsemble(claves, principal)

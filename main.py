@@ -30,11 +30,31 @@ import config
 import tools
 import visionTools
 import voice
-from brain import Cerebro
+from brain import Cerebro, crear_cerebro
 
 _ = visionTools
 
 SALIDAS = ("salir", "adios", "apagate", "hasta luego", "chau")
+
+
+def _obtener_clave(proveedor):
+    try:
+        import keyring
+        if sys.platform == "win32":
+            from keyring.backends.Windows import WinVaultKeyring
+            keyring.set_keyring(WinVaultKeyring())
+        guardada = keyring.get_password("Jarvis", proveedor)
+        if guardada:
+            return guardada
+    except Exception:
+        pass
+    env_var = {
+        "gemini": "GEMINI_API_KEY",
+        "grok": "XAI_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "cursor": "CURSOR_API_KEY",
+    }.get(proveedor, "")
+    return os.environ.get(env_var, "") if env_var else ""
 
 
 def main():
@@ -55,7 +75,12 @@ def main():
         return
     config.CARPETA_DATOS.mkdir(parents=True, exist_ok=True)
 
-    cerebro = Cerebro()
+    try:
+        cerebro = crear_cerebro(_obtener_clave)
+    except Exception as e:
+        print(f"Aviso: {e}")
+        cerebro = Cerebro(provider="ollama")
+
     error = cerebro.verificar()
     if error:
         print(error)

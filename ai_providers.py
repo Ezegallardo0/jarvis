@@ -32,6 +32,13 @@ PROVEEDORES = {
         "OPENAI_API_KEY",
         "MODELO_OPENAI",
     ),
+    "cursor": Proveedor(
+        "Cursor (Grok Free)",
+        "CURSOR_API_KEY",
+        "MODELO_CURSOR",
+        "https://api.cursor.sh/v1",
+        "max_tokens",
+    ),
 }
 
 
@@ -120,3 +127,48 @@ def error_publico(proveedor, error):
         detalle = "La prueba de conexión falló."
     sufijo = f" (HTTP {codigo})" if codigo is not None else ""
     return f"{nombre}: {detalle}{sufijo}"
+
+
+# ---------------------------------------------------------------------------
+# Utilidades para modo Ensemble (múltiples IAs en paralelo)
+# ---------------------------------------------------------------------------
+
+def proveedores_configurados(obtener_clave_fn):
+    """Devuelve la lista de proveedores que tienen API key disponible.
+
+    Args:
+        obtener_clave_fn: función(proveedor) -> str|"" que lee la API key.
+
+    Returns:
+        Lista de códigos de proveedor con clave válida, en orden: primero el
+        PROVEEDOR_IA principal (si tiene clave), luego los demás.
+    """
+    principal = config.PROVEEDOR_IA
+    orden = [principal] + [p for p in PROVEEDORES if p != principal]
+    resultado = []
+    for codigo in orden:
+        if codigo not in PROVEEDORES:
+            continue
+        try:
+            clave = obtener_clave_fn(codigo)
+        except Exception:
+            clave = ""
+        if clave:
+            resultado.append(codigo)
+    return resultado
+
+
+def ensemble_activo(obtener_clave_fn):
+    """Indica si el modo ensemble debe activarse según configuración y claves.
+
+    Returns:
+        (activo: bool, proveedores: list[str])
+    """
+    modo = getattr(config, "MODO_ENSEMBLE", "auto").lower()
+    if modo == "off":
+        return False, []
+    activos = proveedores_configurados(obtener_clave_fn)
+    if modo == "on":
+        return len(activos) >= 1, activos
+    # auto: ensemble solo cuando hay 2 o más proveedores con clave
+    return len(activos) >= 2, activos

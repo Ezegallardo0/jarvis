@@ -98,6 +98,7 @@ class Lanzador:
             config.MODELO_GEMINI,
             config.MODELO_GROK,
             config.MODELO_OPENAI,
+            config.MODELO_CURSOR,
             config.PROVEEDOR_IA_ALTERNATIVO,
             config.OLLAMA_HOST,
             config.WHISPER_MODELO,
@@ -106,6 +107,8 @@ class Lanzador:
             config.VELOCIDAD_VOZ,
             config.VOLUMEN_EFECTOS,
             config.TEMA_HUD,
+            config.MODO_ENSEMBLE,
+            config.ESTRATEGIA_ENSEMBLE,
         ) = self._leer_seleccion()
         try:
             config.GITHUB_TOKEN = self._clave_guardada_o_entorno("github")
@@ -1186,6 +1189,7 @@ class Lanzador:
             "gemini": "GEMINI_API_KEY",
             "grok": "XAI_API_KEY",
             "openai": "OPENAI_API_KEY",
+            "cursor": "CURSOR_API_KEY",
             "elevenlabs": "ELEVENLABS_API_KEY",
             "github": "GITHUB_TOKEN",
         }.get(proveedor, "")
@@ -1325,6 +1329,7 @@ class Lanzador:
                 config.MODELO_GEMINI,
                 config.MODELO_GROK,
                 config.MODELO_OPENAI,
+                config.MODELO_CURSOR,
                 config.PROVEEDOR_IA_ALTERNATIVO,
                 config.OLLAMA_HOST,
                 config.WHISPER_MODELO,
@@ -1333,6 +1338,8 @@ class Lanzador:
                 config.VELOCIDAD_VOZ,
                 config.VOLUMEN_EFECTOS,
                 config.TEMA_HUD,
+                config.MODO_ENSEMBLE,
+                config.ESTRATEGIA_ENSEMBLE,
             )
         except (OSError, ValueError) as error:
             messagebox.showerror("Configuración de audio", f"No pude leer la selección guardada:\n{error}")
@@ -1349,6 +1356,7 @@ class Lanzador:
                 config.MODELO_GEMINI,
                 config.MODELO_GROK,
                 config.MODELO_OPENAI,
+                config.MODELO_CURSOR,
                 config.PROVEEDOR_IA_ALTERNATIVO,
                 config.OLLAMA_HOST,
                 config.WHISPER_MODELO,
@@ -1357,6 +1365,8 @@ class Lanzador:
                 config.VELOCIDAD_VOZ,
                 config.VOLUMEN_EFECTOS,
                 config.TEMA_HUD,
+                config.MODO_ENSEMBLE,
+                config.ESTRATEGIA_ENSEMBLE,
             )
         return (
             datos.get("microfono", config.MICROFONO),
@@ -1375,10 +1385,11 @@ class Lanzador:
             datos.get("modelo_gemini", config.MODELO_GEMINI),
             datos.get("modelo_grok", config.MODELO_GROK),
             datos.get("modelo_openai", config.MODELO_OPENAI),
+            datos.get("modelo_cursor", config.MODELO_CURSOR),
             (
                 datos.get("proveedor_ia_alternativo", config.PROVEEDOR_IA_ALTERNATIVO)
                 if datos.get("proveedor_ia_alternativo", config.PROVEEDOR_IA_ALTERNATIVO)
-                in {"", "gemini", "grok", "openai"}
+                in {"", "gemini", "grok", "openai", "cursor"}
                 else ""
             ),
             datos.get("ollama_host", config.OLLAMA_HOST),
@@ -1397,6 +1408,16 @@ class Lanzador:
                 datos["tema_hud"]
                 if datos.get("tema_hud") in {"cian", "violeta", "verde"}
                 else config.TEMA_HUD
+            ),
+            (
+                datos["modo_ensemble"]
+                if datos.get("modo_ensemble") in {"auto", "on", "off"}
+                else config.MODO_ENSEMBLE
+            ),
+            (
+                datos["estrategia_ensemble"]
+                if datos.get("estrategia_ensemble") in {"mejor", "rapido", "verificar", "votar"}
+                else config.ESTRATEGIA_ENSEMBLE
             ),
         )
 
@@ -1641,9 +1662,19 @@ class Lanzador:
             self.bus.publish("estado", valor="desconectado", texto="Revisá las credenciales desde Ajustes.")
             return False
         if proveedor != "ollama" and not api_key:
-            self.bus.publish("msg", rol="jarvis", texto=f"Falta la API key de {proveedor}. Guardala desde Ajustes.")
-            self.bus.publish("ajustes")
-            return False
+            # En modo ensemble puede que haya otra key aunque no la del proveedor principal
+            otras_claves = any(
+                self._clave_guardada_o_entorno(p)
+                for p in ai_providers.PROVEEDORES
+                if p != proveedor
+            )
+            if not otras_claves:
+                self.bus.publish("msg", rol="jarvis", texto=(
+                    "Necesitas al menos una API key para iniciar Jarvis. "
+                    "Ingresa la clave de Gemini, Grok, OpenAI o Cursor desde Ajustes."
+                ))
+                self.bus.publish("ajustes")
+                return False
         proveedor_tts = config.PROVEEDOR_TTS
         if not texto and proveedor_tts == "elevenlabs" and not (
             elevenlabs_api_key or os.environ.get("ELEVENLABS_API_KEY")
@@ -1773,7 +1804,7 @@ class Lanzador:
         return respuesta["ok"]
 
     def _iniciar_asistente(self, proveedor, api_key):
-        from brain import Cerebro
+        from brain import Cerebro, CerebroEnsemble, crear_cerebro
 
         import tools
         import visionTools
@@ -1782,18 +1813,12 @@ class Lanzador:
         tools.NOTIFICAR = self._notificar
         tools.CONFIRMAR = self._confirmar
         try:
-            proveedor_alternativo = config.PROVEEDOR_IA_ALTERNATIVO or None
-            clave_alternativa = (
-                self._clave_guardada_o_entorno(proveedor_alternativo)
-                if proveedor_alternativo
-                else None
-            )
-            cerebro = Cerebro(
-                provider=proveedor,
-                api_key=api_key or None,
-                proveedor_alternativo=proveedor_alternativo,
-                clave_alternativa=clave_alternativa,
-            )
+            if proveedor == "ollama":
+                from brain import Cerebro as _C
+                cerebro = _C(provider="ollama")
+            else:
+                # Usar ensemble si hay 2+ keys configuradas (y modo no es "off")
+                cerebro = crear_cerebro(self._clave_guardada_o_entorno)
         except Exception as error:
             self._agregar_mensaje(config.NOMBRE, f"No pude iniciar el modelo: {error}")
             self._estado("Revisá el proveedor y la API key y volvé a iniciar.")
@@ -1874,6 +1899,8 @@ class Lanzador:
                         if proveedor_alternativo
                         else None
                     )
+                    # Si cambió el proveedor o las claves, reconfigurar el cerebro.
+                    # CerebroEnsemble también expone .configurar() para el proveedor principal.
                     cerebro.configurar(
                         proveedor_actual,
                         clave_actual,
@@ -2178,6 +2205,7 @@ class Lanzador:
             "modelo_gemini": config.MODELO_GEMINI,
             "modelo_grok": config.MODELO_GROK,
             "modelo_openai": config.MODELO_OPENAI,
+            "modelo_cursor": config.MODELO_CURSOR,
             "modelos_ia": config.MODELOS_IA,
             "ollama_host": config.OLLAMA_HOST,
             "modelo_whisper": config.WHISPER_MODELO,
@@ -2186,6 +2214,12 @@ class Lanzador:
             "velocidad_voz": config.VELOCIDAD_VOZ,
             "volumen_efectos": config.VOLUMEN_EFECTOS,
             "tema_hud": config.TEMA_HUD,
+            "modo_ensemble": getattr(config, "MODO_ENSEMBLE", "auto"),
+            "estrategia_ensemble": getattr(config, "ESTRATEGIA_ENSEMBLE", "mejor"),
+            "ensemble_proveedores_activos": [
+                p for p in ai_providers.PROVEEDORES
+                if self._clave_guardada_o_entorno(p)
+            ],
         }
 
     def _probar_ia_hud(self, comparar=False):
@@ -2336,6 +2370,7 @@ class Lanzador:
         modelo_gemini = str(datos.get("modelo_gemini", "")).strip()[:200]
         modelo_grok = str(datos.get("modelo_grok", "")).strip()[:200]
         modelo_openai = str(datos.get("modelo_openai", "")).strip()[:200]
+        modelo_cursor = str(datos.get("modelo_cursor", config.MODELO_CURSOR)).strip()[:200]
         ollama_host = str(datos.get("ollama_host", "")).strip()[:500]
         modelo_whisper = str(datos.get("modelo_whisper", "")).strip()[:100]
         idioma = str(datos.get("idioma", "")).strip()[:10]
@@ -2351,6 +2386,12 @@ class Lanzador:
             raise ValueError("Completá los modelos de IA, Ollama, Whisper y el idioma.")
         if not ollama_host.startswith(("http://", "https://")):
             raise ValueError("La dirección de Ollama debe comenzar con http:// o https://.")
+        modo_ensemble = str(datos.get("modo_ensemble", config.MODO_ENSEMBLE)).lower()
+        if modo_ensemble not in {"auto", "on", "off"}:
+            modo_ensemble = "auto"
+        estrategia_ensemble = str(datos.get("estrategia_ensemble", config.ESTRATEGIA_ENSEMBLE)).lower()
+        if estrategia_ensemble not in {"mejor", "rapido", "verificar", "votar"}:
+            estrategia_ensemble = "mejor"
         volumen_voz = self._validar_preferencia_entera(
             datos, "volumen_voz", config.VOLUMEN_VOZ, 0, 100
         )
@@ -2382,6 +2423,18 @@ class Lanzador:
         elif datos.get("borrar_github_token"):
             self._eliminar_clave("github")
 
+        # Validar que haya al menos 1 API key si no es Ollama
+        if proveedor != "ollama":
+            claves_disponibles = [
+                p for p in ai_providers.PROVEEDORES
+                if self._clave_guardada_o_entorno(p)
+            ]
+            if not claves_disponibles:
+                raise ValueError(
+                    "Necesitás al menos una API key configurada para usar Jarvis. "
+                    "Ingresá la clave de Gemini, Grok, OpenAI o Cursor."
+                )
+
         requiere_reinicio = self.asistente_activo and any(
             nuevo != actual
             for nuevo, actual in (
@@ -2404,6 +2457,7 @@ class Lanzador:
         config.MODELO_GEMINI = modelo_gemini
         config.MODELO_GROK = modelo_grok
         config.MODELO_OPENAI = modelo_openai
+        config.MODELO_CURSOR = modelo_cursor
         config.PROVEEDOR_IA_ALTERNATIVO = proveedor_alternativo
         config.OLLAMA_HOST = ollama_host
         config.WHISPER_MODELO = modelo_whisper
@@ -2412,6 +2466,8 @@ class Lanzador:
         config.VELOCIDAD_VOZ = velocidad_voz
         config.VOLUMEN_EFECTOS = volumen_efectos
         config.TEMA_HUD = tema_hud
+        config.MODO_ENSEMBLE = modo_ensemble
+        config.ESTRATEGIA_ENSEMBLE = estrategia_ensemble
         config.GITHUB_TOKEN = self._clave_guardada_o_entorno("github")
         config.CARPETA_DATOS.mkdir(parents=True, exist_ok=True)
         ruta = config.CARPETA_DATOS / "dispositivos_audio.json"
@@ -2432,6 +2488,7 @@ class Lanzador:
                     "modelo_gemini": modelo_gemini,
                     "modelo_grok": modelo_grok,
                     "modelo_openai": modelo_openai,
+                    "modelo_cursor": modelo_cursor,
                     "proveedor_ia_alternativo": proveedor_alternativo,
                     "ollama_host": ollama_host,
                     "modelo_whisper": modelo_whisper,
@@ -2440,6 +2497,8 @@ class Lanzador:
                     "velocidad_voz": velocidad_voz,
                     "volumen_efectos": volumen_efectos,
                     "tema_hud": tema_hud,
+                    "modo_ensemble": modo_ensemble,
+                    "estrategia_ensemble": estrategia_ensemble,
                 },
                 ensure_ascii=False,
                 indent=2,

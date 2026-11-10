@@ -19,7 +19,16 @@ PROVEEDOR_IA = os.environ.get("JARVIS_AI_PROVIDER", "gemini").lower()
 MODELO_GEMINI = "gemini-3.5-flash-lite"
 MODELO_GROK = "grok-4.7"
 MODELO_OPENAI = "gpt-6-luna"
+MODELO_CURSOR = "grok-3-mini"
 PROVEEDOR_IA_ALTERNATIVO = ""
+
+# --- Ensemble multi-IA ---
+# Cuando hay 2+ API keys configuradas, Jarvis puede usarlas en conjunto.
+# MODO_ENSEMBLE: "auto" (detecta automáticamente), "off" (desactivado), "on" (siempre activo)
+MODO_ENSEMBLE = os.environ.get("JARVIS_ENSEMBLE", "auto").lower()
+# ESTRATEGIA_ENSEMBLE: "mejor" (elige la mejor respuesta), "rapido" (usa el primero en responder),
+# "verificar" (el principal responde, los otros verifican), "votar" (mayoría entre modelos)
+ESTRATEGIA_ENSEMBLE = os.environ.get("JARVIS_ENSEMBLE_ESTRATEGIA", "mejor").lower()
 
 # IDs publicados en la documentación oficial. Las listas son sugerencias para el HUD;
 # los modelos siguen siendo editables porque el acceso depende de cada cuenta.
@@ -33,6 +42,7 @@ MODELOS_IA = {
     ),
     "grok": ("grok-4.7", "grok-4.6", "grok-4.5", "grok-4.3"),
     "openai": ("gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"),
+    "cursor": ("grok-3-mini", "grok-3", "claude-3-5-sonnet"),
 }
 
 # --- Voz ---

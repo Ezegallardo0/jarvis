@@ -3,240 +3,576 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{NOMBRE}} // HUD</title>
+<title>{{NOMBRE}} // MARK LXXXV // ADVANCED AI HUD</title>
 <style>
 :root{
-  --bg:#01050b; --bg2:#04121f;
-  --cy:#46dcff; --cy-d:#0a86b0; --cy-g:rgba(70,220,255,.55);
-  --au:#ffb347; --au-g:rgba(255,179,71,.5);
-  --rd:#ff4d5e; --ok:#4dffb8;
-  --tx:#d9f3ff; --dim:#5d8aa1; --ln:rgba(70,220,255,.26); --ln2:rgba(70,220,255,.10);
-  --panel:rgba(4,20,34,.66);
-  --f-hud:"Bahnschrift","Segoe UI",system-ui,sans-serif;
-  --f-mono:"Cascadia Mono",Consolas,"Courier New",monospace;
+  --bg:#030811;
+  --bg-deep:#010408;
+  --bg2:#061524;
+  --panel:rgba(5, 20, 35, 0.72);
+  --panel-card:rgba(8, 28, 48, 0.58);
+  --panel-border:rgba(56, 189, 248, 0.22);
+  --panel-border-bright:rgba(70, 220, 255, 0.55);
+  
+  --cy:#38bdf8;
+  --cy-bright:#67e8f9;
+  --cy-d:#0284c7;
+  --cy-g:rgba(56, 189, 248, 0.45);
+  --cy-glow-heavy:0 0 25px rgba(56, 189, 248, 0.5);
+  
+  --au:#f59e0b;
+  --au-g:rgba(245, 158, 11, 0.4);
+  --rd:#ef4444;
+  --rd-g:rgba(239, 68, 68, 0.4);
+  --ok:#10b981;
+  --ok-g:rgba(16, 185, 129, 0.45);
+  
+  --tx:#f0f9ff;
+  --tx-sec:#94a3b8;
+  --dim:#64748b;
+  --ln:rgba(56, 189, 248, 0.22);
+  --ln2:rgba(56, 189, 248, 0.08);
+  
+  --f-hud:"Segoe UI", system-ui, -apple-system, sans-serif;
+  --f-mono:"Cascadia Mono", Consolas, "Courier New", monospace;
+  --f-display:"Orbitron", "Bahnschrift", "Segoe UI", sans-serif;
 }
-body[data-tema="violeta"]{--cy:#c89bff;--cy-d:#8055b8;--cy-g:rgba(200,155,255,.55);--ln:rgba(200,155,255,.26);--ln2:rgba(200,155,255,.10)}
-body[data-tema="verde"]{--cy:#54f2b2;--cy-d:#158c64;--cy-g:rgba(84,242,178,.5);--ln:rgba(84,242,178,.25);--ln2:rgba(84,242,178,.10)}
-body[data-estado="pensando"]{--cy:#ffb347;--cy-d:#a8630a;--cy-g:rgba(255,179,71,.55);--ln:rgba(255,179,71,.28);--ln2:rgba(255,179,71,.10)}
-body[data-estado="desconectado"]{--cy:#ff4d5e;--cy-d:#8a2030;--cy-g:rgba(255,77,94,.5);--ln:rgba(255,77,94,.3);--ln2:rgba(255,77,94,.1)}
 
-*{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%}
-body{
-  background:radial-gradient(1400px 800px at 50% 42%, #072238 0%, var(--bg2) 38%, var(--bg) 78%);
-  color:var(--tx);font-family:var(--f-hud);overflow:hidden;
-  display:grid;grid-template-rows:auto minmax(0,1fr) auto;gap:12px;padding:14px 18px 16px;
+body[data-tema="violeta"]{
+  --cy:#c084fc; --cy-bright:#e9d5ff; --cy-d:#9333ea; --cy-g:rgba(192, 132, 252, 0.45);
+  --panel-border:rgba(192, 132, 252, 0.24); --ln:rgba(192, 132, 252, 0.24);
 }
+body[data-tema="verde"]{
+  --cy:#34d399; --cy-bright:#a7f3d0; --cy-d:#059669; --cy-g:rgba(52, 211, 153, 0.45);
+  --panel-border:rgba(52, 211, 153, 0.24); --ln:rgba(52, 211, 153, 0.24);
+}
+body[data-estado="pensando"]{
+  --cy:#fbbf24; --cy-bright:#fef08a; --cy-d:#d97706; --cy-g:rgba(251, 191, 36, 0.45);
+  --panel-border:rgba(251, 191, 36, 0.28);
+}
+body[data-estado="desconectado"]{
+  --cy:#f87171; --cy-bright:#fecaca; --cy-d:#dc2626; --cy-g:rgba(248, 113, 113, 0.45);
+  --panel-border:rgba(248, 113, 113, 0.3);
+}
+
+*{box-sizing:border-box;margin:0;padding:0;user-select:none}
+html,body{height:100%;width:100%;overflow:hidden}
+body{
+  background:radial-gradient(ellipse at 50% 30%, #071f33 0%, var(--bg) 65%, var(--bg-deep) 100%);
+  color:var(--tx);font-family:var(--f-hud);display:flex;flex-direction:row;
+}
+
+/* ---------- Efectos de Fondo Holográfico ---------- */
 #fondo{position:fixed;inset:0;z-index:0;pointer-events:none}
 .scan{position:fixed;inset:0;z-index:1;pointer-events:none;
-  background:repeating-linear-gradient(0deg,rgba(255,255,255,.022) 0 1px,transparent 1px 3px);mix-blend-mode:screen}
-.scan::after{content:"";position:absolute;left:0;right:0;height:140px;top:-140px;
-  background:linear-gradient(180deg,transparent,rgba(70,220,255,.07),transparent);animation:barrido 7s linear infinite}
-.vignette{position:fixed;inset:0;z-index:1;pointer-events:none;background:radial-gradient(ellipse at center,transparent 55%,rgba(0,0,0,.65) 100%)}
-@keyframes barrido{to{transform:translateY(calc(100vh + 280px))}}
-header,main,footer{position:relative;z-index:2}
-
-/* ---------- Cabecera ---------- */
-header{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:16px;padding-bottom:10px;position:relative}
-header::after{content:"";position:absolute;left:0;right:0;bottom:0;height:1px;
-  background:linear-gradient(90deg,transparent,var(--cy) 20%,var(--cy) 80%,transparent);opacity:.55;box-shadow:0 0 12px var(--cy-g)}
-.marca{display:flex;align-items:center;gap:14px}
-.marca .logo{width:34px;height:34px;border:2px solid var(--cy);border-radius:50%;position:relative;box-shadow:0 0 14px var(--cy-g),inset 0 0 10px var(--cy-g)}
-.marca .logo::after{content:"";position:absolute;inset:8px;border-radius:50%;background:var(--cy);box-shadow:0 0 12px var(--cy)}
-.marca b{font-size:22px;letter-spacing:.55em;font-weight:600;color:var(--cy);text-shadow:0 0 16px var(--cy-g);text-transform:uppercase}
-.marca small{display:block;font-size:10px;letter-spacing:.38em;color:var(--dim);margin-top:2px}
-.modo{display:flex;gap:8px;justify-content:center}
-.chip{font-size:10px;letter-spacing:.25em;padding:5px 12px;border:1px solid var(--ln);color:var(--dim);text-transform:uppercase;
-  clip-path:polygon(8px 0,100% 0,calc(100% - 8px) 100%,0 100%)}
-.chip.on{color:var(--cy);border-color:var(--cy);background:rgba(70,220,255,.08)}
-.reloj{text-align:right}
-#hora{font-family:var(--f-mono);font-size:26px;letter-spacing:.12em;color:var(--tx);text-shadow:0 0 14px var(--cy-g)}
-#fecha{font-size:10px;letter-spacing:.3em;color:var(--dim);text-transform:uppercase;margin-top:2px}
-
-/* ---------- Layout ---------- */
-main{display:grid;grid-template-columns:minmax(250px,300px) minmax(0,1fr) minmax(260px,320px);gap:16px;min-height:0}
-.col{display:flex;flex-direction:column;gap:14px;min-height:0;overflow-y:auto;overflow-x:hidden;padding:2px 4px 2px 2px;scrollbar-width:thin;scrollbar-color:var(--ln) transparent}
-.col>.panel{flex:none}
-.centro{display:grid;grid-template-rows:minmax(240px,1fr) minmax(140px,34%);gap:10px;min-height:0}
-
-.panel{position:relative;background:linear-gradient(160deg,rgba(8,34,54,.72),rgba(3,14,24,.7));border:1px solid var(--ln);padding:14px 14px 14px;backdrop-filter:blur(3px);transition:border-color .4s}
-.panel::before,.panel::after{content:"";position:absolute;width:16px;height:16px;border:2px solid var(--cy);transition:border-color .4s;filter:drop-shadow(0 0 4px var(--cy-g))}
-.panel::before{top:-2px;left:-2px;border-right:none;border-bottom:none}
-.panel::after{bottom:-2px;right:-2px;border-left:none;border-top:none}
-.panel h2{display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:.34em;color:var(--cy);font-weight:600;margin-bottom:12px;text-transform:uppercase}
-.panel h2::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--ln),transparent)}
-.panel h2 i{width:6px;height:6px;background:var(--cy);box-shadow:0 0 8px var(--cy);display:inline-block}
-
-/* ---------- Medidores circulares ---------- */
-.medidores{display:grid;grid-template-columns:1fr 1fr;gap:10px 6px}
-.medidor{text-align:center;position:relative}
-.medidor svg{width:100%;max-width:104px;display:block;margin:0 auto}
-.medidor .pista{fill:none;stroke:var(--ln2);stroke-width:7}
-.medidor .valor{fill:none;stroke:var(--cy);stroke-width:7;stroke-linecap:butt;stroke-dasharray:0 999;
-  transform:rotate(-90deg);transform-origin:50px 50px;transition:stroke-dasharray .8s cubic-bezier(.2,.8,.2,1),stroke .4s;filter:drop-shadow(0 0 4px var(--cy-g))}
-.medidor .marcas{fill:none;stroke:var(--ln);stroke-width:2;stroke-dasharray:1 5.2}
-.medidor .num{position:absolute;left:0;right:0;top:50%;transform:translateY(-62%);font-family:var(--f-mono);font-size:19px;color:var(--tx)}
-.medidor .num small{font-size:10px;color:var(--dim)}
-.medidor label{display:block;font-size:10px;letter-spacing:.3em;color:var(--dim);margin-top:2px}
-.medidor.alto .valor{stroke:var(--au);filter:drop-shadow(0 0 5px var(--au-g))}
-.medidor.critico .valor{stroke:var(--rd)}
-#spark{width:100%;height:46px;display:block;margin-top:10px}
-
-.sub{list-style:none;display:grid;gap:9px}
-.sub li{display:flex;align-items:center;gap:10px;font-size:12px;letter-spacing:.14em;color:var(--dim);text-transform:uppercase}
-.sub li b{margin-left:auto;font-weight:500;color:var(--tx);letter-spacing:.06em;text-transform:none;max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
-.pt{width:8px;height:8px;border-radius:50%;background:#2a4352;flex:none}
-.pt.ok{background:var(--ok);box-shadow:0 0 8px var(--ok)}
-.pt.aviso{background:var(--au);box-shadow:0 0 8px var(--au)}
-
-/* ---------- Reactor ---------- */
-.reactor{position:relative;min-height:0;display:grid;grid-template-rows:minmax(0,1fr) auto;justify-items:center}
-.caja{position:relative;height:100%;max-height:100%;aspect-ratio:1;max-width:100%}
-.caja svg,.caja canvas{position:absolute;inset:0;width:100%;height:100%}
-.anillo{fill:none;stroke:var(--cy);transform-origin:200px 200px;transition:stroke .4s}
-.r1{stroke-width:1;opacity:.5}
-.r2{stroke-width:2;stroke-dasharray:3 9;animation:giro 60s linear infinite}
-.r3{stroke-width:2.5;stroke-dasharray:90 30 20 30;animation:giro 22s linear infinite reverse;opacity:.9}
-.r4{stroke:var(--au);stroke-width:4;stroke-dasharray:46 130;animation:giro 14s linear infinite;filter:drop-shadow(0 0 6px var(--au-g));opacity:.9}
-.bobina{fill:none;stroke:var(--cy);stroke-width:22;stroke-dasharray:57 18.97;opacity:.17;transform-origin:200px 200px;animation:giro 80s linear infinite reverse}
-.bobina-b{fill:none;stroke:var(--cy);stroke-width:2;stroke-dasharray:57 18.97;opacity:.7;transform-origin:200px 200px;animation:giro 80s linear infinite reverse;stroke-dashoffset:0}
-.r5{stroke-width:1.5;opacity:.7}
-.r6{stroke-width:3;stroke-dasharray:24 12;animation:giro 9s linear infinite;filter:drop-shadow(0 0 6px var(--cy))}
-#ticks{transform-origin:200px 200px;animation:giro 120s linear infinite}
-#ticks line{stroke:var(--cy);stroke-width:1.4;transition:stroke .4s}
-.nucleo{transform-origin:200px 200px;animation:latido 3.4s ease-in-out infinite}
-.halo{transform-origin:200px 200px;animation:latido 3.4s ease-in-out infinite;opacity:.55}
-body[data-estado="escuchando"] .nucleo,body[data-estado="escuchando"] .halo{animation-duration:1.4s}
-body[data-estado="pensando"] .r3{animation-duration:5s}
-body[data-estado="pensando"] .r6{animation-duration:2.2s}
-body[data-estado="pensando"] .r4{animation-duration:3s}
-body[data-estado="pensando"] .nucleo,body[data-estado="pensando"] .halo{animation-duration:.9s}
-body[data-estado="hablando"] .nucleo,body[data-estado="hablando"] .halo{animation:voz .5s ease-in-out infinite}
-body[data-estado="hablando"] .caja{animation:reactor-voz 1.15s ease-in-out infinite;filter:drop-shadow(0 0 18px var(--cy-g))}
-@keyframes giro{to{transform:rotate(360deg)}}
-@keyframes latido{50%{transform:scale(1.12)}}
-@keyframes voz{0%,100%{transform:scale(1)}30%{transform:scale(1.22)}65%{transform:scale(.94)}}
-@keyframes reactor-voz{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
-.etq{text-align:center;pointer-events:none;padding:8px 0 2px;width:100%}
-#estado{font-size:15px;letter-spacing:.55em;color:var(--cy);text-shadow:0 0 14px var(--cy-g);text-transform:uppercase;padding-left:.55em}
-#estado-sub{font-size:12px;color:var(--dim);margin-top:5px;letter-spacing:.06em;min-height:16px;max-width:520px;margin-inline:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-
-/* ---------- Conversación ---------- */
-#log{overflow-y:auto;display:flex;flex-direction:column;gap:9px;padding:2px 8px 2px 2px;min-height:0;
-  mask-image:linear-gradient(180deg,transparent 0,#000 14px)}
-.m{max-width:82%;padding:9px 14px;font-size:14.5px;line-height:1.5;border-left:2px solid var(--cy);background:linear-gradient(90deg,rgba(70,220,255,.10),rgba(70,220,255,.02));white-space:pre-wrap;word-break:break-word;animation:entra .35s ease-out}
-.m.u{align-self:flex-end;border-left:none;border-right:2px solid var(--au);background:linear-gradient(270deg,rgba(255,179,71,.12),rgba(255,179,71,.02));text-align:right}
-.m small{display:block;font-size:9.5px;letter-spacing:.32em;color:var(--dim);margin-bottom:3px;text-transform:uppercase}
-@keyframes entra{from{opacity:0;transform:translateY(6px)}}
-#log::-webkit-scrollbar{width:5px}#log::-webkit-scrollbar-thumb{background:var(--ln)}
-
-/* ---------- Spotify ---------- */
-.sp{display:grid;grid-template-columns:96px 1fr;gap:12px;align-items:center}
-.sp-art{position:relative;width:96px;height:96px;border:1px solid var(--ln);background:rgba(70,220,255,.07) center/cover;display:grid;place-items:center;color:var(--dim);font-size:10px;letter-spacing:.2em;text-align:center}
-.sp-art::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(0deg,rgba(0,0,0,.18) 0 1px,transparent 1px 3px);pointer-events:none}
-.sp-t{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sp-a{font-size:12px;color:var(--dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.eq{display:flex;gap:3px;align-items:flex-end;height:18px;margin-top:9px}
-.eq i{width:4px;background:var(--cy);height:3px;box-shadow:0 0 6px var(--cy-g)}
-.eq.on i{animation:eq 1s ease-in-out infinite}
-.eq.on i:nth-child(2){animation-delay:-.2s;animation-duration:.8s}.eq.on i:nth-child(3){animation-delay:-.45s;animation-duration:1.2s}
-.eq.on i:nth-child(4){animation-delay:-.1s;animation-duration:.7s}.eq.on i:nth-child(5){animation-delay:-.6s;animation-duration:1.1s}
-@keyframes eq{0%,100%{height:3px}50%{height:18px}}
-.barra{height:4px;background:var(--ln2);margin-top:12px;position:relative}
-.barra i{position:absolute;inset:0 auto 0 0;width:0;background:var(--cy);box-shadow:0 0 8px var(--cy-g)}
-.ctl{display:flex;justify-content:center;gap:10px;margin-top:12px}
-button{font:inherit;color:var(--cy);background:transparent;border:1px solid var(--ln);padding:8px 16px;cursor:pointer;letter-spacing:.22em;font-size:11px;transition:.2s;text-transform:uppercase;
-  clip-path:polygon(8px 0,100% 0,calc(100% - 8px) 100%,0 100%)}
-button:hover{background:rgba(70,220,255,.14);border-color:var(--cy);box-shadow:0 0 14px var(--cy-g)}
-button.pri{background:var(--cy);color:#02111a;border-color:var(--cy);font-weight:700}
-button.peligro{color:var(--rd);border-color:rgba(255,77,94,.4)}
-.ctl button{padding:8px 20px;font-size:14px;letter-spacing:0;display:inline-flex;align-items:center;justify-content:center}
-.aviso{font-size:11px;color:var(--dim);line-height:1.5;margin-top:10px}
-
-/* ---------- Pantalla compartida ---------- */
-.interruptor{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12px;letter-spacing:.14em;color:var(--dim);text-transform:uppercase}
-.sw{width:46px;height:22px;border:1px solid var(--ln);position:relative;cursor:pointer;background:rgba(0,0,0,.3);flex:none}
-.sw::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;background:var(--dim);transition:.25s}
-.sw.on{border-color:var(--rd);box-shadow:0 0 12px rgba(255,77,94,.4)}
-.sw.on::after{left:27px;background:var(--rd);box-shadow:0 0 8px var(--rd)}
-.vista{position:relative;margin-top:12px;display:none;aspect-ratio:16/9;border:1px solid var(--ln);overflow:hidden;background:#000}
-.vista.on{display:block}
-.vista img{width:100%;height:100%;object-fit:cover;opacity:.9}
-.vista::before{content:"";position:absolute;left:0;right:0;height:30px;top:-30px;z-index:2;background:linear-gradient(180deg,transparent,rgba(70,220,255,.35),transparent);animation:escaneo 2.6s linear infinite}
-.vista::after{content:"● EN VIVO";position:absolute;top:6px;left:8px;z-index:3;font-size:9px;letter-spacing:.25em;color:var(--rd);text-shadow:0 0 6px #000;animation:parpadeo 1.4s steps(2) infinite}
-@keyframes escaneo{to{transform:translateY(calc(100% * 7))}}
-@keyframes parpadeo{50%{opacity:.25}}
-
-/* ---------- Pie ---------- */
-footer form{display:flex;gap:12px;align-items:stretch}
-footer .campo{flex:1;position:relative}
-footer .campo::before{content:"›";position:absolute;left:16px;top:50%;transform:translateY(-52%);color:var(--cy);font-size:22px}
-footer input{width:100%;background:rgba(4,20,34,.75);border:1px solid var(--ln);color:var(--tx);padding:14px 16px 14px 38px;font:inherit;font-size:15px;outline:none;transition:.2s;
-  clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,14px 100%,0 calc(100% - 14px))}
-footer input:focus{border-color:var(--cy);box-shadow:0 0 18px var(--cy-g)}
-footer input::placeholder{color:var(--dim)}
-footer button{padding:0 34px}
-
-/* ---------- Confirmación ---------- */
-#modal{position:fixed;inset:0;z-index:40;background:rgba(1,5,11,.82);display:none;place-items:center;backdrop-filter:blur(3px)}
-#modal .panel{width:min(540px,90vw);text-align:center;border-color:var(--au);padding:24px}
-#modal .panel::before,#modal .panel::after{border-color:var(--au)}
-#modal h2{color:var(--au);justify-content:center}
-#modal p{margin:8px 0 22px;font-size:15px;line-height:1.55;word-break:break-word}
-#modal .ctl button{min-width:150px;font-size:12px;letter-spacing:.22em}
-
-/* ---------- Portada ---------- */
-#settings-modal{position:fixed;inset:0;z-index:35;background:rgba(1,5,11,.88);display:none;place-items:center;padding:18px;backdrop-filter:blur(5px)}
-#settings-modal.abierto{display:grid}
-#settings-modal .panel{width:min(900px,96vw);max-height:92vh;overflow:auto;padding:24px}
-#settings-modal .settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
-#settings-modal .settings-card{min-width:0;border:1px solid var(--ln);background:rgba(4,20,34,.55);padding:14px;transition:transform .2s,border-color .2s,box-shadow .2s}
-#settings-modal .settings-card:hover{transform:translateY(-2px);border-color:var(--cy);box-shadow:0 6px 20px rgba(0,0,0,.2)}
-#settings-modal .settings-card h3{color:var(--cy);font-size:12px;letter-spacing:.2em;margin-bottom:10px}
-#settings-modal label{display:block;color:var(--dim);font-size:11px;margin:9px 0 5px}
-#settings-modal input:not([type=checkbox]),#settings-modal select{width:100%;background:#04121f;border:1px solid var(--ln);color:var(--tx);padding:9px;font:inherit;outline:none}
-#settings-modal input[type=range]{accent-color:var(--cy);padding:0}
-#settings-modal .range-row{display:flex;align-items:center;gap:12px}
-#settings-modal .range-row input{flex:1}
-#settings-modal .range-row output{min-width:44px;color:var(--cy);font:12px var(--f-mono);text-align:right}
-#settings-modal input:focus,#settings-modal select:focus{border-color:var(--cy)}
-#settings-modal .settings-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
-#settings-modal .settings-actions button,#settings-modal .ctl button{font-size:11px;letter-spacing:.08em}
-#settings-status{min-height:20px;color:var(--au);font-size:12px;margin-top:10px;white-space:pre-wrap}
-#settings-modal .check-row{display:flex;align-items:center;gap:7px;color:var(--dim);font-size:11px;margin-top:8px}
-#settings-modal .hint{color:var(--dim);font-size:10px;line-height:1.45;margin-top:6px}
-#cfg-ai-results{white-space:pre-line}
-@media(max-width:680px){#settings-modal .settings-grid{grid-template-columns:1fr}#settings-modal .panel{padding:16px}}
-#portada{position:fixed;inset:0;z-index:30;background:rgba(1,5,11,.55);backdrop-filter:blur(2px);display:grid;place-items:center;transition:opacity .5s,visibility .5s}
-#portada.fuera{opacity:0;visibility:hidden}
-#portada .panel{width:min(560px,92vw);text-align:center;padding:26px 26px 22px;background:linear-gradient(160deg,rgba(8,34,54,.9),rgba(3,14,24,.92))}
-#portada h2{justify-content:center}
-#portada p{margin:14px 0 20px;font-size:15px;color:var(--tx)}
-#portada .aviso{margin:14px 0 0}
-#portada .ctl button{min-width:190px;font-size:12px;letter-spacing:.2em}
-.logo-g{width:84px;height:84px;margin:6px auto 0;border:2px solid var(--cy);border-radius:50%;position:relative;box-shadow:0 0 26px var(--cy-g),inset 0 0 20px var(--cy-g);animation:latido 3.4s ease-in-out infinite}
-.logo-g::after{content:"";position:absolute;inset:26px;border-radius:50%;background:radial-gradient(#fff,var(--cy));box-shadow:0 0 22px var(--cy)}
-
-/* ---------- Arranque ---------- */
-#boot{position:fixed;inset:0;z-index:50;background:var(--bg);display:grid;place-items:center;transition:opacity .8s,visibility .8s;cursor:pointer}
-#boot.fuera{opacity:0;visibility:hidden}
-#boot .caja-b{text-align:left;font-family:var(--f-mono);font-size:13px;letter-spacing:.12em;color:var(--cy);line-height:2}
-#boot .caja-b div{opacity:0;animation:aparece .3s forwards}
-#boot .caja-b span{color:var(--ok)}
-#boot .titulo{font-family:var(--f-hud);font-size:30px;letter-spacing:.7em;margin-bottom:12px;text-shadow:0 0 22px var(--cy-g);padding-left:.7em}
-@keyframes aparece{to{opacity:1}}
-
-@media (max-height:820px){
-  .aviso,#spark{display:none}
-  .panel{padding:11px}
-  .panel h2{margin-bottom:9px}
-  .medidores{gap:4px}
+  background:linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.03), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.03));
+  background-size:100% 3px, 6px 100%;
 }
-@media (max-width:1050px){
-  body{overflow:auto;height:auto;grid-template-rows:auto auto auto}
-  main{grid-template-columns:1fr}
-  .centro{grid-template-rows:auto 320px}
-  .reactor{height:320px}
+.scan::after{content:"";position:absolute;left:0;right:0;height:200px;top:-200px;
+  background:linear-gradient(180deg,transparent,rgba(56,189,248,.08),transparent);animation:scanline 8s linear infinite}
+.vignette{position:fixed;inset:0;z-index:1;pointer-events:none;
+  background:radial-gradient(circle at center, transparent 40%, rgba(1, 4, 8, 0.82) 100%);
+  box-shadow:inset 0 0 100px rgba(0,0,0,0.85);
+}
+@keyframes scanline{to{transform:translateY(calc(100vh + 400px))}}
+
+/* ---------- Barra Lateral Tecnológica (Sidebar) ---------- */
+.sidebar{
+  width:240px;height:100%;background:rgba(2, 9, 18, 0.85);
+  border-right:1px solid var(--panel-border);display:flex;flex-direction:column;
+  position:relative;z-index:10;backdrop-filter:blur(16px);
+  padding:20px 14px 16px;flex-shrink:0;box-shadow:5px 0 25px rgba(0,0,0,0.5);
+}
+.sidebar-logo{
+  display:flex;flex-direction:column;align-items:center;text-align:center;
+  padding-bottom:18px;border-bottom:1px solid var(--ln2);position:relative;margin-bottom:14px;
+}
+.reactor-badge{
+  width:58px;height:58px;border-radius:50%;position:relative;display:grid;place-items:center;
+  border:2px solid var(--cy);box-shadow:0 0 20px var(--cy-g), inset 0 0 15px var(--cy-g);
+  margin-bottom:10px;cursor:pointer;transition:transform .3s,box-shadow .3s;
+}
+.reactor-badge:hover{transform:scale(1.05);box-shadow:0 0 30px var(--cy)}
+.reactor-badge-inner{
+  width:32px;height:32px;border-radius:50%;background:radial-gradient(circle, #fff 10%, var(--cy) 60%, var(--cy-d) 100%);
+  box-shadow:0 0 16px var(--cy-bright);animation:pulse-core 3s ease-in-out infinite;
+  display:flex;align-items:center;justify-content:center;font-weight:900;color:#031321;font-size:16px;
+}
+.reactor-ring-spin{
+  position:absolute;inset:-6px;border-radius:50%;border:2px dashed var(--cy);
+  animation:spin-cw 20s linear infinite;opacity:.75;
+}
+@keyframes pulse-core{0%,100%{transform:scale(0.96);opacity:0.9}50%{transform:scale(1.06);opacity:1}}
+@keyframes spin-cw{to{transform:rotate(360deg)}}
+@keyframes spin-ccw{to{transform:rotate(-360deg)}}
+
+.sidebar-title{font-size:18px;font-weight:700;letter-spacing:.32em;color:var(--cy);text-shadow:0 0 12px var(--cy-g);text-transform:uppercase}
+.sidebar-sub{font-size:9px;letter-spacing:.25em;color:var(--dim);text-transform:uppercase;margin-top:3px}
+
+.nav-list{list-style:none;display:flex;flex-direction:column;gap:6px;flex:1;overflow-y:auto}
+.nav-item{
+  display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:8px;
+  font-size:12px;font-weight:500;letter-spacing:.1em;color:var(--tx-sec);
+  border:1px solid transparent;cursor:pointer;transition:all .2s ease;position:relative;
+}
+.nav-item svg{width:18px;height:18px;fill:currentColor;flex-shrink:0;transition:transform .2s}
+.nav-item:hover{
+  background:rgba(56, 189, 248, 0.1);color:var(--tx);border-color:var(--ln);
+  box-shadow:0 0 15px rgba(56, 189, 248, 0.15);transform:translateX(3px);
+}
+.nav-item.active{
+  background:linear-gradient(90deg, rgba(56, 189, 248, 0.22), rgba(56, 189, 248, 0.05));
+  color:var(--cy-bright);border-color:var(--cy);box-shadow:inset 2px 0 0 var(--cy), 0 0 20px rgba(56, 189, 248, 0.2);
+}
+.nav-item.active svg{filter:drop-shadow(0 0 6px var(--cy))}
+
+.sidebar-footer{
+  padding-top:14px;border-top:1px solid var(--ln2);display:flex;align-items:center;gap:10px;
+  background:rgba(4, 18, 30, 0.6);padding:10px;border-radius:8px;border:1px solid var(--ln2);
+}
+.sidebar-footer-icon{
+  width:28px;height:28px;border-radius:6px;background:rgba(56, 189, 248, 0.15);
+  display:grid;place-items:center;color:var(--cy);flex-shrink:0;
+}
+.sidebar-footer-info{line-height:1.2}
+.sidebar-footer-info b{font-size:11px;color:var(--tx);letter-spacing:.05em;display:block}
+.sidebar-footer-info small{font-size:9px;color:var(--dim);letter-spacing:.02em}
+
+/* ---------- Área Principal del HUD ---------- */
+.hud-stage{
+  flex:1;height:100%;display:flex;flex-direction:column;
+  position:relative;z-index:5;overflow:hidden;padding:14px 20px 16px;gap:14px;
+}
+
+/* Cabecera Superior */
+.hud-header{
+  display:grid;grid-template-columns:1fr auto 1fr;align-items:center;
+  gap:16px;padding-bottom:12px;border-bottom:1px solid var(--panel-border);
+  position:relative;flex-shrink:0;
+}
+.hud-header::after{
+  content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
+  background:linear-gradient(90deg, transparent 5%, var(--cy) 50%, transparent 95%);
+  box-shadow:0 0 10px var(--cy);
+}
+.hud-quote{
+  display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:.25em;color:var(--dim);text-transform:uppercase;
+}
+.hud-quote span{color:var(--cy);font-weight:600}
+.header-badges{display:flex;align-items:center;gap:8px;justify-content:center}
+.hud-pill{
+  font-size:10px;letter-spacing:.18em;padding:5px 14px;border:1px solid var(--ln);
+  color:var(--dim);border-radius:20px;background:rgba(6, 21, 36, 0.5);
+  display:inline-flex;align-items:center;gap:6px;text-transform:uppercase;transition:.3s;
+}
+.hud-pill.online{color:var(--ok);border-color:var(--ok);background:rgba(16, 185, 129, 0.1);box-shadow:0 0 10px var(--ok-g)}
+.hud-pill.online::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--ok);box-shadow:0 0 6px var(--ok)}
+.hud-pill.active-mode{color:var(--cy);border-color:var(--cy);background:rgba(56, 189, 248, 0.1);box-shadow:0 0 10px var(--cy-g)}
+
+.header-clock{display:flex;align-items:center;gap:16px;justify-content:flex-end}
+.clock-time{font-family:var(--f-mono);font-size:24px;font-weight:700;letter-spacing:.08em;color:var(--tx);text-shadow:0 0 12px var(--cy-g)}
+.clock-meta{text-align:right}
+.clock-date{font-size:10px;letter-spacing:.15em;color:var(--tx-sec);text-transform:uppercase}
+.clock-weather{font-size:10px;color:var(--cy);letter-spacing:.05em;display:flex;align-items:center;gap:4px;justify-content:flex-end}
+
+/* Vista Paneles Centrales */
+.hud-body{
+  flex:1;display:grid;grid-template-columns:320px minmax(0, 1fr) 320px;
+  gap:16px;min-height:0;position:relative;
+}
+
+/* Columna Izquierda & Derecha */
+.hud-col{
+  display:flex;flex-direction:column;gap:14px;min-height:0;overflow-y:auto;
+  scrollbar-width:thin;scrollbar-color:var(--ln) transparent;padding-right:2px;
+}
+
+/* Paneles Holográficos Cyber */
+.cyber-card{
+  background:var(--panel);border:1px solid var(--panel-border);
+  border-radius:12px;padding:14px 16px;backdrop-filter:blur(14px);
+  position:relative;box-shadow:0 8px 32px rgba(0, 0, 0, 0.45);
+  transition:border-color .3s, box-shadow .3s;
+}
+.cyber-card::before{
+  content:"";position:absolute;top:-1px;left:14px;width:30px;height:2px;background:var(--cy);box-shadow:0 0 8px var(--cy);
+}
+.cyber-card::after{
+  content:"";position:absolute;bottom:-1px;right:14px;width:30px;height:2px;background:var(--cy);box-shadow:0 0 8px var(--cy);
+}
+.cyber-card:hover{
+  border-color:rgba(56, 189, 248, 0.4);box-shadow:0 8px 36px rgba(0, 0, 0, 0.55), 0 0 15px rgba(56, 189, 248, 0.1);
+}
+.card-header{
+  display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;
+}
+.card-title{
+  display:flex;align-items:center;gap:8px;font-size:11px;font-weight:700;
+  letter-spacing:.25em;color:var(--cy);text-transform:uppercase;
+}
+.card-title svg{width:14px;height:14px;fill:currentColor}
+.card-badge{font-size:9px;letter-spacing:.12em;padding:3px 8px;border-radius:10px;background:rgba(56,189,248,.12);color:var(--cy-bright);border:1px solid var(--ln)}
+
+/* Clientes de IA / Ensemble */
+.ai-clients-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.ai-client-tile{
+  background:var(--panel-card);border:1px solid var(--ln2);border-radius:8px;
+  padding:10px;display:flex;flex-direction:column;gap:6px;transition:all .2s;cursor:pointer;position:relative;
+}
+.ai-client-tile:hover{border-color:var(--cy);background:rgba(8, 38, 64, 0.5);transform:translateY(-2px)}
+.ai-tile-top{display:flex;align-items:center;justify-content:space-between}
+.ai-tile-brand{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--tx)}
+.ai-tile-icon{width:18px;height:18px;border-radius:4px;display:grid;place-items:center;font-size:11px}
+.ai-tile-status{
+  display:flex;align-items:center;gap:4px;font-size:9px;letter-spacing:.08em;color:var(--dim);text-transform:uppercase;
+}
+.ai-tile-dot{width:6px;height:6px;border-radius:50%;background:#475569}
+.ai-tile-dot.connected{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+.ai-tile-model{font-size:9px;color:var(--cy);font-family:var(--f-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Diagnóstico Hardware */
+.hw-gauges{display:grid;grid-template-columns:repeat(3, 1fr);gap:8px;margin-bottom:8px}
+.hw-gauge{text-align:center;position:relative}
+.hw-gauge svg{width:76px;height:76px;display:block;margin:0 auto}
+.hw-gauge .pista{fill:none;stroke:var(--ln2);stroke-width:6}
+.hw-gauge .valor{
+  fill:none;stroke:var(--cy);stroke-width:6;stroke-linecap:round;stroke-dasharray:0 999;
+  transform:rotate(-90deg);transform-origin:50px 50px;transition:stroke-dasharray .8s cubic-bezier(.2,.8,.2,1);
+  filter:drop-shadow(0 0 5px var(--cy-g));
+}
+.hw-gauge .num{
+  position:absolute;left:0;right:0;top:38%;font-family:var(--f-mono);font-size:14px;font-weight:700;color:var(--tx);
+}
+.hw-gauge .lbl{font-size:9px;letter-spacing:.2em;color:var(--dim);text-transform:uppercase;margin-top:2px;display:block}
+#spark{width:100%;height:44px;border-radius:6px;background:rgba(2, 8, 16, 0.4);border:1px solid var(--ln2)}
+
+/* Subsistemas Status */
+.sub-list{list-style:none;display:flex;flex-direction:column;gap:7px}
+.sub-row{
+  display:flex;align-items:center;justify-content:space-between;
+  font-size:11px;color:var(--tx-sec);padding:4px 6px;border-radius:6px;background:rgba(4, 18, 30, 0.3);
+}
+.sub-name{display:flex;align-items:center;gap:8px}
+.sub-dot{width:7px;height:7px;border-radius:50%;background:#334155}
+.sub-dot.ok{background:var(--ok);box-shadow:0 0 6px var(--ok)}
+.sub-dot.aviso{background:var(--au);box-shadow:0 0 6px var(--au)}
+.sub-val{font-family:var(--f-mono);font-size:10px;color:var(--cy);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Acciones Rápidas */
+.actions-grid{display:grid;grid-template-columns:repeat(3, 1fr);gap:8px}
+.action-btn{
+  background:var(--panel-card);border:1px solid var(--ln2);border-radius:8px;
+  padding:10px 6px;display:flex;flex-direction:column;align-items:center;gap:6px;
+  color:var(--tx-sec);cursor:pointer;transition:all .2s;text-align:center;
+}
+.action-btn svg{width:20px;height:20px;fill:var(--cy);transition:transform .2s}
+.action-btn span{font-size:10px;font-weight:600;letter-spacing:.05em}
+.action-btn:hover{
+  background:rgba(56, 189, 248, 0.15);border-color:var(--cy);color:var(--tx);
+  transform:translateY(-2px);box-shadow:0 4px 15px rgba(56, 189, 248, 0.2);
+}
+.action-btn:hover svg{transform:scale(1.15);filter:drop-shadow(0 0 8px var(--cy))}
+
+/* Spotify Holográfico */
+.sp-card{display:flex;flex-direction:column;gap:10px}
+.sp-hero{display:flex;align-items:center;gap:12px}
+.sp-art{
+  width:64px;height:64px;border-radius:8px;border:1px solid var(--ln);
+  background:rgba(56,189,248,.08) center/cover;display:grid;place-items:center;
+  font-size:9px;color:var(--dim);text-align:center;position:relative;overflow:hidden;flex-shrink:0;
+}
+.sp-art::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(0deg,rgba(0,0,0,.25) 0 1px,transparent 1px 3px);pointer-events:none}
+.sp-details{min-width:0;flex:1}
+.sp-t{font-size:13px;font-weight:600;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sp-a{font-size:11px;color:var(--dim);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.eq{display:flex;gap:3px;align-items:flex-end;height:14px;margin-top:6px}
+.eq i{width:3px;background:var(--cy);height:3px;border-radius:1px}
+.eq.on i{animation:eq-anim 1s ease-in-out infinite}
+.eq.on i:nth-child(2){animation-delay:-.2s;animation-duration:.8s}
+.eq.on i:nth-child(3){animation-delay:-.45s;animation-duration:1.2s}
+.eq.on i:nth-child(4){animation-delay:-.1s;animation-duration:.7s}
+.eq.on i:nth-child(5){animation-delay:-.6s;animation-duration:1.1s}
+@keyframes eq-anim{0%,100%{height:3px}50%{height:14px}}
+.sp-progress-bar{height:4px;background:var(--ln2);border-radius:2px;position:relative;overflow:hidden}
+.sp-progress-bar i{position:absolute;inset:0 auto 0 0;width:0;background:var(--cy);box-shadow:0 0 6px var(--cy)}
+.sp-ctrls{display:flex;align-items:center;justify-content:center;gap:12px}
+.sp-ctrls button{
+  background:none;border:none;color:var(--cy);cursor:pointer;padding:6px;border-radius:50%;
+  display:grid;place-items:center;transition:all .2s;
+}
+.sp-ctrls button:hover{color:#fff;background:rgba(56, 189, 248, 0.2);transform:scale(1.1)}
+.sp-ctrls button.pri{
+  width:32px;height:32px;background:var(--cy);color:#031321;box-shadow:0 0 12px var(--cy-g);
+}
+
+/* Visión / Pantalla Compartida */
+.screen-toggle-row{display:flex;align-items:center;justify-content:space-between}
+.screen-toggle-row span{font-size:11px;color:var(--tx-sec);letter-spacing:.08em}
+.sw{
+  width:44px;height:22px;border:1px solid var(--ln);border-radius:12px;
+  position:relative;cursor:pointer;background:rgba(0,0,0,0.5);transition:all .25s;
+}
+.sw::after{
+  content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;
+  border-radius:50%;background:var(--dim);transition:all .25s;
+}
+.sw.on{border-color:var(--rd);box-shadow:0 0 10px rgba(239,68,68,0.5)}
+.sw.on::after{left:24px;background:var(--rd);box-shadow:0 0 8px var(--rd)}
+.vista{display:none;position:relative;margin-top:10px;border-radius:8px;overflow:hidden;border:1px solid var(--ln);aspect-ratio:16/9;background:#000}
+.vista.on{display:block}
+.vista img{width:100%;height:100%;object-fit:cover}
+.vista::before{
+  content:"";position:absolute;left:0;right:0;height:24px;top:-24px;z-index:2;
+  background:linear-gradient(180deg,transparent,rgba(56,189,248,.4),transparent);animation:scan-cam 2.6s linear infinite;
+}
+.vista::after{
+  content:"● EN VIVO";position:absolute;top:6px;left:8px;z-index:3;
+  font-size:9px;letter-spacing:.2em;color:var(--rd);font-weight:700;animation:blink 1.4s infinite;
+}
+@keyframes scan-cam{to{transform:translateY(280px)}}
+@keyframes blink{50%{opacity:0.3}}
+
+/* ---------- Centro: Holograma Cyborg / Arc Reactor + Chat ---------- */
+.hud-center{
+  display:flex;flex-direction:column;gap:12px;min-height:0;position:relative;
+}
+
+/* Plataforma del Reactor Central */
+.reactor-stage{
+  flex:1;min-height:220px;max-height:360px;position:relative;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  background:radial-gradient(circle at center, rgba(6, 28, 48, 0.45) 0%, transparent 70%);
+  border-radius:16px;border:1px solid var(--ln2);padding:10px;
+}
+.reactor-backdrop{
+  position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;overflow:hidden;opacity:0.35;
+}
+.reactor-backdrop svg{width:80%;max-width:380px;height:auto;filter:drop-shadow(0 0 20px var(--cy))}
+
+/* Contenedor Concéntrico del Reactor */
+.reactor-box{
+  position:relative;width:240px;height:240px;display:grid;place-items:center;
+}
+.reactor-box svg{position:absolute;inset:0;width:100%;height:100%}
+.c-anillo{fill:none;stroke:var(--cy);transform-origin:200px 200px;transition:stroke .4s}
+.c-r1{stroke-width:1;opacity:.4;animation:spin-cw 80s linear infinite}
+.c-r2{stroke-width:2;stroke-dasharray:4 10;animation:spin-ccw 45s linear infinite;opacity:.6}
+.c-r3{stroke-width:3;stroke-dasharray:120 40 30 40;animation:spin-cw 20s linear infinite;opacity:.85;filter:drop-shadow(0 0 6px var(--cy-g))}
+.c-r4{stroke:var(--au);stroke-width:3.5;stroke-dasharray:50 140;animation:spin-ccw 14s linear infinite;opacity:.9;filter:drop-shadow(0 0 8px var(--au-g))}
+.c-bobina{fill:none;stroke:var(--cy);stroke-width:20;stroke-dasharray:57 18.97;opacity:.2;transform-origin:200px 200px;animation:spin-ccw 70s linear infinite}
+.c-bobina-b{fill:none;stroke:var(--cy);stroke-width:2;stroke-dasharray:57 18.97;opacity:.75;transform-origin:200px 200px;animation:spin-ccw 70s linear infinite}
+.c-r5{stroke-width:1.5;opacity:.7}
+.c-r6{stroke-width:3.5;stroke-dasharray:25 14;animation:spin-cw 10s linear infinite;filter:drop-shadow(0 0 8px var(--cy))}
+
+#ticks{transform-origin:200px 200px;animation:spin-cw 120s linear infinite}
+#ticks line{stroke:var(--cy);stroke-width:1.5;transition:stroke .4s}
+
+.nucleo{transform-origin:200px 200px;animation:latido 3.4s ease-in-out infinite}
+.halo{transform-origin:200px 200px;animation:latido 3.4s ease-in-out infinite;opacity:.6}
+body[data-estado="escuchando"] .nucleo,body[data-estado="escuchando"] .halo{animation-duration:1.2s}
+body[data-estado="pensando"] .c-r3{animation-duration:4s}
+body[data-estado="pensando"] .c-r6{animation-duration:2s}
+body[data-estado="pensando"] .nucleo,body[data-estado="pensando"] .halo{animation-duration:.8s}
+body[data-estado="hablando"] .nucleo,body[data-estado="hablando"] .halo{animation:reactor-voice .5s ease-in-out infinite}
+body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-out infinite;filter:drop-shadow(0 0 25px var(--cy-g))}
+@keyframes latido{0%,100%{transform:scale(1)}50%{transform:scale(1.12)}}
+@keyframes reactor-voice{0%,100%{transform:scale(1)}30%{transform:scale(1.24)}65%{transform:scale(.92)}}
+@keyframes reactor-glow{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
+
+/* Visualizador de Audio Radial & Onda */
+#onda{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+
+/* Estado del Asistente */
+.reactor-status{
+  position:relative;z-index:2;margin-top:6px;display:flex;flex-direction:column;align-items:center;text-align:center;
+}
+.reactor-status-badge{
+  display:inline-flex;align-items:center;gap:8px;padding:6px 18px;border-radius:20px;
+  background:rgba(4, 22, 38, 0.7);border:1px solid var(--cy);box-shadow:0 0 15px var(--cy-g);
+}
+.status-pulsing-dot{width:8px;height:8px;border-radius:50%;background:var(--cy);box-shadow:0 0 8px var(--cy);animation:pulse-dot 1.5s infinite}
+@keyframes pulse-dot{0%,100%{transform:scale(0.8);opacity:0.6}50%{transform:scale(1.2);opacity:1}}
+#estado{font-size:13px;font-weight:700;letter-spacing:.25em;color:var(--cy-bright);text-transform:uppercase}
+#estado-sub{font-size:11px;color:var(--dim);margin-top:4px;letter-spacing:.05em;max-width:440px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Panel de Conversación Holográfico */
+.chat-panel{
+  flex:1;min-height:160px;background:var(--panel);border:1px solid var(--panel-border);
+  border-radius:12px;padding:12px 16px;display:flex;flex-direction:column;gap:8px;overflow:hidden;
+  position:relative;backdrop-filter:blur(14px);
+}
+.chat-panel-header{
+  display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--ln2);padding-bottom:8px;
+}
+.chat-panel-title{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:700;letter-spacing:.2em;color:var(--cy);text-transform:uppercase}
+.chat-panel-title svg{width:14px;height:14px;fill:currentColor}
+
+#log{
+  flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding-right:6px;
+  mask-image:linear-gradient(180deg, transparent 0, #000 16px);scrollbar-width:thin;scrollbar-color:var(--ln) transparent;
+}
+.m{
+  max-width:85%;padding:10px 14px;font-size:13px;line-height:1.55;border-radius:8px;
+  white-space:pre-wrap;word-break:break-word;animation:msg-in .3s ease-out;position:relative;
+}
+.m:not(.u){
+  align-self:flex-start;background:linear-gradient(135deg, rgba(8, 38, 64, 0.75), rgba(4, 20, 36, 0.6));
+  border:1px solid rgba(56, 189, 248, 0.3);color:var(--tx);box-shadow:0 4px 16px rgba(0,0,0,0.3);
+}
+.m.u{
+  align-self:flex-end;background:linear-gradient(135deg, rgba(30, 58, 138, 0.5), rgba(15, 23, 42, 0.65));
+  border:1px solid rgba(147, 197, 253, 0.3);color:var(--tx);text-align:right;
+}
+.m small{display:block;font-size:9px;letter-spacing:.2em;color:var(--cy);margin-bottom:3px;text-transform:uppercase}
+.m.u small{color:var(--au)}
+@keyframes msg-in{from{opacity:0;transform:translateY(8px)}}
+
+/* ---------- Consola Inferior de Comando ---------- */
+.hud-footer{
+  display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:14px;
+  background:rgba(4, 18, 32, 0.85);border:1px solid var(--panel-border);
+  box-shadow:0 8px 30px rgba(0,0,0,0.6);position:relative;flex-shrink:0;backdrop-filter:blur(16px);
+}
+.footer-actions-left{display:flex;align-items:center;gap:8px}
+.hud-mic-btn{
+  width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg, #0284c7, #0369a1);
+  border:2px solid var(--cy);color:#fff;display:grid;place-items:center;cursor:pointer;
+  box-shadow:0 0 18px var(--cy-g);transition:all .25s;flex-shrink:0;
+}
+.hud-mic-btn:hover{transform:scale(1.08);box-shadow:0 0 26px var(--cy)}
+.hud-mic-btn svg{width:20px;height:20px;fill:currentColor}
+
+.command-form{flex:1;display:flex;align-items:center;gap:10px}
+.command-input-wrapper{flex:1;position:relative}
+.command-input-wrapper input{
+  width:100%;height:44px;background:rgba(2, 10, 20, 0.7);border:1px solid var(--ln);
+  border-radius:22px;padding:0 20px;font:inherit;font-size:13px;color:var(--tx);
+  outline:none;transition:all .25s;letter-spacing:.03em;
+}
+.command-input-wrapper input:focus{
+  border-color:var(--cy);box-shadow:0 0 20px var(--cy-g);background:rgba(3, 15, 30, 0.9);
+}
+.command-input-wrapper input::placeholder{color:var(--dim)}
+
+.hud-send-btn{
+  width:44px;height:44px;border-radius:50%;background:rgba(56, 189, 248, 0.15);
+  border:1px solid var(--cy);color:var(--cy);display:grid;place-items:center;
+  cursor:pointer;transition:all .2s;flex-shrink:0;
+}
+.hud-send-btn:hover{background:var(--cy);color:#031321;box-shadow:0 0 16px var(--cy)}
+.hud-send-btn svg{width:18px;height:18px;fill:currentColor}
+
+.footer-actions-right{display:flex;align-items:center;gap:8px}
+.footer-icon-btn{
+  width:38px;height:38px;border-radius:8px;background:rgba(6, 22, 38, 0.6);
+  border:1px solid var(--ln2);color:var(--tx-sec);display:grid;place-items:center;
+  cursor:pointer;transition:all .2s;
+}
+.footer-icon-btn:hover{background:rgba(56, 189, 248, 0.2);color:var(--cy);border-color:var(--cy)}
+.footer-icon-btn.peligro:hover{background:rgba(239, 68, 68, 0.2);color:var(--rd);border-color:var(--rd)}
+
+/* Modales & Portada */
+#settings-modal{
+  position:fixed;inset:0;z-index:100;background:rgba(1, 5, 12, 0.88);
+  display:none;place-items:center;padding:20px;backdrop-filter:blur(8px);
+}
+#settings-modal.abierto{display:grid}
+#settings-modal .panel{
+  width:min(940px, 95vw);max-height:90vh;overflow-y:auto;background:rgba(4, 18, 32, 0.95);
+  border:1px solid var(--cy);border-radius:14px;box-shadow:0 0 40px rgba(0,0,0,0.8), 0 0 30px var(--cy-g);
+  padding:24px;
+}
+#settings-modal .settings-grid{display:grid;grid-template-columns:repeat(2, minmax(0,1fr));gap:14px}
+#settings-modal .settings-card{
+  background:rgba(8, 28, 48, 0.55);border:1px solid var(--ln);border-radius:10px;padding:16px;
+}
+#settings-modal .settings-card h3{
+  color:var(--cy);font-size:11px;letter-spacing:.2em;margin-bottom:10px;text-transform:uppercase;
+}
+#settings-modal label{display:block;color:var(--dim);font-size:11px;margin:8px 0 4px}
+#settings-modal input:not([type=checkbox]),#settings-modal select{
+  width:100%;background:#020b14;border:1px solid var(--ln);border-radius:6px;
+  color:var(--tx);padding:9px 12px;font:inherit;font-size:12px;outline:none;
+}
+#settings-modal input:focus,#settings-modal select:focus{border-color:var(--cy);box-shadow:0 0 10px var(--cy-g)}
+#settings-modal .range-row{display:flex;align-items:center;gap:12px}
+#settings-modal .range-row input{flex:1;accent-color:var(--cy)}
+#settings-modal .range-row output{min-width:44px;color:var(--cy);font:12px var(--f-mono);text-align:right}
+#settings-modal .settings-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+#settings-modal button{
+  font:inherit;color:var(--cy);background:rgba(56, 189, 248, 0.1);border:1px solid var(--ln);
+  padding:7px 14px;border-radius:6px;cursor:pointer;font-size:11px;letter-spacing:.08em;
+  transition:.2s;text-transform:uppercase;
+}
+#settings-modal button:hover{background:var(--cy);color:#031321;border-color:var(--cy)}
+#settings-modal button.pri{background:var(--cy);color:#031321;font-weight:700}
+#settings-modal .hint{color:var(--dim);font-size:10px;line-height:1.45;margin-top:6px}
+#settings-modal .check-row{display:flex;align-items:center;gap:8px;color:var(--tx-sec);font-size:11px;margin-top:8px}
+
+#modal{
+  position:fixed;inset:0;z-index:110;background:rgba(1, 5, 12, 0.85);display:none;
+  place-items:center;backdrop-filter:blur(6px);
+}
+#modal .panel{
+  width:min(500px, 92vw);background:rgba(5, 20, 36, 0.95);border:1px solid var(--au);
+  border-radius:14px;padding:24px;text-align:center;box-shadow:0 0 30px var(--au-g);
+}
+#modal h2{color:var(--au);font-size:15px;letter-spacing:.2em;text-transform:uppercase;margin-bottom:10px}
+#modal p{color:var(--tx);font-size:14px;line-height:1.5;margin-bottom:20px}
+#modal .ctl{display:flex;gap:12px;justify-content:center}
+#modal button{
+  padding:8px 22px;border-radius:8px;font:inherit;font-size:12px;font-weight:600;
+  cursor:pointer;text-transform:uppercase;letter-spacing:.1em;border:1px solid var(--ln);
+}
+#modal button.pri{background:var(--au);color:#020c14;border-color:var(--au)}
+
+#portada{
+  position:fixed;inset:0;z-index:90;background:rgba(1, 5, 12, 0.7);display:grid;
+  place-items:center;backdrop-filter:blur(5px);transition:opacity .5s,visibility .5s;
+}
+#portada.fuera{opacity:0;visibility:hidden}
+#portada .panel{
+  width:min(540px, 92vw);background:linear-gradient(160deg, rgba(8, 32, 54, 0.95), rgba(3, 14, 26, 0.95));
+  border:1px solid var(--cy);border-radius:16px;box-shadow:0 0 40px var(--cy-g);padding:30px 24px;text-align:center;
+}
+.logo-g{
+  width:88px;height:88px;margin:10px auto 14px;border-radius:50%;border:2px solid var(--cy);
+  box-shadow:0 0 25px var(--cy-g), inset 0 0 20px var(--cy-g);display:grid;place-items:center;
+  position:relative;animation:latido 3s infinite ease-in-out;
+}
+.logo-g::after{content:"";width:40px;height:40px;border-radius:50%;background:radial-gradient(#fff, var(--cy));box-shadow:0 0 20px var(--cy)}
+#portada h2{color:var(--cy);font-size:16px;letter-spacing:.25em;text-transform:uppercase}
+#portada p{color:var(--tx-sec);font-size:13px;margin:12px 0 20px}
+#portada .ctl button{
+  padding:10px 24px;border-radius:8px;font:inherit;font-size:12px;font-weight:700;
+  cursor:pointer;letter-spacing:.12em;text-transform:uppercase;background:rgba(56,189,248,.15);
+  color:var(--cy);border:1px solid var(--cy);transition:.2s;
+}
+#portada .ctl button:hover{background:var(--cy);color:#020c14}
+#portada .ctl button.pri{background:var(--cy);color:#020c14}
+
+#boot{
+  position:fixed;inset:0;z-index:150;background:var(--bg);display:grid;place-items:center;
+  transition:opacity .8s,visibility .8s;cursor:pointer;
+}
+#boot.fuera{opacity:0;visibility:hidden}
+.boot-card{
+  font-family:var(--f-mono);font-size:13px;color:var(--cy);line-height:2.2;text-align:left;
+}
+.boot-title{
+  font-family:var(--f-hud);font-size:32px;font-weight:700;letter-spacing:.6em;
+  color:var(--cy);text-shadow:0 0 24px var(--cy-g);margin-bottom:14px;
+}
+.boot-card span{color:var(--ok)}
+
+@media(max-width:1180px){
+  .hud-body{grid-template-columns:260px 1fr}
+  .hud-col:last-child{display:none}
+}
+@media(max-width:850px){
+  body{flex-direction:column}
+  .sidebar{width:100%;height:auto;flex-direction:row;align-items:center}
+  .hud-body{grid-template-columns:1fr}
 }
 </style>
 </head>
@@ -244,285 +580,653 @@ footer button{padding:0 34px}
 <canvas id="fondo"></canvas>
 <div class="scan"></div><div class="vignette"></div>
 
+<!-- Pantalla de Arranque Inicial -->
 <div id="boot">
-  <div class="caja-b" id="boot-txt"><div class="titulo">{{NOMBRE}}</div></div>
+  <div class="boot-card" id="boot-txt">
+    <div class="boot-title">{{NOMBRE}}</div>
+  </div>
 </div>
 
-<header>
-  <div class="marca">
-    <div class="logo"></div>
-    <div><b>{{NOMBRE}}</b><small>SISTEMA DE ASISTENCIA PERSONAL</small></div>
-  </div>
-  <div class="modo">
-    <span class="chip" id="chip-modo">Modo —</span>
-    <span class="chip" id="chip-ia">IA —</span>
-    <span class="chip" id="chip-red">Enlace</span>
-  </div>
-  <div class="reloj"><div id="hora">--:--:--</div><div id="fecha">&nbsp;</div></div>
-</header>
-
-<main>
-  <div class="col">
-    <section class="panel">
-      <h2><i></i>Núcleo del sistema</h2>
-      <div class="medidores">
-        <div class="medidor" id="g-cpu"><svg viewBox="0 0 100 100"><circle class="marcas" cx="50" cy="50" r="47"/><circle class="pista" cx="50" cy="50" r="38"/><circle class="valor" cx="50" cy="50" r="38"/></svg><div class="num">--</div><label>CPU</label></div>
-        <div class="medidor" id="g-ram"><svg viewBox="0 0 100 100"><circle class="marcas" cx="50" cy="50" r="47"/><circle class="pista" cx="50" cy="50" r="38"/><circle class="valor" cx="50" cy="50" r="38"/></svg><div class="num">--</div><label>MEMORIA</label></div>
-        <div class="medidor" id="g-disco"><svg viewBox="0 0 100 100"><circle class="marcas" cx="50" cy="50" r="47"/><circle class="pista" cx="50" cy="50" r="38"/><circle class="valor" cx="50" cy="50" r="38"/></svg><div class="num">--</div><label>DISCO</label></div>
-        <div class="medidor" id="g-bat" style="visibility:hidden"><svg viewBox="0 0 100 100"><circle class="marcas" cx="50" cy="50" r="47"/><circle class="pista" cx="50" cy="50" r="38"/><circle class="valor" cx="50" cy="50" r="38"/></svg><div class="num">--</div><label>ENERGÍA</label></div>
-      </div>
-      <canvas id="spark" width="260" height="46"></canvas>
-    </section>
-    <section class="panel">
-      <h2><i></i>Subsistemas</h2>
-      <ul class="sub" id="sub">
-        <li><span class="pt" data-k="ia"></span>Cerebro<b id="s-ia">—</b></li>
-        <li><span class="pt" data-k="voz"></span>Voz<b id="s-voz">—</b></li>
-        <li><span class="pt" data-k="spotify"></span>Spotify<b id="s-spotify">—</b></li>
-        <li><span class="pt" data-k="vision"></span>Visión<b id="s-vision">—</b></li>
-        <li><span class="pt" data-k="github"></span>GitHub<b id="s-github">—</b></li>
-      </ul>
-    </section>
-  </div>
-
-  <div class="centro">
-    <div class="reactor">
-      <div class="caja">
-        <canvas id="onda"></canvas>
-        <svg viewBox="0 0 400 400" aria-hidden="true">
-          <defs>
-            <radialGradient id="g-nucleo"><stop offset="0" style="stop-color:#fff"/><stop offset=".35" style="stop-color:#bff4ff"/><stop offset="1" style="stop-color:var(--cy)"/></radialGradient>
-            <radialGradient id="g-halo"><stop offset="0" style="stop-color:var(--cy);stop-opacity:.9"/><stop offset="1" style="stop-color:var(--cy);stop-opacity:0"/></radialGradient>
-          </defs>
-          <g id="ticks"></g>
-          <circle class="anillo r1" cx="200" cy="200" r="168"/>
-          <circle class="anillo r2" cx="200" cy="200" r="158"/>
-          <circle class="anillo r4" cx="200" cy="200" r="148"/>
-          <circle class="anillo r3" cx="200" cy="200" r="132"/>
-          <circle class="bobina" cx="200" cy="200" r="104"/>
-          <circle class="bobina-b" cx="200" cy="200" r="115"/>
-          <circle class="bobina-b" cx="200" cy="200" r="93"/>
-          <circle class="anillo r6" cx="200" cy="200" r="76"/>
-          <circle class="anillo r5" cx="200" cy="200" r="60"/>
-          <circle class="halo" cx="200" cy="200" r="62" fill="url(#g-halo)"/>
-          <circle class="nucleo" cx="200" cy="200" r="30" fill="url(#g-nucleo)" style="filter:drop-shadow(0 0 16px var(--cy))"/>
-        </svg>
-      </div>
-      <div class="etq"><div id="estado">En espera</div><div id="estado-sub"></div></div>
+<!-- Barra Lateral Tecnológica -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <div class="reactor-badge" id="btn-toggle-core">
+      <div class="reactor-ring-spin"></div>
+      <div class="reactor-badge-inner">A</div>
     </div>
-    <div id="log"></div>
+    <div class="sidebar-title">{{NOMBRE}}</div>
+    <div class="sidebar-sub">Artificial Intelligence</div>
   </div>
 
-  <div class="col">
-    <section class="panel">
-      <h2><i></i>Spotify</h2>
-      <div class="sp">
-        <div class="sp-art" id="sp-art">SIN<br>SEÑAL</div>
-        <div style="min-width:0">
-          <div class="sp-t" id="sp-t">Sin conexión</div>
-          <div class="sp-a" id="sp-a">Pedile música a {{NOMBRE}}</div>
+  <ul class="nav-list">
+    <li class="nav-item active" id="nav-inicio">
+      <svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+      <span>Inicio</span>
+    </li>
+    <li class="nav-item" id="nav-ai-clients">
+      <svg viewBox="0 0 24 24"><path d="M4 6h16v12H4zm2 2v8h12V8H6zm3 2h6v4H9z"/></svg>
+      <span>Clientes IA</span>
+    </li>
+    <li class="nav-item" id="nav-config">
+      <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+      <span>Configuración</span>
+    </li>
+    <li class="nav-item" id="nav-tools">
+      <svg viewBox="0 0 24 24"><path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/></svg>
+      <span>Herramientas</span>
+    </li>
+    <li class="nav-item" id="nav-spotify-quick">
+      <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.58 14.42c-.18.3-.57.39-.87.21-2.39-1.46-5.4-1.79-8.95-.98-.34.08-.68-.14-.76-.48-.08-.34.14-.68.48-.76 3.89-.89 7.21-.51 9.89 1.13.3.18.4.57.21.88zm1.22-2.72c-.23.37-.72.49-1.09.26-2.73-1.68-6.9-2.17-10.13-1.19-.41.13-.85-.11-.97-.52-.13-.41.11-.85.52-.97 3.69-1.12 8.31-.58 11.43 1.34.37.22.49.71.26 1.08zm.11-2.82c-3.28-1.95-8.69-2.13-11.83-1.18-.5.15-1.03-.13-1.18-.63-.15-.5.13-1.03.63-1.18 3.6-1.09 9.58-.88 13.34 1.35.45.27.6.86.33 1.31-.27.46-.86.6-1.31.33z"/></svg>
+      <span>Spotify Audio</span>
+    </li>
+  </ul>
+
+  <div class="sidebar-footer">
+    <div class="sidebar-footer-icon">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M7 2v11h3v9l7-12h-4l4-8z"/></svg>
+    </div>
+    <div class="sidebar-footer-info">
+      <b>JARVIS Mark LXXXV</b>
+      <small>Always one step ahead</small>
+    </div>
+  </div>
+</aside>
+
+<!-- Área Escénica del HUD -->
+<main class="hud-stage">
+  
+  <!-- Cabecera Superior -->
+  <header class="hud-header">
+    <div class="hud-quote">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--cy)"><path d="M12 2L1 21h22L12 2zm0 3.99L19.53 19H4.47L12 5.99zM11 16h2v2h-2zm0-6h2v4h-2z"/></svg>
+      <span>Configurá.</span> Conectá. Creá.
+    </div>
+    
+    <div class="header-badges">
+      <span class="hud-pill online" id="chip-red">Enlace Activo</span>
+      <span class="hud-pill active-mode" id="chip-modo">Modo Voz/Texto</span>
+      <span class="hud-pill" id="chip-ia">IA Ensemble</span>
+    </div>
+
+    <div class="header-clock">
+      <div class="clock-meta">
+        <div class="clock-date" id="fecha">LUNES, 28 DE ABRIL</div>
+        <div class="clock-weather" id="header-weather">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="#fbbf24"><circle cx="12" cy="12" r="5"/><path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" stroke="#fbbf24" stroke-width="2"/></svg>
+          <span id="header-weather-text">Conectado</span>
+        </div>
+      </div>
+      <div class="clock-time" id="hora">16:45:00</div>
+    </div>
+  </header>
+
+  <!-- Cuerpo de Cuadrícula HUD -->
+  <div class="hud-body">
+    
+    <!-- Columna Izquierda: Clientes de IA & Hardware -->
+    <div class="hud-col">
+      <!-- Clientes de IA Conectados -->
+      <section class="cyber-card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg viewBox="0 0 24 24"><path d="M21 16.5C21 16.88 20.79 17.21 20.47 17.38L12.57 21.82C12.41 21.94 12.21 22 12 22C11.79 22 11.59 21.94 11.43 21.82L3.53 17.38C3.21 17.21 3 16.88 3 16.5V7.5C3 7.12 3.21 6.79 3.53 6.62L11.43 2.18C11.59 2.06 11.79 2 12 2C12.21 2 12.41 2.06 12.57 2.18L20.47 6.62C20.79 6.79 21 7.12 21 7.5V16.5Z"/></svg>
+            Clientes IA
+          </div>
+          <span class="card-badge" id="badge-ensemble">Multi-IA</span>
+        </div>
+
+        <div class="ai-clients-grid">
+          <!-- OpenAI / ChatGPT -->
+          <div class="ai-client-tile" id="tile-openai" onclick="post('/accion', {nombre:'ajustes'})">
+            <div class="ai-tile-top">
+              <div class="ai-tile-brand">
+                <div class="ai-tile-icon" style="background:#10a37f;color:#fff">GPT</div>
+                <span>ChatGPT</span>
+              </div>
+              <div class="ai-tile-dot" id="dot-openai"></div>
+            </div>
+            <div class="ai-tile-model" id="model-openai">gpt-6-luna</div>
+          </div>
+
+          <!-- Gemini -->
+          <div class="ai-client-tile" id="tile-gemini" onclick="post('/accion', {nombre:'ajustes'})">
+            <div class="ai-tile-top">
+              <div class="ai-tile-brand">
+                <div class="ai-tile-icon" style="background:#1a73e8;color:#fff">G</div>
+                <span>Gemini</span>
+              </div>
+              <div class="ai-tile-dot connected" id="dot-gemini"></div>
+            </div>
+            <div class="ai-tile-model" id="model-gemini">gemini-3.5-flash</div>
+          </div>
+
+          <!-- Grok xAI -->
+          <div class="ai-client-tile" id="tile-grok" onclick="post('/accion', {nombre:'ajustes'})">
+            <div class="ai-tile-top">
+              <div class="ai-tile-brand">
+                <div class="ai-tile-icon" style="background:#000;color:#fff;border:1px solid #334155">𝕏</div>
+                <span>Grok xAI</span>
+              </div>
+              <div class="ai-tile-dot" id="dot-grok"></div>
+            </div>
+            <div class="ai-tile-model" id="model-grok">grok-4.7</div>
+          </div>
+
+          <!-- Cursor Grok Free -->
+          <div class="ai-client-tile" id="tile-cursor" onclick="post('/accion', {nombre:'ajustes'})">
+            <div class="ai-tile-top">
+              <div class="ai-tile-brand">
+                <div class="ai-tile-icon" style="background:#0ea5e9;color:#fff">C</div>
+                <span>Cursor Grok</span>
+              </div>
+              <div class="ai-tile-dot" id="dot-cursor"></div>
+            </div>
+            <div class="ai-tile-model" id="model-cursor">grok-3-mini</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Hardware & Telemetría del Sistema -->
+      <section class="cyber-card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg viewBox="0 0 24 24"><path d="M4 6h16v12H4zm2 2v8h12V8H6z"/></svg>
+            Estado del Sistema
+          </div>
+          <span class="card-badge" style="color:var(--ok)">Windows 11</span>
+        </div>
+
+        <div class="hw-gauges">
+          <!-- CPU -->
+          <div class="hw-gauge" id="g-cpu">
+            <svg viewBox="0 0 100 100">
+              <circle class="pista" cx="50" cy="50" r="38"/>
+              <circle class="valor" cx="50" cy="50" r="38"/>
+            </svg>
+            <div class="num">12%</div>
+            <span class="lbl">CPU</span>
+          </div>
+
+          <!-- RAM -->
+          <div class="hw-gauge" id="g-ram">
+            <svg viewBox="0 0 100 100">
+              <circle class="pista" cx="50" cy="50" r="38"/>
+              <circle class="valor" cx="50" cy="50" r="38"/>
+            </svg>
+            <div class="num">34%</div>
+            <span class="lbl">RAM</span>
+          </div>
+
+          <!-- DISCO -->
+          <div class="hw-gauge" id="g-disco">
+            <svg viewBox="0 0 100 100">
+              <circle class="pista" cx="50" cy="50" r="38"/>
+              <circle class="valor" cx="50" cy="50" r="38"/>
+            </svg>
+            <div class="num">52%</div>
+            <span class="lbl">DISCO</span>
+          </div>
+        </div>
+
+        <div class="hw-gauge" id="g-bat" style="display:none;margin-top:6px">
+          <div class="num">--</div>
+          <span class="lbl">BATERÍA</span>
+        </div>
+
+        <canvas id="spark" width="280" height="44"></canvas>
+      </section>
+
+      <!-- Subsistemas -->
+      <section class="cyber-card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14h2v2h-2zm0-10h2v8h-2z"/></svg>
+            Subsistemas
+          </div>
+        </div>
+        <ul class="sub-list" id="sub">
+          <li class="sub-row"><div class="sub-name"><span class="sub-dot ok" data-k="ia"></span>Cerebro Multi-IA</div><b class="sub-val" id="s-ia">Ensemble Activo</b></li>
+          <li class="sub-row"><div class="sub-name"><span class="sub-dot ok" data-k="voz"></span>Voz Neural</div><b class="sub-val" id="s-voz">Piper / Eleven</b></li>
+          <li class="sub-row"><div class="sub-name"><span class="sub-dot" data-k="spotify"></span>Spotify Connect</div><b class="sub-val" id="s-spotify">En espera</b></li>
+          <li class="sub-row"><div class="sub-name"><span class="sub-dot" data-k="vision"></span>Visión Computacional</div><b class="sub-val" id="s-vision">Habilitada</b></li>
+          <li class="sub-row"><div class="sub-name"><span class="sub-dot" data-k="github"></span>GitHub Token</div><b class="sub-val" id="s-github">Conectado</b></li>
+        </ul>
+      </section>
+    </div>
+
+    <!-- Columna Central: Arc Reactor Holográfico + Diálogo -->
+    <div class="hud-center">
+      
+      <!-- Escenario del Arc Reactor Central -->
+      <div class="reactor-stage">
+        
+        <!-- Silueta Cibernética Holográfica en Fondo -->
+        <div class="reactor-backdrop">
+          <svg viewBox="0 0 200 240" fill="none">
+            <path d="M100 20 C75 20 60 40 60 70 C60 110 75 130 100 135 C125 130 140 110 140 70 C140 40 125 20 100 20 Z" stroke="var(--cy)" stroke-width="1.5" stroke-dasharray="4 2"/>
+            <path d="M75 60 L92 65 M125 60 L108 65" stroke="var(--cy-bright)" stroke-width="3"/>
+            <path d="M50 120 L30 160 L10 240 M150 120 L170 160 L190 240" stroke="var(--cy)" stroke-width="1" opacity="0.4"/>
+            <path d="M70 140 L100 160 L130 140 L120 220 L80 220 Z" stroke="var(--cy)" stroke-width="1.5"/>
+          </svg>
+        </div>
+
+        <!-- Reactor Concéntrico -->
+        <div class="reactor-box">
+          <canvas id="onda"></canvas>
+          <svg viewBox="0 0 400 400" aria-hidden="true">
+            <defs>
+              <radialGradient id="g-nucleo"><stop offset="0" style="stop-color:#ffffff"/><stop offset=".4" style="stop-color:#bae6fd"/><stop offset="1" style="stop-color:var(--cy)"/></radialGradient>
+              <radialGradient id="g-halo"><stop offset="0" style="stop-color:var(--cy);stop-opacity:.95"/><stop offset="1" style="stop-color:var(--cy);stop-opacity:0"/></radialGradient>
+            </defs>
+            <g id="ticks"></g>
+            <circle class="c-anillo c-r1" cx="200" cy="200" r="172"/>
+            <circle class="c-anillo c-r2" cx="200" cy="200" r="160"/>
+            <circle class="c-anillo c-r4" cx="200" cy="200" r="148"/>
+            <circle class="c-anillo c-r3" cx="200" cy="200" r="132"/>
+            <circle class="c-bobina" cx="200" cy="200" r="105"/>
+            <circle class="c-bobina-b" cx="200" cy="200" r="116"/>
+            <circle class="c-bobina-b" cx="200" cy="200" r="94"/>
+            <circle class="c-anillo c-r6" cx="200" cy="200" r="76"/>
+            <circle class="c-anillo c-r5" cx="200" cy="200" r="58"/>
+            <circle class="halo" cx="200" cy="200" r="62" fill="url(#g-halo)"/>
+            <circle class="nucleo" cx="200" cy="200" r="32" fill="url(#g-nucleo)" style="filter:drop-shadow(0 0 20px var(--cy))"/>
+          </svg>
+        </div>
+
+        <!-- Estado Activo -->
+        <div class="reactor-status">
+          <div class="reactor-status-badge">
+            <span class="status-pulsing-dot"></span>
+            <span id="estado">En espera</span>
+          </div>
+          <div id="estado-sub">Sistema en línea. Esperando órdenes.</div>
+        </div>
+      </div>
+
+      <!-- Diálogo / Chat Holográfico -->
+      <div class="chat-panel">
+        <div class="chat-panel-header">
+          <div class="chat-panel-title">
+            <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z"/></svg>
+            Registro de Comunicaciones
+          </div>
+          <span style="font-size:10px;color:var(--dim);font-family:var(--f-mono)">AUDIO & TEXT CHAT</span>
+        </div>
+
+        <div id="log">
+          <!-- Mensajes dinámicos aquí -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Columna Derecha: Acciones Rápidas, Spotify & Pantalla -->
+    <div class="hud-col">
+      <!-- Acciones Rápidas -->
+      <section class="cyber-card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg viewBox="0 0 24 24"><path d="M13 2.05v3.03c3.39.49 6 3.39 6 6.92 0 .9-.18 1.75-.48 2.54l2.6 1.53c.56-1.24.88-2.62.88-4.07 0-5.18-3.95-9.45-9-9.95zM12 19c-3.87 0-7-3.13-7-7 0-3.53 2.61-6.43 6-6.92V2.05c-5.06.5-9 4.76-9 9.95 0 5.52 4.47 10 9.99 10 3.31 0 6.24-1.61 8.01-4.08l-2.43-1.44c-1.35 1.58-3.35 2.57-5.57 2.57z"/></svg>
+            Acciones Rápidas
+          </div>
+        </div>
+
+        <div class="actions-grid">
+          <div class="action-btn" onclick="post('/say', {texto:'Abrir chrome'})">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4" fill="#020b14"/></svg>
+            <span>Chrome</span>
+          </div>
+
+          <div class="action-btn" onclick="post('/say', {texto:'Abrir vscode'})">
+            <svg viewBox="0 0 24 24"><path d="M23 18l-8 5-11-9 11-9 8 5v8zm-9.5-3.5l-4-3 4-3v6z"/></svg>
+            <span>VS Code</span>
+          </div>
+
+          <div class="action-btn" onclick="post('/say', {texto:'Crear un documento Word con notas de hoy'})">
+            <svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+            <span>Word</span>
+          </div>
+
+          <div class="action-btn" onclick="post('/say', {texto:'Consultar clima de hoy'})">
+            <svg viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg>
+            <span>Clima</span>
+          </div>
+
+          <div class="action-btn" onclick="post('/accion', {nombre:'ajustes'})">
+            <svg viewBox="0 0 24 24"><path d="M12 15.5A3.5 3.5 0 0 1 8.5 12 3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5 3.5 3.5 0 0 1-3.5 3.5m7.43-2.53c.04-.32.07-.64.07-.97 0-.33-.03-.66-.07-1l2.11-1.63c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.31-.61-.22l-2.49 1c-.52-.39-1.06-.73-1.69-.98l-.37-2.65A.506.506 0 0 0 14 2h-4c-.25 0-.46.18-.5.42l-.37 2.65c-.63.25-1.17.59-1.69.98l-2.49-1c-.22-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64L4.57 11c-.04.34-.07.67-.07 1 0 .33.03.65.07.97l-2.11 1.66c-.19.15-.25.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1.01c.52.4 1.06.74 1.69.99l.37 2.65c.04.24.25.42.5.42h4c.25 0 .46-.18.5-.42l.37-2.65c.63-.26 1.17-.59 1.69-.99l2.49 1.01c.22.08.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.66z"/></svg>
+            <span>Ajustes</span>
+          </div>
+
+          <div class="action-btn" onclick="post('/say', {texto:'Abrir spotify'})">
+            <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.58 14.42c-.18.3-.57.39-.87.21-2.39-1.46-5.4-1.79-8.95-.98-.34.08-.68-.14-.76-.48-.08-.34.14-.68.48-.76 3.89-.89 7.21-.51 9.89 1.13.3.18.4.57.21.88z"/></svg>
+            <span>Spotify</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Spotify Player -->
+      <section class="cyber-card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+            Spotify Media
+          </div>
           <div class="eq" id="eq"><i></i><i></i><i></i><i></i><i></i></div>
         </div>
-      </div>
-      <div class="barra"><i id="sp-bar"></i></div>
-      <div class="ctl">
-        <button data-sp="anterior" title="Anterior"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3 2h2v12H3zM14 2v12L6 8z"/></svg></button>
-        <button data-sp="alternar" id="sp-play" title="Reproducir / pausar" class="pri"></button>
-        <button data-sp="siguiente" title="Siguiente"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M11 2h2v12h-2zM2 2l8 6-8 6z"/></svg></button>
-      </div>
-    </section>
 
-    <section class="panel">
-      <h2><i></i>Pantalla compartida</h2>
-      <div class="interruptor"><span id="pan-txt">Acceso desactivado</span><div class="sw" id="sw-pantalla" role="switch" aria-checked="false" tabindex="0"></div></div>
-      <div class="vista" id="vista"><img id="pantalla" alt="Vista de tu pantalla"></div>
-      <p class="aviso" id="pan-aviso">Al activarla, {{NOMBRE}} puede mirar tu pantalla cuando se lo pidas. Probá: «¿qué ves en mi pantalla?»</p>
-    </section>
+        <div class="sp-card">
+          <div class="sp-hero">
+            <div class="sp-art" id="sp-art">MEDIA<br>OFFLINE</div>
+            <div class="sp-details">
+              <div class="sp-t" id="sp-t">Sin conexión</div>
+              <div class="sp-a" id="sp-a">Pedile música a {{NOMBRE}}</div>
+            </div>
+          </div>
 
-    <section class="panel">
-      <h2><i></i>Control</h2>
-      <div class="ctl" style="margin-top:0">
-        <button id="btn-modo" class="pri" type="button">Cambiar a voz</button>
-        <button id="btn-ajustes">Configurar sistema</button>
-        <button id="btn-salir" class="peligro">Cerrar</button>
-      </div>
-      <div class="ctl">
-        <button id="btn-sonidos" type="button" aria-pressed="true" title="Activar o desactivar los sonidos de la interfaz">Sonidos: sí</button>
-        <button id="btn-detener" class="peligro" type="button" title="Detener la tarea actual y descartar pedidos pendientes">Detener automatización</button>
-      </div>
-    </section>
+          <div class="sp-progress-bar"><i id="sp-bar"></i></div>
+
+          <div class="sp-ctrls">
+            <button data-sp="anterior" title="Anterior">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+            </button>
+            <button data-sp="alternar" id="sp-play" title="Reproducir / pausar" class="pri">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            </button>
+            <button data-sp="siguiente" title="Siguiente">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Visión Holográfica & Pantalla -->
+      <section class="cyber-card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+            Visión Computacional
+          </div>
+        </div>
+
+        <div class="screen-toggle-row">
+          <span id="pan-txt">Acceso de Pantalla</span>
+          <div class="sw" id="sw-pantalla" role="switch" aria-checked="false" tabindex="0"></div>
+        </div>
+
+        <div class="vista" id="vista">
+          <img id="pantalla" alt="Stream en vivo">
+        </div>
+        <p class="hint" id="pan-aviso" style="margin-top:8px">Al activarla, Jarvis puede analizar lo que ves cuando se lo pidas.</p>
+      </section>
+    </div>
+
   </div>
+
+  <!-- Consola Inferior Futurista -->
+  <footer class="hud-footer">
+    <div class="footer-actions-left">
+      <div class="hud-mic-btn" id="btn-modo" title="Alternar modo Voz/Texto">
+        <svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm-1-9c0-.55.45-1 1-1s1 .45 1 1v6c0 .55-.45 1-1 1s-1-.45-1-1V5zm6 6c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
+      </div>
+    </div>
+
+    <form class="command-form" id="form">
+      <div class="command-input-wrapper">
+        <input id="txt" autocomplete="off" spellcheck="false" placeholder="Escribí una orden o hablale a {{NOMBRE}}...">
+      </div>
+      <button class="hud-send-btn" type="submit" title="Transmitir orden">
+        <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+      </button>
+    </form>
+
+    <div class="footer-actions-right">
+      <button class="footer-icon-btn" id="btn-sonidos" type="button" title="Sonidos de interfaz">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+      </button>
+      <button class="footer-icon-btn" id="btn-ajustes" type="button" title="Ajustes y API Keys">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+      </button>
+      <button class="footer-icon-btn peligro" id="btn-detener" type="button" title="Detener automatización">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>
+      </button>
+      <button class="footer-icon-btn peligro" id="btn-salir" type="button" title="Cerrar sistema">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M13 3h-2v10h2V3zm4.83 2.17l-1.42 1.42C17.99 7.86 19 9.81 19 12c0 3.87-3.13 7-7 7s-7-3.13-7-7c0-2.19 1.01-4.14 2.58-5.42L6.17 5.17C4.23 6.82 3 9.26 3 12c0 4.97 4.03 9 9 9s9-4.03 9-9c0-2.74-1.23-5.18-3.17-6.83z"/></svg>
+      </button>
+    </div>
+  </footer>
+
 </main>
 
-<footer>
-  <form id="form">
-    <div class="campo"><input id="txt" autocomplete="off" spellcheck="false" placeholder="Escribile a {{NOMBRE}} o hablale…"></div>
-    <button class="pri">Enviar</button>
-  </form>
-</footer>
-
+<!-- Portada de Inicio -->
 <div id="portada">
   <div class="panel">
-    <h2><i></i>Sistema en reposo</h2>
+    <h2>Sistema en reposo</h2>
     <div class="logo-g"></div>
-    <p>{{NOMBRE}} está listo. Elegí cómo querés trabajar.</p>
-    <div class="ctl" style="flex-wrap:wrap">
-      <button class="pri" id="ini-voz">Iniciar con voz</button>
-      <button id="ini-txt">Iniciar en texto</button>
+    <p>{{NOMBRE}} está listo para operar. Seleccioná el modo de inicio.</p>
+    <div class="ctl" style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
+      <button class="pri" id="ini-voz">Iniciar con Voz</button>
+      <button id="ini-txt">Iniciar en Texto</button>
     </div>
-    <div class="ctl" style="margin-top:8px">    <button id="ini-ajustes">Configurar micrófono, chat y conexiones</button></div>
-    <p class="aviso" id="ini-aviso"></p>
+    <div class="ctl" style="margin-top:12px">
+      <button id="ini-ajustes">Configurar Micrófono, Claves e IAs</button>
+    </div>
+    <p class="aviso" id="ini-aviso" style="margin-top:10px;font-size:11px;color:var(--dim)"></p>
   </div>
 </div>
 
-<div id="modal"><div class="panel">
-  <h2>Confirmación requerida</h2>
-  <p id="modal-txt"></p>
-  <div class="ctl"><button id="si" class="pri">Sí, hacelo</button><button id="no">Cancelar</button></div>
-</div></div>
+<!-- Modal de Confirmación -->
+<div id="modal">
+  <div class="panel">
+    <h2>Confirmación Requerida</h2>
+    <p id="modal-txt"></p>
+    <div class="ctl">
+      <button id="si" class="pri">Sí, autorizo</button>
+      <button id="no">Cancelar</button>
+    </div>
+  </div>
+</div>
 
+<!-- Modal Completo de Configuración -->
 <div id="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
   <div class="panel">
-    <h2 id="settings-title"><i></i>Configuración del sistema</h2>
-    <p class="aviso">Los cambios se guardan en este equipo. Las claves quedan en el Administrador de credenciales de Windows; dejá el campo vacío para conservar la clave actual.</p>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;border-bottom:1px solid var(--ln);padding-bottom:10px">
+      <h2 id="settings-title" style="color:var(--cy);font-size:16px;letter-spacing:.2em;text-transform:uppercase">Configuración del Sistema</h2>
+      <button id="cfg-cerrar" type="button" style="background:none;border:none;color:var(--cy);font-size:18px;cursor:pointer">✕</button>
+    </div>
+    
     <div class="settings-grid">
-      <section class="settings-card">
-        <h3>AUDIO Y RECONOCIMIENTO</h3>
-        <label for="cfg-microfono">Micrófono de entrada</label>
-        <select id="cfg-microfono"></select>
-        <div class="settings-actions">
-          <button data-test-audio="microfono">Probar micrófono · 5 s</button>
-          <button data-test-audio="reconocimiento">Probar reconocimiento</button>
+      <!-- 1. Ensemble Multi-IA -->
+      <section class="settings-card" style="grid-column:1 / -1;border-color:var(--cy)">
+        <h3>Trabajo en Conjunto (Ensemble Multi-IA)</h3>
+        <p class="hint">Al poner 2 o más API keys (Gemini, Grok, OpenAI, Cursor), Jarvis las ejecuta juntas para obtener respuestas de máxima calidad.</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">
+          <div>
+            <label for="cfg-modo-ensemble">Modo Ensemble</label>
+            <select id="cfg-modo-ensemble">
+              <option value="auto">Automático (activa al tener 2 o más claves)</option>
+              <option value="on">Siempre activo</option>
+              <option value="off">Desactivado (solo proveedor principal)</option>
+            </select>
+          </div>
+          <div>
+            <label for="cfg-estrategia-ensemble">Estrategia de Cooperación</label>
+            <select id="cfg-estrategia-ensemble">
+              <option value="mejor">Mejor respuesta · síntesis en paralelo (Recomendado)</option>
+              <option value="rapido">Más rápido · el primero que responda gana</option>
+              <option value="verificar">Verificación cruzada · principal responde, otros corrigen</option>
+              <option value="votar">Votación por consenso (requiere 3+ IAs)</option>
+            </select>
+          </div>
         </div>
-        <label for="cfg-salida">Parlante o auricular</label>
-        <select id="cfg-salida"></select>
-        <div class="settings-actions"><button data-test-audio="salida">Probar salida</button></div>
+        <p class="hint" id="cfg-ensemble-status" style="margin-top:8px;color:var(--cy-bright)">IAs activas: comprobando...</p>
       </section>
+
+      <!-- 2. Proveedor Principal & Claves -->
       <section class="settings-card">
-        <h3>INTELIGENCIA ARTIFICIAL</h3>
-        <label for="cfg-proveedor">Proveedor</label>
+        <h3>Proveedor Principal & Claves</h3>
+        <label for="cfg-proveedor">Proveedor Principal</label>
         <select id="cfg-proveedor">
-          <option value="ollama">Ollama · local</option>
-          <option value="gemini">Gemini</option>
-          <option value="grok">Grok · xAI</option>
-          <option value="openai">OpenAI</option>
+          <option value="gemini">Gemini (Google)</option>
+          <option value="grok">Grok (xAI)</option>
+          <option value="openai">OpenAI (ChatGPT)</option>
+          <option value="cursor">Cursor (Grok Free)</option>
+          <option value="ollama">Ollama · Local</option>
         </select>
         <p class="hint" id="cfg-ai-active"></p>
-        <label for="cfg-api-key">API key</label>
+
+        <label for="cfg-api-key">API Key para este proveedor</label>
         <input id="cfg-api-key" type="password" autocomplete="new-password" placeholder="Vacío = conservar la guardada">
         <label class="check-row"><input id="cfg-borrar-api" type="checkbox"> Borrar la clave guardada para este proveedor</label>
         <p class="hint" id="cfg-api-status"></p>
-        <label for="cfg-ai-fallback">Proveedor alternativo automático</label>
+
+        <label for="cfg-ai-fallback">Proveedor Alternativo Automático</label>
         <select id="cfg-ai-fallback">
           <option value="">Desactivado</option>
           <option value="gemini">Gemini</option>
           <option value="grok">Grok · xAI</option>
           <option value="openai">OpenAI</option>
+          <option value="cursor">Cursor · Grok Free</option>
         </select>
-        <p class="hint" id="cfg-ai-fallback-status">Se prueba una sola vez si el proveedor principal falla antes de ejecutar herramientas. No se repiten acciones ya realizadas.</p>
+        <p class="hint" id="cfg-ai-fallback-status">Se prueba si el principal falla.</p>
+
         <div class="settings-actions">
           <button id="cfg-test-ai" type="button">Probar conexión</button>
           <button id="cfg-benchmark-ai" type="button">Comparar proveedores</button>
         </div>
-        <p class="hint">La comparación envía el mismo mensaje breve a cada proveedor configurado y puede generar consumo de API.</p>
         <div id="cfg-ai-results" class="hint" role="status" aria-live="polite"></div>
       </section>
+
+      <!-- 3. Modelos de IA -->
       <section class="settings-card">
-        <h3>VOZ DE RESPUESTA</h3>
-        <label for="cfg-tts">Proveedor de voz</label>
-        <select id="cfg-tts">
-          <option value="piper">Piper · local</option>
-          <option value="windows">Voz de Windows</option>
-          <option value="elevenlabs">ElevenLabs</option>
-        </select>
-        <label for="cfg-elevenlabs-key">API key de ElevenLabs</label>
-        <input id="cfg-elevenlabs-key" type="password" autocomplete="new-password" placeholder="Vacío = conservar la guardada">
-        <label class="check-row"><input id="cfg-borrar-elevenlabs" type="checkbox"> Borrar la clave guardada</label>
-        <p class="hint" id="cfg-elevenlabs-status"></p>
-        <label for="cfg-voice-id">Voice ID de ElevenLabs</label>
-        <input id="cfg-voice-id" autocomplete="off">
-        <div class="settings-actions"><button data-test-audio="voz">Probar voz</button></div>
-      </section>
-      <section class="settings-card">
-        <h3>APARIENCIA Y SONIDOS</h3>
-        <label for="cfg-tema">Tema del HUD</label>
-        <select id="cfg-tema">
-          <option value="cian">Cian · clásico</option>
-          <option value="violeta">Violeta</option>
-          <option value="verde">Verde</option>
-        </select>
-        <label for="cfg-volumen-voz">Volumen de voz</label>
-        <div class="range-row"><input id="cfg-volumen-voz" type="range" min="0" max="100" step="1"><output id="cfg-volumen-voz-valor"></output></div>
-        <label for="cfg-velocidad-voz">Velocidad de voz</label>
-        <div class="range-row"><input id="cfg-velocidad-voz" type="range" min="70" max="130" step="5"><output id="cfg-velocidad-voz-valor"></output></div>
-        <label for="cfg-volumen-efectos">Volumen de efectos</label>
-        <div class="range-row"><input id="cfg-volumen-efectos" type="range" min="0" max="100" step="1"><output id="cfg-volumen-efectos-valor"></output></div>
-        <label class="check-row"><input id="cfg-sonidos-activos" type="checkbox"> Activar sonidos de interacción</label>
-        <p class="hint">Incluye sonidos sutiles al pasar o hacer clic en botones, recibir órdenes, completar respuestas y mostrar confirmaciones.</p>
-      </section>
-      <section class="settings-card">
-        <h3>INTEGRACIONES</h3>
-        <label for="cfg-github">Token de GitHub</label>
-        <input id="cfg-github" type="password" autocomplete="new-password" placeholder="Vacío = conservar el guardado">
-        <label class="check-row"><input id="cfg-borrar-github" type="checkbox"> Borrar el token guardado</label>
-        <div class="settings-actions"><button id="cfg-test-github" type="button">Guardar y probar GitHub</button></div>
-        <div class="settings-actions"><button id="cfg-github-dashboard" type="button">Crear token de GitHub</button></div>
-        <label for="cfg-spotify">Client ID de Spotify</label>
-        <input id="cfg-spotify" autocomplete="off">
-        <div class="settings-actions">
-          <button id="cfg-spotify-dashboard" type="button">Spotify Developer Dashboard</button>
-        </div>
-        <p class="hint" id="cfg-github-status"></p>
-      </section>
-      <section class="settings-card">
-        <h3>UBICACIÓN Y VISIÓN</h3>
-        <label for="cfg-ubicacion">Ciudad o región</label>
-        <input id="cfg-ubicacion" autocomplete="address-level2">
-        <div class="settings-actions"><button id="cfg-detect-location" type="button">Detectar ubicación por IP</button></div>
-        <label for="cfg-modelo-vision">Modelo de visión en Ollama</label>
-        <input id="cfg-modelo-vision" autocomplete="off">
-        <div class="settings-actions">
-          <button id="cfg-descargar-vision" type="button">Descargar modelo visual</button>
-        </div>
-        <p class="hint">El permiso para compartir pantalla se activa por separado desde el control del HUD y se desactiva al cerrar Jarvis.</p>
-      </section>
-      <section class="settings-card">
-        <h3>MODELOS E IDIOMA</h3>
-        <label for="cfg-modelo-ollama">Modelo de Ollama</label>
-        <input id="cfg-modelo-ollama" autocomplete="off">
-        <label for="cfg-ollama-host">Dirección de Ollama</label>
-        <input id="cfg-ollama-host" autocomplete="url">
+        <h3>Modelos de Inteligencia</h3>
         <label for="cfg-modelo-gemini">Modelo de Gemini</label>
         <input id="cfg-modelo-gemini" list="cfg-modelos-gemini" autocomplete="off">
         <datalist id="cfg-modelos-gemini"></datalist>
+
         <label for="cfg-modelo-grok">Modelo de Grok (xAI)</label>
         <input id="cfg-modelo-grok" list="cfg-modelos-grok" autocomplete="off">
         <datalist id="cfg-modelos-grok"></datalist>
+
         <label for="cfg-modelo-openai">Modelo de OpenAI</label>
         <input id="cfg-modelo-openai" list="cfg-modelos-openai" autocomplete="off">
         <datalist id="cfg-modelos-openai"></datalist>
-        <label for="cfg-modelo-whisper">Modelo de reconocimiento (Whisper)</label>
+
+        <label for="cfg-modelo-cursor">Modelo de Cursor (Grok Free)</label>
+        <input id="cfg-modelo-cursor" list="cfg-modelos-cursor" autocomplete="off">
+        <datalist id="cfg-modelos-cursor"></datalist>
+
+        <label for="cfg-modelo-ollama">Modelo de Ollama Local</label>
+        <input id="cfg-modelo-ollama" autocomplete="off">
+        <label for="cfg-ollama-host">Dirección Host de Ollama</label>
+        <input id="cfg-ollama-host" autocomplete="url">
+      </section>
+
+      <!-- 4. Audio & Voz -->
+      <section class="settings-card">
+        <h3>Audio y Voz</h3>
+        <label for="cfg-microfono">Micrófono de Entrada</label>
+        <select id="cfg-microfono"></select>
+        <div class="settings-actions">
+          <button data-test-audio="microfono">Probar Micrófono</button>
+          <button data-test-audio="reconocimiento">Probar Reconocimiento</button>
+        </div>
+
+        <label for="cfg-salida">Parlante / Salida de Audio</label>
+        <select id="cfg-salida"></select>
+        <div class="settings-actions"><button data-test-audio="salida">Probar Salida</button></div>
+
+        <label for="cfg-tts">Proveedor de Voz</label>
+        <select id="cfg-tts">
+          <option value="piper">Piper · Local</option>
+          <option value="windows">Voz de Windows</option>
+          <option value="elevenlabs">ElevenLabs</option>
+        </select>
+        <label for="cfg-elevenlabs-key">API Key ElevenLabs</label>
+        <input id="cfg-elevenlabs-key" type="password" autocomplete="new-password" placeholder="Vacío = conservar">
+        <label class="check-row"><input id="cfg-borrar-elevenlabs" type="checkbox"> Borrar clave ElevenLabs</label>
+        <p class="hint" id="cfg-elevenlabs-status"></p>
+        <label for="cfg-voice-id">Voice ID</label>
+        <input id="cfg-voice-id" autocomplete="off">
+        <div class="settings-actions"><button data-test-audio="voz">Probar Voz</button></div>
+      </section>
+
+      <!-- 5. Reconocimiento & Ajustes -->
+      <section class="settings-card">
+        <h3>Reconocimiento & Sistema</h3>
+        <label for="cfg-modelo-whisper">Modelo Whisper</label>
         <select id="cfg-modelo-whisper">
-          <option value="tiny">tiny · más rápido, menos preciso</option>
+          <option value="tiny">tiny · rápido</option>
           <option value="base">base</option>
           <option value="small">small · recomendado</option>
-          <option value="medium">medium · más preciso, más lento</option>
-          <option value="large-v3">large-v3 · requiere más recursos</option>
+          <option value="medium">medium · preciso</option>
+          <option value="large-v3">large-v3</option>
         </select>
-        <label for="cfg-idioma">Idioma de reconocimiento</label>
+
+        <label for="cfg-idioma">Idioma</label>
         <input id="cfg-idioma" autocomplete="off" placeholder="es">
+
+        <label for="cfg-tema">Tema Visual del HUD</label>
+        <select id="cfg-tema">
+          <option value="cian">Cian · Holográfico Mark LXXXV</option>
+          <option value="violeta">Violeta · Quantum Core</option>
+          <option value="verde">Verde · Matrix Stealth</option>
+        </select>
+
+        <label for="cfg-volumen-voz">Volumen de Voz</label>
+        <div class="range-row"><input id="cfg-volumen-voz" type="range" min="0" max="100" step="1"><output id="cfg-volumen-voz-valor"></output></div>
+
+        <label for="cfg-velocidad-voz">Velocidad de Voz</label>
+        <div class="range-row"><input id="cfg-velocidad-voz" type="range" min="70" max="130" step="5"><output id="cfg-velocidad-voz-valor"></output></div>
+
+        <label for="cfg-volumen-efectos">Volumen Efectos Sonoros</label>
+        <div class="range-row"><input id="cfg-volumen-efectos" type="range" min="0" max="100" step="1"><output id="cfg-volumen-efectos-valor"></output></div>
+        <label class="check-row"><input id="cfg-sonidos-activos" type="checkbox"> Activar efectos sonoros sci-fi</label>
+      </section>
+
+      <!-- 6. Integraciones & Ubicación -->
+      <section class="settings-card" style="grid-column:1 / -1">
+        <h3>Integraciones de Servicios</h3>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div>
+            <label for="cfg-github">Token de GitHub</label>
+            <input id="cfg-github" type="password" autocomplete="new-password" placeholder="Vacío = conservar">
+            <label class="check-row"><input id="cfg-borrar-github" type="checkbox"> Borrar token</label>
+            <div class="settings-actions">
+              <button id="cfg-test-github" type="button">Probar GitHub</button>
+              <button id="cfg-github-dashboard" type="button">Crear Token</button>
+            </div>
+            <p class="hint" id="cfg-github-status"></p>
+          </div>
+          <div>
+            <label for="cfg-spotify">Client ID de Spotify</label>
+            <input id="cfg-spotify" autocomplete="off">
+            <div class="settings-actions">
+              <button id="cfg-spotify-dashboard" type="button">Spotify Dashboard</button>
+            </div>
+            <label for="cfg-ubicacion" style="margin-top:10px">Ciudad / Ubicación</label>
+            <input id="cfg-ubicacion" autocomplete="address-level2">
+            <div class="settings-actions"><button id="cfg-detect-location" type="button">Detectar por IP</button></div>
+          </div>
+        </div>
+
+        <div style="margin-top:12px;border-top:1px solid var(--ln2);padding-top:10px">
+          <label for="cfg-modelo-vision">Modelo de Visión en Ollama</label>
+          <input id="cfg-modelo-vision" autocomplete="off">
+          <div class="settings-actions"><button id="cfg-descargar-vision" type="button">Descargar Modelo Visual</button></div>
+        </div>
       </section>
     </div>
-    <div id="settings-status" role="status" aria-live="polite"></div>
-    <div class="ctl">
-      <button id="cfg-cerrar" type="button">Cerrar</button>
-      <button id="cfg-guardar" class="pri" type="button">Guardar configuración</button>
+
+    <div id="settings-status" role="status" aria-live="polite" style="margin-top:12px"></div>
+    <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:16px;border-top:1px solid var(--ln);padding-top:14px">
+      <button id="cfg-cerrar-bottom" type="button">Cancelar</button>
+      <button id="cfg-guardar" class="pri" type="button">Guardar Configuración</button>
     </div>
   </div>
 </div>
 
 <script>
 "use strict";
+const $ = id => document.getElementById(id);
 const NOMBRE = "{{NOMBRE}}";
 const T = new URLSearchParams(location.search).get('t') || '';
 const H = {'Content-Type':'application/json','X-Token':T};
@@ -534,13 +1238,13 @@ const post = async (p,b) => {
     return d;
   }catch(e){ setEstado('desconectado', e.message || 'No se pudo completar la acción.'); return null; }
 };
+
 $('cfg-ai-fallback').onchange = () => {
   const alternativo = $('cfg-ai-fallback').value;
   $('cfg-ai-fallback-status').textContent = alternativo
     ? 'Se usa solo si la solicitud principal falla antes de ejecutar herramientas. Asegurate de guardar la clave de ese proveedor.'
     : 'Fallback automático desactivado.';
 };
-const $ = id => document.getElementById(id);
 const NS = 'http://www.w3.org/2000/svg';
 
 /* ---------- Sonidos de interfaz ---------- */
@@ -549,7 +1253,6 @@ let sonidosActivos = localStorage.getItem(CLAVE_SONIDOS) !== 'no';
 let contextoAudio = null;
 let volumenEfectos = 0.45;
 function actualizarBotonSonidos(){
-  $('btn-sonidos').textContent = 'Sonidos: ' + (sonidosActivos ? 'sí' : 'no');
   $('btn-sonidos').setAttribute('aria-pressed', String(sonidosActivos));
 }
 function habilitarAudio(){
@@ -574,90 +1277,61 @@ function tono(frecuencia, demora=0, duracion=.09, volumen=.018){
     oscilador.type = 'sine';
     oscilador.frequency.setValueAtTime(frecuencia, inicio);
     ganancia.gain.setValueAtTime(.0001, inicio);
-    ganancia.gain.exponentialRampToValueAtTime(volumen * volumenEfectos, inicio + .012);
+    ganancia.gain.exponentialRampToValueAtTime(volumen * volumenEfectos, inicio + .01);
     ganancia.gain.exponentialRampToValueAtTime(.0001, inicio + duracion);
     oscilador.connect(ganancia);
     ganancia.connect(ctx.destination);
     oscilador.start(inicio);
-    oscilador.stop(inicio + duracion + .01);
+    oscilador.stop(inicio + duracion + .02);
   };
   if(ctx.state === 'running') tocar();
-  else ctx.resume().then(tocar).catch(error => console.warn('No se pudo reproducir el sonido del HUD:', error));
-}
-function sonidoEstado(estado){
-  if(estado === 'escuchando') tono(520, 0, .07, .012);
-  else if(estado === 'pensando') tono(390, 0, .06, .01);
-  else if(estado === 'hablando'){
-    tono(660, 0, .09, .016);
-    tono(880, .085, .12, .016);
-  }
+  else ctx.resume().then(tocar).catch(() => {});
 }
 function sonidoEvento(tipo){
-  if(tipo === 'hover') tono(740, 0, .035, .006);
-  else if(tipo === 'clic') tono(560, 0, .045, .009);
-  else if(tipo === 'orden') tono(520, 0, .07, .012);
-  else if(tipo === 'completado'){
-    tono(740, 0, .07, .012);
-    tono(990, .075, .1, .012);
-  }else if(tipo === 'notificacion'){
-    tono(620, 0, .08, .01);
-    tono(820, .09, .11, .01);
-  }
+  if(!sonidosActivos || volumenEfectos <= 0) return;
+  if(tipo === 'hover') tono(820, 0, .03, .007);
+  else if(tipo === 'click') tono(960, 0, .05, .015);
+  else if(tipo === 'orden') { tono(540, 0, .06, .018); tono(810, .05, .09, .02); }
+  else if(tipo === 'respuesta') { tono(740, 0, .06, .016); tono(980, .06, .1, .018); }
+  else if(tipo === 'notificacion') { tono(620, 0, .08, .02); tono(930, .07, .12, .024); }
+  else if(tipo === 'alerta') { tono(420, 0, .09, .025); tono(320, .08, .12, .028); }
 }
-function establecerSonidos(activos){
-  sonidosActivos = activos;
-  localStorage.setItem(CLAVE_SONIDOS, sonidosActivos ? 'sí' : 'no');
+function sonidoEstado(nuevo){
+  if(nuevo === 'hablando') sonidoEvento('respuesta');
+  else if(nuevo === 'pensando') tono(680, 0, .08, .016);
+  else if(nuevo === 'escuchando') tono(520, 0, .07, .016);
+  else if(nuevo === 'desconectado') sonidoEvento('alerta');
+}
+function establecerSonidos(activar){
+  sonidosActivos = activar;
+  localStorage.setItem(CLAVE_SONIDOS, activar ? 'si' : 'no');
   actualizarBotonSonidos();
+  if(activar) sonidoEvento('click');
 }
-function aplicarTema(tema){
-  document.body.dataset.tema = ['cian','violeta','verde'].includes(tema) ? tema : 'cian';
-}
-document.addEventListener('pointerover', e => {
-  const boton = e.target instanceof Element ? e.target.closest('button') : null;
-  if(boton && !boton.contains(e.relatedTarget)) sonidoEvento('hover');
-});
-document.addEventListener('click', e => {
-  if(e.target instanceof Element && e.target.closest('button')) sonidoEvento('clic');
-});
-addEventListener('pointerdown', habilitarAudio, {once:true});
-addEventListener('keydown', habilitarAudio, {once:true});
-$('btn-sonidos').onclick = () => {
-  establecerSonidos(!sonidosActivos);
-  if(sonidosActivos) tono(660, 0, .1, .018);
-};
+$('btn-sonidos').onclick = () => establecerSonidos(!sonidosActivos);
 actualizarBotonSonidos();
 
-/* ---------- Arranque ---------- */
-(function boot(){
-  const l = ['INICIANDO NÚCLEO','ENLAZANDO SUBSISTEMAS','CALIBRANDO SENSORES','CANAL SEGURO LOCAL','SISTEMA EN LÍNEA'];
-  const cont = $('boot-txt');
-  l.forEach((t,i) => {
-    const d = document.createElement('div');
-    d.style.animationDelay = (i*.32 + .2) + 's';
-    d.innerHTML = '› ' + t + ' ........ <span>OK</span>';
-    cont.append(d);
-  });
-  const quitar = () => $('boot').classList.add('fuera');
-  setTimeout(quitar, 2300);
-  $('boot').onclick = quitar;
-})();
-
-/* ---------- Marcas del anillo exterior ---------- */
+/* ---------- Ticks del Reactor SVG ---------- */
 (function ticks(){
   const g = $('ticks');
-  for(let i=0;i<120;i++){
-    const a = i/120*Math.PI*2, grande = i%10===0, medio = i%5===0;
-    const r1 = 184, r2 = r1 + (grande ? 12 : medio ? 8 : 4);
-    const l = document.createElementNS(NS,'line');
-    l.setAttribute('x1',200+Math.cos(a)*r1); l.setAttribute('y1',200+Math.sin(a)*r1);
-    l.setAttribute('x2',200+Math.cos(a)*r2); l.setAttribute('y2',200+Math.sin(a)*r2);
-    l.style.opacity = grande ? 1 : medio ? .7 : .4;
+  for(let i=0; i<120; i++){
+    const a = (i * 3) * Math.PI / 180;
+    const l1 = i % 5 === 0 ? 166 : 172;
+    const l = document.createElementNS(NS, 'line');
+    l.setAttribute('x1', 200 + l1 * Math.cos(a));
+    l.setAttribute('y1', 200 + l1 * Math.sin(a));
+    l.setAttribute('x2', 200 + 178 * Math.cos(a));
+    l.setAttribute('y2', 200 + 178 * Math.sin(a));
+    if(i % 5 !== 0) l.style.opacity = '.45';
     g.append(l);
   }
 })();
 
-/* ---------- Estado ---------- */
-const ESTADOS = {espera:'En espera', escuchando:'Escuchando', pensando:'Procesando', hablando:'Respondiendo', listo:'Listo', desconectado:'Sin enlace'};
+/* ---------- Estados y Modos ---------- */
+const ESTADOS = {
+  espera:'En espera', escuchando:'Escuchando…',
+  pensando:'Procesando…', hablando:'Respondiendo…', desconectado:'Desconectado'
+};
 let estadoActual = 'espera';
 function setEstado(v, texto){
   const anterior = estadoActual;
@@ -668,7 +1342,7 @@ function setEstado(v, texto){
   if(anterior !== v) sonidoEstado(v);
 }
 
-/* ---------- Mensajes ---------- */
+/* ---------- Mensajes del Chat ---------- */
 function escribir(el, texto){
   if(texto.length < 40){ el.textContent = texto; return; }
   let i = 0; const paso = Math.max(2, Math.ceil(texto.length/90));
@@ -679,105 +1353,106 @@ function escribir(el, texto){
   }, 16);
 }
 function addMsg(rol, texto, voz){
-  sonidoEvento(rol === 'usuario' ? 'orden' : 'completado');
   const d = document.createElement('div');
   d.className = 'm' + (rol === 'usuario' ? ' u' : '');
   const s = document.createElement('small');
-  s.textContent = rol === 'usuario' ? (voz ? 'Vos · voz' : 'Vos') : NOMBRE;
+  s.textContent = (rol === 'usuario' ? 'Tú' : NOMBRE) + (voz ? ' · voz' : '');
   const t = document.createElement('span');
   d.append(s, t); $('log').append(d);
   if(rol === 'usuario') t.textContent = texto; else escribir(t, texto);
   $('log').scrollTop = $('log').scrollHeight;
-}
-
-/* ---------- Medidores ---------- */
-const CIRC = 2*Math.PI*38;
-function medidor(id, v, txt, invertido){
-  const g = $('g-'+id);
-  g.querySelector('.valor').style.strokeDasharray = (Math.max(0,Math.min(100,v))/100*CIRC) + ' 999';
-  g.querySelector('.num').innerHTML = txt;
-  const aviso = invertido ? v <= 30 && v > 15 : v >= 75 && v < 90;
-  const crit = invertido ? v <= 15 : v >= 90;
-  g.classList.toggle('alto', aviso);
-  g.classList.toggle('critico', crit);
-}
-const hist = [];
-function sparkline(){
-  const c = $('spark'), x = c.getContext('2d'), w = c.width, h = c.height;
-  x.clearRect(0,0,w,h);
-  const col = getComputedStyle(document.body).getPropertyValue('--cy').trim() || '#46dcff';
-  x.strokeStyle = 'rgba(70,220,255,.15)'; x.lineWidth = 1;
-  for(let i=1;i<4;i++){ x.beginPath(); x.moveTo(0,h*i/4); x.lineTo(w,h*i/4); x.stroke(); }
-  if(hist.length < 2) return;
-  x.beginPath();
-  hist.forEach((v,i) => { const px = i/(59)*w, py = h-2 - v/100*(h-6); i ? x.lineTo(px,py) : x.moveTo(px,py); });
-  x.strokeStyle = col; x.lineWidth = 1.6; x.shadowColor = col; x.shadowBlur = 8; x.stroke(); x.shadowBlur = 0;
-  x.lineTo((hist.length-1)/59*w,h); x.lineTo(0,h); x.closePath();
-  x.globalAlpha = .12; x.fillStyle = col; x.fill(); x.globalAlpha = 1;
+  if(rol === 'usuario') sonidoEvento('orden');
 }
 
 /* ---------- Spotify ---------- */
-let sp = null;
-const ICO_PLAY = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3 1.5v13l11-6.5z"/></svg>';
-const ICO_PAUSA = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3 2h4v12H3zM9 2h4v12H9z"/></svg>';
-$('sp-play').innerHTML = ICO_PLAY;
-const fmt = ms => { const s = Math.floor(ms/1000); return Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); };
+let sp = {};
 function pintarSpotify(){
-  if(!sp) return;
   $('sp-t').textContent = sp.titulo || (sp.conectado ? 'Nada en reproducción' : 'Sin conexión');
-  $('sp-a').textContent = sp.artista || (sp.conectado ? 'Pedile una canción a ' + NOMBRE : '');
-  const art = $('sp-art');
-  if(sp.imagen){ art.style.backgroundImage = `url("${sp.imagen}")`; art.textContent = ''; }
-  else { art.style.backgroundImage = ''; art.innerHTML = 'SIN<br>SEÑAL'; }
-  $('sp-play').innerHTML = sp.reproduciendo ? ICO_PAUSA : ICO_PLAY;
-  $('eq').classList.toggle('on', !!sp.reproduciendo);
+  $('sp-a').textContent = sp.artista || (sp.conectado ? 'Spotify activo' : 'Pedile música a ' + NOMBRE);
+  $('eq').classList.toggle('on', !!sp.sonando);
+  $('sp-play').innerHTML = sp.sonando
+    ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>'
+    : '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+  if(sp.caratula) $('sp-art').style.backgroundImage = `url("${sp.caratula}")`;
+  else { $('sp-art').style.backgroundImage = ''; $('sp-art').innerHTML = 'MEDIA<br>OFFLINE'; }
 }
 setInterval(() => {
-  if(!sp || !sp.duracion){ $('sp-bar').style.width = '0'; return; }
-  const p = sp.progreso + (sp.reproduciendo ? performance.now() - sp.t0 : 0);
-  $('sp-bar').style.width = Math.min(100, p/sp.duracion*100) + '%';
-}, 400);
+  if(!sp.sonando || !sp.duracion_ms) return;
+  const p = Math.min(1, (sp.progreso_ms + (performance.now() - sp.t0)) / sp.duracion_ms);
+  $('sp-bar').style.width = (p * 100).toFixed(1) + '%';
+}, 250);
 
-/* ---------- Subsistemas ---------- */
-function sub(k, estado, texto){
-  const p = document.querySelector(`.pt[data-k="${k}"]`);
-  if(p) p.className = 'pt ' + estado;
-  const b = $('s-'+k); if(b) b.textContent = texto;
+/* ---------- Info general & Subsistemas ---------- */
+function sub(k, estado, val){
+  const el = document.querySelector(`.sub-dot[data-k="${k}"]`);
+  if(el){ el.className = 'sub-dot ' + (estado || ''); }
+  const txt = $('s-' + k);
+  if(txt && val) txt.textContent = val;
 }
 function pintarInfo(d){
-  if(d.tema) aplicarTema(d.tema);
-  if(Number.isFinite(d.volumen_efectos)) volumenEfectos = d.volumen_efectos / 100;
-  $('chip-modo').textContent = 'Modo ' + (d.modo === 'voz' ? 'voz' : 'texto');
-  $('chip-modo').classList.add('on');
-  $('btn-modo').textContent = d.modo === 'voz' ? 'Cambiar a texto' : 'Cambiar a voz';
-  $('chip-ia').textContent = d.ia || 'IA';
-  $('chip-ia').classList.add('on');
-  sub('ia', 'ok', d.modelo ? `${d.ia || 'IA'} · ${d.modelo}` : (d.ia || '—'));
-  sub('voz', d.modo === 'voz' ? 'ok' : 'aviso', d.modo === 'voz' ? (d.tts || 'activa') : 'solo texto');
-  sub('spotify', d.spotify ? 'ok' : '', d.spotify ? 'configurado' : 'sin configurar');
+  $('chip-modo').textContent = 'Modo ' + (d.modo || 'texto');
+  $('chip-ia').textContent = 'IA: ' + (d.ia || 'Ensemble');
+  $('btn-modo').title = d.modo === 'voz' ? 'Modo actual: Voz (clic para texto)' : 'Modo actual: Texto (clic para voz)';
+  sub('ia', 'ok', d.modelo || d.ia);
+  sub('voz', 'ok', d.tts);
+  sub('spotify', d.spotify ? 'ok' : '', d.spotify ? 'conectado' : 'sin sesión');
   sub('vision', d.vision ? 'ok' : '', d.vision ? 'habilitada' : 'desactivada');
   sub('github', d.github ? 'ok' : '', d.github ? 'conectado' : 'sin token');
 }
 
 /* ---------- Pantalla compartida ---------- */
-let pantallaOn = false, timerPantalla = null;
-function pintarPantalla(on, enviar){
+let pantallaOn = false;
+let refrescoPantalla = null;
+function pintarPantalla(on, notificarServidor=true){
   pantallaOn = on;
   $('sw-pantalla').classList.toggle('on', on);
-  $('sw-pantalla').setAttribute('aria-checked', on);
+  $('sw-pantalla').setAttribute('aria-checked', String(on));
   $('vista').classList.toggle('on', on);
-  $('pan-txt').textContent = on ? 'Compartiendo' : 'Acceso desactivado';
-  clearInterval(timerPantalla);
+  $('pan-txt').textContent = on ? 'Acceso habilitado' : 'Acceso desactivado';
+  sub('vision', on ? 'ok' : '', on ? 'habilitada' : 'desactivada');
+  clearInterval(refrescoPantalla);
   if(on){
     const r = () => $('pantalla').src = '/screen.jpg?t=' + encodeURIComponent(T) + '&n=' + Date.now();
-    r(); timerPantalla = setInterval(r, 2000);
+    r(); refrescoPantalla = setInterval(r, 2000);
   }
-  if(enviar) post('/screen', {on});
+  if(notificarServidor) post('/screen', {on});
 }
 $('sw-pantalla').onclick = () => pintarPantalla(!pantallaOn, true);
 $('sw-pantalla').onkeydown = e => { if(e.key === ' ' || e.key === 'Enter'){ e.preventDefault(); $('sw-pantalla').click(); } };
 
-/* ---------- Eventos del servidor ---------- */
+/* ---------- Medidores Circulares & Sparkline ---------- */
+const hist = [];
+function medidor(id, val, txt, invertido=false){
+  const m = $('g-' + id);
+  if(!m) return;
+  const p = Math.max(0, Math.min(100, val));
+  const circulo = m.querySelector('.valor');
+  const num = m.querySelector('.num');
+  if(circulo) circulo.style.strokeDasharray = `${(p/100) * 239} 999`;
+  if(num) num.innerHTML = txt !== undefined ? txt : Math.round(p) + '%';
+  if(!invertido){
+    if(circulo){
+      circulo.style.stroke = p > 88 ? 'var(--rd)' : p > 72 ? 'var(--au)' : 'var(--cy)';
+    }
+  }
+}
+function sparkline(){
+  const c = $('spark'), x = c.getContext('2d');
+  const w = c.width, h = c.height;
+  x.clearRect(0, 0, w, h);
+  if(hist.length < 2) return;
+  x.beginPath();
+  hist.forEach((v, i) => {
+    const px = (i / (hist.length - 1)) * w;
+    const py = h - (v / 100) * (h - 8) - 4;
+    if(i === 0) x.moveTo(px, py); else x.lineTo(px, py);
+  });
+  x.strokeStyle = getComputedStyle(document.body).getPropertyValue('--cy').trim() || '#38bdf8';
+  x.lineWidth = 2;
+  x.stroke();
+}
+
+/* ---------- Eventos del servidor (SSE) ---------- */
 const manejadores = {
   estado: d => setEstado(d.valor, d.texto),
   msg: d => addMsg(d.rol, d.texto, d.voz),
@@ -786,10 +1461,10 @@ const manejadores = {
     medidor('ram', d.ram, d.ram.toFixed(0) + '<small>%</small>');
     medidor('disco', d.disco, d.disco.toFixed(0) + '<small>%</small>');
     if(d.bateria !== null && d.bateria !== undefined){
-      $('g-bat').style.visibility = 'visible';
+      $('g-bat').style.display = 'block';
       medidor('bat', d.bateria, d.bateria + '<small>%' + (d.cargando ? ' ⚡' : '') + '</small>', !d.cargando);
     }
-    hist.push(d.cpu); if(hist.length > 60) hist.shift(); sparkline();
+    hist.push(d.cpu); if(hist.length > 50) hist.shift(); sparkline();
   },
   spotify: d => { sp = {...d, t0: performance.now()}; pintarSpotify(); },
   info: d => { pintarInfo(d); $('portada').classList.add('fuera'); },
@@ -799,15 +1474,15 @@ const manejadores = {
   confirmar_fin: () => { $('modal').style.display = 'none'; },
   detencion: d => {
     $('btn-detener').disabled = !!d.activa;
-    $('btn-detener').textContent = d.activa ? 'Deteniendo…' : 'Detener automatización';
+    $('btn-detener').title = d.activa ? 'Deteniendo automatización...' : 'Detener automatización';
   },
 };
 const es = new EventSource('/events?t=' + encodeURIComponent(T));
 es.onmessage = e => { const d = JSON.parse(e.data); (manejadores[d.tipo] || (()=>{}))(d); };
-es.onerror = () => { setEstado('desconectado', 'Enlace con ' + NOMBRE + ' interrumpido. Reintentando…'); $('chip-red').classList.remove('on'); };
-es.onopen = () => { $('chip-red').classList.add('on'); if(estadoActual === 'desconectado') setEstado('espera', ''); };
+es.onerror = () => { setEstado('desconectado', 'Enlace con ' + NOMBRE + ' interrumpido. Reintentando…'); $('chip-red').className = 'hud-pill'; };
+es.onopen = () => { $('chip-red').className = 'hud-pill online'; if(estadoActual === 'desconectado') setEstado('espera', 'Sistema en línea.'); };
 
-/* ---------- Entradas ---------- */
+/* ---------- Entradas de Usuario ---------- */
 $('form').onsubmit = e => {
   e.preventDefault();
   const v = $('txt').value.trim();
@@ -816,54 +1491,76 @@ $('form').onsubmit = e => {
 $('si').onclick = () => { post('/confirm', {ok:true}); $('modal').style.display = 'none'; };
 $('no').onclick = () => { post('/confirm', {ok:false}); $('modal').style.display = 'none'; };
 document.querySelectorAll('[data-sp]').forEach(b => b.onclick = () => post('/spotify', {accion: b.dataset.sp}));
+
 $('btn-ajustes').onclick = () => post('/accion', {nombre:'ajustes'});
 $('btn-modo').onclick = () => post('/accion', {nombre:'alternar_modo'});
 $('btn-detener').onclick = async () => {
   $('btn-detener').disabled = true;
-  $('btn-detener').textContent = 'Solicitando…';
   if(!await post('/accion', {nombre:'detener_automatizacion'})){
     $('btn-detener').disabled = false;
-    $('btn-detener').textContent = 'Detener automatización';
   }
 };
-$('ini-voz').onclick = () => { $('ini-aviso').textContent = 'Iniciando con el micrófono seleccionado…'; post('/accion', {nombre:'iniciar_voz'}); };
-$('ini-txt').onclick = () => { $('ini-aviso').textContent = 'Iniciando el chat…'; post('/accion', {nombre:'iniciar_texto'}); };
-$('ini-ajustes').onclick = () => post('/accion', {nombre:'ajustes'});
 $('btn-salir').onclick = () => { if(confirm('¿Cerrar ' + NOMBRE + '?')) post('/accion', {nombre:'salir'}); };
-addEventListener('keydown', e => { if(!e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1 && document.activeElement.tagName !== 'INPUT') $('txt').focus(); });
 
-/* ---------- Configuración ---------- */
-function llenarSelect(id, dispositivos, seleccionado, predeterminado){
-  const select = $(id);
-  select.replaceChildren();
-  const base = document.createElement('option');
-  base.value = '';
-  base.textContent = predeterminado;
-  select.append(base);
-  for(const d of dispositivos){
-    const opcion = document.createElement('option');
-    opcion.value = d.id;
-    opcion.textContent = d.label;
-    select.append(opcion);
+$('ini-voz').onclick = () => { $('ini-aviso').textContent = 'Iniciando micrófono y reconocimiento…'; post('/accion', {nombre:'iniciar_voz'}); };
+$('ini-txt').onclick = () => { $('ini-aviso').textContent = 'Iniciando modo texto…'; post('/accion', {nombre:'iniciar_texto'}); };
+$('ini-ajustes').onclick = () => post('/accion', {nombre:'ajustes'});
+
+/* Navigation Sidebar Clicks */
+$('nav-inicio').onclick = () => {
+  document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+  $('nav-inicio').classList.add('active');
+};
+$('nav-ai-clients').onclick = () => abrirAjustes();
+$('nav-config').onclick = () => abrirAjustes();
+$('nav-tools').onclick = () => post('/say', {texto:'¿Qué herramientas tenés disponibles?'});
+$('nav-spotify-quick').onclick = () => post('/say', {texto:'Abrir spotify'});
+$('btn-toggle-core').onclick = () => post('/accion', {nombre:'alternar_modo'});
+
+/* Focus keyboard helper */
+addEventListener('keydown', e => {
+  if(!e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1 && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'SELECT'){
+    $('txt').focus();
   }
-  select.value = seleccionado == null ? '' : String(seleccionado);
+});
+
+/* ---------- Modal de Configuración ---------- */
+function llenarSelect(id, dispositivos, seleccionado, predeterminado){
+  const el = $(id);
+  el.replaceChildren();
+  if(predeterminado){
+    const optPred = document.createElement('option');
+    optPred.value = '';
+    optPred.textContent = predeterminado;
+    el.append(optPred);
+  }
+  (dispositivos || []).forEach(d => {
+    const opt = document.createElement('option');
+    opt.value = d.id;
+    opt.textContent = d.label;
+    if(String(d.id) === String(seleccionado)) opt.selected = true;
+    el.append(opt);
+  });
 }
+
+function aplicarTema(t){
+  document.body.dataset.tema = t || 'cian';
+}
+
 async function abrirAjustes(){
   $('settings-modal').classList.add('abierto');
   $('settings-status').textContent = 'Cargando configuración…';
-  for(const id of ['cfg-api-key','cfg-elevenlabs-key','cfg-github']) $(id).value = '';
-  for(const id of ['cfg-borrar-api','cfg-borrar-elevenlabs','cfg-borrar-github']) $(id).checked = false;
-  aiKeyDrafts = {};
   try{
     const r = await fetch('/settings?t=' + encodeURIComponent(T), {headers:{'X-Token':T}});
     const d = await r.json();
     if(!r.ok) throw new Error(d.error || `Error HTTP ${r.status}`);
+    
     llenarSelect('cfg-microfono', d.microfonos, d.microfono, 'Predeterminado de Windows');
     llenarSelect('cfg-salida', d.salidas, d.salida, 'Predeterminada de Windows');
     $('cfg-proveedor').value = d.proveedor;
     proveedorClaveEnCampo = d.proveedor;
     $('cfg-ai-fallback').value = d.proveedor_ia_alternativo || '';
-    $('cfg-ai-active').textContent = `Activo ahora: ${d.proveedor} · ${d['modelo_' + d.proveedor] || ''}`;
+    $('cfg-ai-active').textContent = `Activo: ${d.proveedor} · ${d['modelo_' + d.proveedor] || ''}`;
     $('cfg-api-key').disabled = d.proveedor === 'ollama';
     $('cfg-tts').value = d.proveedor_tts;
     $('cfg-voice-id').value = d.elevenlabs_voice_id || '';
@@ -875,14 +1572,36 @@ async function abrirAjustes(){
     $('cfg-modelo-gemini').value = d.modelo_gemini || '';
     $('cfg-modelo-grok').value = d.modelo_grok || '';
     $('cfg-modelo-openai').value = d.modelo_openai || '';
-    for(const proveedor of ['gemini','grok','openai']){
+    $('cfg-modelo-cursor').value = d.modelo_cursor || '';
+    $('cfg-modo-ensemble').value = d.modo_ensemble || 'auto';
+    $('cfg-estrategia-ensemble').value = d.estrategia_ensemble || 'mejor';
+
+    const activas = d.ensemble_proveedores_activos || [];
+    $('cfg-ensemble-status').textContent = activas.length > 0
+      ? `IAs conectadas para trabajo en conjunto (${activas.length}): ${activas.join(', ')}`
+      : 'Atención: Necesitas configurar al menos 1 API key.';
+    
+    // Actualizar dots en UI
+    $('dot-openai').className = 'ai-tile-dot ' + (activas.includes('openai') ? 'connected' : '');
+    $('dot-gemini').className = 'ai-tile-dot ' + (activas.includes('gemini') ? 'connected' : '');
+    $('dot-grok').className = 'ai-tile-dot ' + (activas.includes('grok') ? 'connected' : '');
+    $('dot-cursor').className = 'ai-tile-dot ' + (activas.includes('cursor') ? 'connected' : '');
+    if(d.modelo_openai) $('model-openai').textContent = d.modelo_openai;
+    if(d.modelo_gemini) $('model-gemini').textContent = d.modelo_gemini;
+    if(d.modelo_grok) $('model-grok').textContent = d.modelo_grok;
+    if(d.modelo_cursor) $('model-cursor').textContent = d.modelo_cursor;
+
+    for(const proveedor of ['gemini','grok','openai','cursor']){
       const lista = $(`cfg-modelos-${proveedor}`);
-      lista.replaceChildren(...(d.modelos_ia?.[proveedor] || []).map(modelo => {
-        const opcion = document.createElement('option');
-        opcion.value = modelo;
-        return opcion;
-      }));
+      if(lista){
+        lista.replaceChildren(...(d.modelos_ia?.[proveedor] || []).map(modelo => {
+          const opcion = document.createElement('option');
+          opcion.value = modelo;
+          return opcion;
+        }));
+      }
     }
+
     $('cfg-modelo-whisper').value = d.modelo_whisper || 'small';
     $('cfg-idioma').value = d.idioma || 'es';
     $('cfg-volumen-voz').value = d.volumen_voz ?? 100;
@@ -893,24 +1612,29 @@ async function abrirAjustes(){
     actualizarEtiquetasVolumen();
     aplicarTema($('cfg-tema').value);
     volumenEfectos = Number($('cfg-volumen-efectos').value) / 100;
+
     $('cfg-api-status').textContent = d.api_key_guardada
       ? `Clave guardada en Windows: ${d.api_key_mascarada}.`
       : d.proveedor === 'ollama'
         ? 'Ollama se ejecuta localmente y no necesita API key.'
         : 'No hay una clave guardada para este proveedor.';
-    $('cfg-ai-fallback-status').textContent = !d.proveedor_ia_alternativo
-      ? 'Se prueba una sola vez si el proveedor principal falla antes de ejecutar herramientas.'
-      : d.clave_alternativa_guardada
-        ? 'La clave del proveedor alternativo está guardada en Windows.'
-        : 'Guardá primero una clave para el proveedor alternativo seleccionándolo y pulsando Guardar.';
-    $('cfg-elevenlabs-status').textContent = d.elevenlabs_key_guardada ? 'Hay una clave de ElevenLabs guardada.' : 'ElevenLabs sin configurar.';
+    
+    $('cfg-elevenlabs-status').textContent = d.elevenlabs_key_guardada ? 'Clave guardada en Windows.' : 'ElevenLabs sin configurar.';
     $('cfg-github-status').textContent = d.github_token_guardado ? 'Token de GitHub guardado.' : 'GitHub sin configurar.';
     $('settings-status').textContent = '';
-  }catch(e){ $('settings-status').textContent = 'No se pudo leer la configuración: ' + e.message; }
+  }catch(e){
+    $('settings-status').textContent = 'Error al leer ajustes: ' + e.message;
+  }
 }
+
 function cerrarAjustes(){ $('settings-modal').classList.remove('abierto'); }
+$('cfg-cerrar').onclick = cerrarAjustes;
+$('cfg-cerrar-bottom').onclick = cerrarAjustes;
+$('settings-modal').onclick = e => { if(e.target === $('settings-modal')) cerrarAjustes(); };
+
 $('cfg-tema').onchange = () => aplicarTema($('cfg-tema').value);
 $('cfg-sonidos-activos').onchange = () => establecerSonidos($('cfg-sonidos-activos').checked);
+
 function actualizarEtiquetasVolumen(){
   $('cfg-volumen-voz-valor').textContent = $('cfg-volumen-voz').value + '%';
   $('cfg-velocidad-voz-valor').textContent = $('cfg-velocidad-voz').value + '%';
@@ -920,16 +1644,18 @@ function actualizarEtiquetasVolumen(){
 for(const id of ['cfg-volumen-voz','cfg-velocidad-voz','cfg-volumen-efectos']){
   $(id).oninput = actualizarEtiquetasVolumen;
 }
-$('cfg-cerrar').onclick = cerrarAjustes;
-$('settings-modal').addEventListener('click', e => { if(e.target === $('settings-modal')) cerrarAjustes(); });
+
 $('cfg-github-dashboard').onclick = () => window.open('https://github.com/settings/personal-access-tokens/new','_blank','noopener');
+$('cfg-spotify-dashboard').onclick = () => window.open('https://developer.spotify.com/dashboard','_blank','noopener');
+
+let aiKeyDrafts = {};
+let proveedorClaveEnCampo = '';
 $('cfg-proveedor').onchange = async () => {
   const anterior = proveedorClaveEnCampo;
   if(anterior) aiKeyDrafts[anterior] = $('cfg-api-key').value;
   proveedorClaveEnCampo = $('cfg-proveedor').value;
   $('cfg-api-key').value = aiKeyDrafts[proveedorClaveEnCampo] || '';
   $('cfg-api-key').disabled = proveedorClaveEnCampo === 'ollama';
-  $('cfg-borrar-api').checked = false;
   $('cfg-ai-active').textContent = `Proveedor seleccionado: ${proveedorClaveEnCampo}`;
   try{
     const r = await fetch('/settings?t=' + encodeURIComponent(T), {headers:{'X-Token':T}});
@@ -939,27 +1665,10 @@ $('cfg-proveedor').onchange = async () => {
       ? `Clave guardada en Windows: ${d.api_keys_mascaradas?.[proveedorClaveEnCampo] || '••••••'}.`
       : proveedorClaveEnCampo === 'ollama'
         ? 'Ollama se ejecuta localmente y no necesita API key.'
-        : 'No hay una clave guardada para este proveedor. La clave nueva se guardará en Windows.';
-  }catch(e){ $('cfg-api-status').textContent = 'No se pudo consultar la clave guardada.'; }
+        : 'No hay una clave guardada para este proveedor.';
+  }catch(e){}
 };
-$('cfg-spotify-dashboard').onclick = () => window.open('https://developer.spotify.com/dashboard','_blank','noopener');
-$('cfg-descargar-vision').onclick = () => post('/accion', {nombre:'preparar_vision'});
-$('cfg-detect-location').onclick = async () => {
-  $('settings-status').textContent = 'Esperando autorización para detectar la ubicación…';
-  const r = await post('/detect-location', {});
-  if(r){
-    $('cfg-ubicacion').value = r.ubicacion;
-    $('settings-status').textContent = 'Ubicación guardada: ' + r.ubicacion;
-  }else $('settings-status').textContent = 'No se pudo detectar la ubicación. Si cancelaste, no se consultó el servicio.';
-};
-$('cfg-test-github').onclick = async () => {
-  const guardado = await guardarAjustes();
-  if(!guardado) return;
-  $('settings-status').textContent = 'Probando la conexión con GitHub…';
-  const r = await post('/test-github', {});
-  $('settings-status').textContent = r ? r.resultado : 'No se pudo validar GitHub. Revisá el estado del HUD.';
-  if(r) $('cfg-github-status').textContent = r.resultado;
-};
+
 function configuracionFormulario(){
   return {
     microfono:$('cfg-microfono').value,
@@ -981,62 +1690,44 @@ function configuracionFormulario(){
     modelo_gemini:$('cfg-modelo-gemini').value,
     modelo_grok:$('cfg-modelo-grok').value,
     modelo_openai:$('cfg-modelo-openai').value,
+    modelo_cursor:$('cfg-modelo-cursor').value,
+    modo_ensemble:$('cfg-modo-ensemble').value,
+    estrategia_ensemble:$('cfg-estrategia-ensemble').value,
     proveedor_ia_alternativo:$('cfg-ai-fallback').value,
     modelo_whisper:$('cfg-modelo-whisper').value,
     idioma:$('cfg-idioma').value,
     volumen_voz:Number($('cfg-volumen-voz').value),
     velocidad_voz:Number($('cfg-velocidad-voz').value),
     volumen_efectos:Number($('cfg-volumen-efectos').value),
-    tema_hud:$('cfg-tema').value
+    tema_hud:$('cfg-tema').value,
   };
 }
+
 async function guardarAjustes(){
-  $('settings-status').textContent = 'Guardando…';
+  $('settings-status').textContent = 'Guardando configuración…';
   const datos = configuracionFormulario();
   const r = await post('/settings', datos);
-  if(!r) { $('settings-status').textContent = 'No se pudo guardar. Revisá el estado del HUD e intentá de nuevo.'; return null; }
+  if(!r) { $('settings-status').textContent = 'No se pudo guardar. Revisá la conexión e intentá de nuevo.'; return null; }
   delete aiKeyDrafts[datos.proveedor];
   $('cfg-api-key').value = '';
-  $('cfg-ai-active').textContent = `Activo ahora: ${r.configuracion.proveedor} · ${r.configuracion['modelo_' + r.configuracion.proveedor] || ''}`;
-  $('cfg-ai-fallback-status').textContent = !r.configuracion.proveedor_ia_alternativo
-    ? 'Fallback automático desactivado.'
-    : r.configuracion.clave_alternativa_guardada
-      ? 'La clave del proveedor alternativo está guardada en Windows.'
-      : 'Guardá una clave para el proveedor alternativo desde el selector de proveedor.';
-  $('cfg-api-status').textContent = datos.api_key
-    ? 'Clave guardada de forma segura en Windows: ••••••••.'
-    : datos.borrar_api_key
-      ? 'Clave local borrada.'
-      : r.configuracion && r.configuracion.api_key_guardada
-        ? `Clave guardada en Windows: ${r.configuracion.api_key_mascarada}.`
-        : 'No hay una clave guardada para este proveedor.';
+  $('cfg-ai-active').textContent = `Activo: ${r.configuracion.proveedor} · ${r.configuracion['modelo_' + r.configuracion.proveedor] || ''}`;
   for(const id of ['cfg-borrar-api','cfg-borrar-elevenlabs','cfg-borrar-github']) $(id).checked = false;
-  $('settings-status').textContent = r.configuracion && r.configuracion.requiere_reinicio
-    ? 'Configuración guardada. Reiniciá Jarvis para aplicar los cambios de audio, reconocimiento o modelo.'
-    : 'Configuración guardada.';
-  $('cfg-elevenlabs-status').textContent = datos.elevenlabs_api_key
-    ? 'Clave guardada localmente.'
-    : datos.borrar_elevenlabs_key
-      ? 'Clave local borrada.'
-      : r.configuracion && r.configuracion.elevenlabs_key_guardada
-      ? 'Clave local conservada.'
-      : 'ElevenLabs sin configurar.';
-  $('cfg-github-status').textContent = datos.github_token || datos.borrar_github_token
-    ? (datos.borrar_github_token ? 'GitHub desconectado.' : 'Token de GitHub guardado.')
-    : $('cfg-github-status').textContent;
+  $('settings-status').textContent = r.configuracion?.requiere_reinicio
+    ? 'Configuración guardada. Reiniciá Jarvis para aplicar cambios de hardware.'
+    : 'Configuración guardada con éxito.';
   return r;
 }
-let aiKeyDrafts = {};
-let proveedorClaveEnCampo = '';
+$('cfg-guardar').onclick = guardarAjustes;
+
 async function probarIA(comparar){
   const guardado = await guardarAjustes();
   if(!guardado) return;
   $('cfg-ai-results').textContent = comparar
-    ? 'Midiendo Gemini, Grok y OpenAI con una solicitud equivalente…'
-    : 'Probando la conexión con el proveedor seleccionado…';
+    ? 'Midiendo Gemini, Grok, OpenAI y Cursor con solicitud en paralelo…'
+    : 'Probando conexión con el proveedor principal…';
   const resultado = await post('/test-ai', {comparar});
   if(!resultado){
-    $('cfg-ai-results').textContent = 'No se pudo realizar la prueba. Revisá la configuración e intentá de nuevo.';
+    $('cfg-ai-results').textContent = 'No se pudo completar la prueba.';
     return;
   }
   const filas = resultado.resultados.map(item => {
@@ -1045,101 +1736,156 @@ async function probarIA(comparar){
       : item.estado === 'sin_configurar'
         ? 'Sin API key'
         : (item.error || 'Error de conexión');
-    return `${item.proveedor} · ${item.modelo}: ${estado}`;
+    return `${item.proveedor.toUpperCase()} · ${item.modelo}: ${estado}`;
   });
   $('cfg-ai-results').textContent = `${filas.join('\n')}\n${resultado.nota || ''}`;
 }
 $('cfg-test-ai').onclick = () => probarIA(false);
 $('cfg-benchmark-ai').onclick = () => probarIA(true);
-$('cfg-guardar').onclick = guardarAjustes;
+
 document.querySelectorAll('[data-test-audio]').forEach(b => b.onclick = async () => {
   const guardado = await guardarAjustes();
   if(!guardado) return;
-  $('settings-status').textContent = b.dataset.testAudio === 'microfono'
-    ? 'Hablá ahora: se mide el micrófono durante 5 segundos…'
-    : b.dataset.testAudio === 'reconocimiento'
-      ? 'Hablá durante 8 segundos: se grabará y transcribirá la frase completa…'
-    : 'Probando…';
+  $('settings-status').textContent = 'Ejecutando prueba de audio…';
   const r = await post('/test-audio', {prueba:b.dataset.testAudio});
-  $('settings-status').textContent = r ? r.resultado : 'La prueba falló. Revisá el estado del HUD.';
+  $('settings-status').textContent = r ? r.resultado : 'La prueba falló.';
 });
 
-/* ---------- Reloj ---------- */
-const DIAS = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
-const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+$('cfg-test-github').onclick = async () => {
+  const guardado = await guardarAjustes();
+  if(!guardado) return;
+  $('settings-status').textContent = 'Probando conexión con GitHub…';
+  const r = await post('/test-github', {});
+  $('settings-status').textContent = r ? r.resultado : 'Error al validar GitHub.';
+  if(r) $('cfg-github-status').textContent = r.resultado;
+};
+
+$('cfg-detect-location').onclick = async () => {
+  $('settings-status').textContent = 'Detectando ubicación geográfica…';
+  const r = await post('/detect-location', {});
+  if(r && r.ubicacion){
+    $('cfg-ubicacion').value = r.ubicacion;
+    $('settings-status').textContent = 'Ubicación actualizada: ' + r.ubicacion;
+  }
+};
+
+$('cfg-descargar-vision').onclick = () => {
+  post('/accion', {nombre:'preparar_vision'});
+  $('settings-status').textContent = 'Iniciando descarga del modelo visual…';
+};
+
+/* ---------- Reloj y Fecha ---------- */
+const DIAS = ['DOMINGO','LUNES','MARTES','MIÉRCOLES','JUEVES','VIERNES','SÁBADO'];
+const MESES = ['ENERO','FEBRERO','MARZO','ABRIL','MAYO','JUNIO','JULIO','AGOSTO','SEPTIEMBRE','OCTUBRE','NOVIEMBRE','DICIEMBRE'];
 function reloj(){
   const n = new Date();
   $('hora').textContent = n.toLocaleTimeString('es-AR',{hour12:false});
-  $('fecha').textContent = `${DIAS[n.getDay()]} ${n.getDate()} de ${MESES[n.getMonth()]} ${n.getFullYear()}`;
+  $('fecha').textContent = `${DIAS[n.getDay()]}, ${n.getDate()} DE ${MESES[n.getMonth()]}`;
 }
 reloj(); setInterval(reloj, 1000);
 
-/* ---------- Onda radial alrededor del reactor ---------- */
+/* ---------- Onda Radial del Reactor Central ---------- */
 (function onda(){
   const c = $('onda'), x = c.getContext('2d');
-  const BARRAS = 120;
+  const BARRAS = 90;
   const niv = new Array(BARRAS).fill(0);
   let t = 0, W = 0;
   function medir(){
-    const dpr = Math.min(devicePixelRatio || 1, 2);
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     W = c.clientWidth;
     c.width = c.height = Math.round(W*dpr);
-    x.setTransform(dpr,0,0,dpr,0,0);
+    x.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
-  new ResizeObserver(medir).observe(c); medir();
-  function color(){ return getComputedStyle(document.body).getPropertyValue('--cy').trim() || '#46dcff'; }
+  const color = () => getComputedStyle(document.body).getPropertyValue('--cy').trim() || '#38bdf8';
+  new ResizeObserver(medir).observe(c);
+  medir();
   function frame(){
-    t += .016;
+    t += .02;
     const e = estadoActual;
-    for(let i=0;i<BARRAS;i++){
+    const R = W / 2, cx = R, cy = R;
+    x.clearRect(0, 0, W, W);
+    x.save();
+    x.translate(cx, cy);
+    const radioBase = R * 0.72;
+    for(let i=0; i<BARRAS; i++){
       let obj = 0;
-      if(e === 'hablando') obj = (Math.sin(i*.35+t*9)*.5+.5)*(Math.sin(i*.11-t*5)*.5+.5)*(.55+.45*Math.sin(t*14+i*.9)) ;
-      else if(e === 'escuchando') obj = (Math.sin(i*.5+t*3)*.5+.5)*.22 + Math.random()*.06;
-      else if(e === 'pensando') obj = Math.max(0, Math.sin(i*.26 - t*7))**6*.8;
-      else obj = (Math.sin(i*.3+t*1.2)*.5+.5)*.06;
-      niv[i] += (obj - niv[i]) * (e === 'hablando' ? .38 : .18);
-    }
-    x.clearRect(0,0,W,W);
-    const cx = W/2, cy = W/2, r0 = W*.5*.92, largo = W*.5*.085, col = color();
-    x.save(); x.translate(cx,cy); x.strokeStyle = col; x.lineCap = 'round'; x.lineWidth = Math.max(1.4, W/260);
-    x.shadowColor = col; x.shadowBlur = 8;
-    for(let i=0;i<BARRAS;i++){
-      const a = i/BARRAS*Math.PI*2 - Math.PI/2, l = 2 + niv[i]*largo;
-      x.globalAlpha = .35 + niv[i]*.65;
-      x.beginPath(); x.moveTo(Math.cos(a)*r0, Math.sin(a)*r0); x.lineTo(Math.cos(a)*(r0+l), Math.sin(a)*(r0+l)); x.stroke();
+      if(e === 'hablando') obj = (Math.sin(i*.35+t*9)*.5+.5)*(Math.sin(i*.11-t*5)*.5+.5)*(.55+.45*Math.sin(i*.7+t*3));
+      else if(e === 'escuchando') obj = (Math.sin(i*.5+t*3)*.5+.5)*.25 + Math.random()*.08;
+      else if(e === 'pensando') obj = Math.max(0, Math.sin(i*.26 - t*7))**6 * .75;
+      else obj = (Math.sin(i*.3+t*1.2)*.5+.5)*.08;
+      
+      niv[i] += (obj - niv[i]) * .25;
+      const h = 4 + niv[i] * (R * .28);
+      const ang = (i / BARRAS) * Math.PI * 2;
+      x.save();
+      x.rotate(ang);
+      x.fillStyle = color();
+      x.shadowColor = color();
+      x.shadowBlur = e === 'hablando' ? 10 : 4;
+      x.fillRect(-1.5, -radioBase - h, 3, h);
+      x.restore();
     }
     x.restore();
     requestAnimationFrame(frame);
   }
-  frame();
+  requestAnimationFrame(frame);
 })();
 
-/* ---------- Fondo de partículas ---------- */
+/* ---------- Partículas de Fondo Espacial ---------- */
 (function fondo(){
   const c = $('fondo'), x = c.getContext('2d');
-  let W, H, P = [];
-  function medir(){ W = c.width = innerWidth; H = c.height = innerHeight;
-    P = Array.from({length: Math.round(W*H/26000)}, () => ({x:Math.random()*W, y:Math.random()*H, vx:(Math.random()-.5)*.25, vy:(Math.random()-.5)*.25, r:Math.random()*1.4+.4})); }
+  let w = 0, h = 0;
+  const P = Array.from({length:60}, () => ({
+    x:Math.random(), y:Math.random(), r:Math.random()*1.8 + .5,
+    vx:(Math.random()-.5)*.0003, vy:(Math.random()-.5)*.0003, a:Math.random()*.4 + .1
+  }));
+  function medir(){
+    w = c.width = window.innerWidth;
+    h = c.height = window.innerHeight;
+  }
   addEventListener('resize', medir); medir();
-  (function f(){
-    x.clearRect(0,0,W,H);
-    const col = getComputedStyle(document.body).getPropertyValue('--cy').trim() || '#46dcff';
-    x.fillStyle = col; x.strokeStyle = col;
+  function f(){
+    x.clearRect(0,0,w,h);
+    const col = getComputedStyle(document.body).getPropertyValue('--cy').trim() || '#38bdf8';
+    x.fillStyle = col;
     for(const p of P){
-      p.x += p.vx; p.y += p.vy;
-      if(p.x<0||p.x>W) p.vx*=-1; if(p.y<0||p.y>H) p.vy*=-1;
-      x.globalAlpha = .35; x.beginPath(); x.arc(p.x,p.y,p.r,0,7); x.fill();
+      p.x = (p.x + p.vx + 1) % 1; p.y = (p.y + p.vy + 1) % 1;
+      x.globalAlpha = p.a;
+      x.beginPath();
+      x.arc(p.x * w, p.y * h, p.r, 0, Math.PI * 2);
+      x.fill();
     }
-    x.lineWidth = .6;
-    for(let i=0;i<P.length;i++) for(let j=i+1;j<P.length;j++){
-      const dx = P[i].x-P[j].x, dy = P[i].y-P[j].y, d = dx*dx+dy*dy;
-      if(d < 120*120){ x.globalAlpha = (1 - Math.sqrt(d)/120)*.16; x.beginPath(); x.moveTo(P[i].x,P[i].y); x.lineTo(P[j].x,P[j].y); x.stroke(); }
-    }
+    x.globalAlpha = 1;
     requestAnimationFrame(f);
-  })();
+  }
+  requestAnimationFrame(f);
 })();
 
-setEstado('espera', 'Esperando conexión…');
+/* ---------- Secuencia de Arranque Sci-Fi ---------- */
+(function boot(){
+  const l = [
+    'INICIALIZANDO MARK LXXXV...',
+    'CALIBRANDO NÚCLEO DE REACTOR ARC...',
+    'ENLACE NEURAL Y SUBSISTEMAS: ONLINE',
+    'RED MULTI-IA (ENSEMBLE): SINCRONIZADA',
+    'SISTEMA JARVIS LISTO'
+  ];
+  const b = $('boot');
+  const cont = $('boot-txt');
+  l.forEach((t, i) => {
+    const d = document.createElement('div');
+    d.innerHTML = '› ' + t + ' ................ <span>[OK]</span>';
+    d.style.animationDelay = (i * .12) + 's';
+    cont.append(d);
+  });
+  setTimeout(() => {
+    b.classList.add('fuera');
+    sonidoEvento('notificacion');
+  }, 1200);
+  b.onclick = () => b.classList.add('fuera');
+})();
+
+setEstado('espera', 'Esperando órdenes…');
 $('txt').focus();
 </script>
 </body>
