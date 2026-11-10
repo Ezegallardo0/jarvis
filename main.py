@@ -2,7 +2,6 @@
 
 Uso:
     python main.py            # modo voz (di "Jarvis, ...")
-    python main.py --texto    # modo texto (teclado)
 """
 import os
 import sys
@@ -61,7 +60,6 @@ def _obtener_clave(proveedor):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--texto", action="store_true", help="usar solo teclado")
     ap.add_argument("--probar-microfono", action="store_true", help="medir el nivel de entrada del micrófono")
     ap.add_argument("--microfono", type=int, help="índice del dispositivo de entrada de audio")
     ap.add_argument("--salida-audio", type=int, help="índice del dispositivo de salida de audio")
@@ -70,8 +68,6 @@ def main():
         config.MICROFONO = args.microfono
     if args.salida_audio is not None:
         config.AUDIO_SALIDA = args.salida_audio
-    if args.texto:
-        config.USAR_VOZ = False
     if args.probar_microfono:
         voice.probar_microfono()
         return
@@ -88,13 +84,12 @@ def main():
         print(error)
         sys.exit(1)
 
-    oido = None
-    if config.USAR_VOZ:
-        try:
-            oido = voice.Oido()
-        except Exception as e:
-            print(f"No pude iniciar el micrófono/reconocimiento ({e}). Sigo en modo texto.")
-            config.USAR_VOZ = False
+    try:
+        oido = voice.Oido()
+    except Exception as error:
+        print(f"No pude iniciar el micrófono/reconocimiento: {error}")
+        print("Revisá el micrófono y sus permisos de Windows antes de iniciar Jarvis.")
+        sys.exit(1)
 
     clave_elevenlabs = _obtener_clave("elevenlabs")
 
@@ -113,14 +108,17 @@ def main():
     tools.CONFIRMAR = confirmar
 
     if tools.permiso_control_pc() is None:
-        autorizacion = input(
+        autorizacion = confirmar(
             "¿Autorizás a Jarvis a controlar este ordenador cuando se lo pidas? "
             "Podrá abrir aplicaciones y leer, crear, modificar o eliminar archivos "
-            "en ubicaciones accesibles para tu usuario, y usar integraciones conectadas "
-            "para enviar o publicar cuando se lo pidas. La decisión se guarda para "
-            "próximos inicios y se puede revocar en Configuración. [s/n]: "
-        ).strip().lower().startswith(("s", "y"))
+            "en ubicaciones accesibles para tu usuario, usar integraciones conectadas "
+            "y analizar capturas de pantalla necesarias para tus tareas. El análisis "
+            "visual corre localmente con Ollama y no es una grabación continua. La "
+            "decisión se guarda para próximos inicios y se puede revocar en Configuración. "
+            "Decí sí o no."
+        )
         tools.establecer_permiso_control(autorizacion)
+    config.COMPARTIENDO_PANTALLA = tools.permiso_control_pc() is True
 
     def atender(pedido):
         """Procesa un pedido. Devuelve False si hay que salir."""
@@ -137,21 +135,15 @@ def main():
             hablar(f"Tuve un problema: {e}")
         return True
 
-    hablar(f"{config.NOMBRE} en línea.")
+    hablar(f"Hola, soy {config.NOMBRE}. Ya estoy en línea y te escucho. ¿Qué necesitás?")
     try:
-        if oido:
-            while True:
-                pedido = oido.escuchar_continuo()
-                if not pedido:
-                    continue
-                print(f"Tú: {pedido}")
-                if not atender(pedido):
-                    break
-        else:
-            while True:
-                pedido = input("Tú: ").strip()
-                if pedido and not atender(pedido):
-                    break
+        while True:
+            pedido = oido.escuchar_continuo()
+            if not pedido:
+                continue
+            print(f"Tú: {pedido}")
+            if not atender(pedido):
+                break
     except KeyboardInterrupt:
         print("\nChau.")
 

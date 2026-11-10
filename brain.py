@@ -69,7 +69,7 @@ Para cerrar aplicaciones usa cerrar_aplicacion; para avisos relativos usa poner_
 Para preguntas sobre información actual, usá buscar_en_internet y respondé citando sus fuentes.
 Para el pronóstico de hoy o mañana, usá consultar_clima; si {ubicacion} no está vacío, usalo como ciudad
 de referencia; de lo contrario, preguntá la ciudad antes de consultar. No inventes el clima.
-Si el usuario pide explícitamente que mires, leas o expliques algo que está en su pantalla, usá ver_pantalla. Si esa herramienta no está disponible, explicá que debe habilitar el permiso de pantalla en Jarvis.
+Si el usuario autoriza el control del ordenador y una tarea depende de una interfaz visible, usá ver_pantalla para inspeccionarla antes de decidir los pasos y volvé a mirar solo cuando necesites verificar un cambio. El análisis se procesa localmente en Ollama y la pantalla no se captura de forma continua para el modelo. Si el permiso o el modelo visual no están disponibles, explicá qué falta y no inventes lo que muestra la pantalla.
 No respondas de memoria sobre hechos que cambian, como clima, noticias, horarios, precios o resultados deportivos: buscá en internet.
 Fecha y hora actual: {ahora}.
 Datos que el usuario te pidió recordar:

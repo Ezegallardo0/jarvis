@@ -121,7 +121,9 @@ class Lanzador:
                 parent=raiz,
             )
             config.GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
-        config.COMPARTIENDO_PANTALLA = False
+        import tools
+
+        config.COMPARTIENDO_PANTALLA = tools.permiso_control_pc() is True
         if spotyfyTools:
             spotyfyTools.PUBLICAR = self.bus.publish
 
@@ -361,18 +363,10 @@ class Lanzador:
         ttk.Button(
             acciones,
             text="Iniciar con voz",
-            command=lambda: self.iniciar(False),
+            command=self.iniciar,
             style="Accent.TButton",
         ).grid(
             row=1, column=0, sticky="w", pady=(8, 0)
-        )
-        ttk.Button(
-            acciones,
-            text="Iniciar en modo texto",
-            command=lambda: self.iniciar(True),
-            style="Accent.TButton",
-        ).grid(
-            row=1, column=1, sticky="w", padx=6, pady=(8, 0)
         )
 
         self.estado = tk.StringVar(value="Seleccioná los dispositivos y probalos antes de iniciar.")
@@ -777,13 +771,8 @@ class Lanzador:
             botones,
             text="Iniciar con voz",
             style="Accent.TButton",
-            command=lambda: self.iniciar(False),
+            command=self.iniciar,
         ).grid(row=0, column=0, padx=5)
-        ttk.Button(
-            botones,
-            text="Iniciar en texto",
-            command=lambda: self.iniciar(True),
-        ).grid(row=0, column=1, padx=5)
         ttk.Button(
             botones,
             text="Abrir HUD",
@@ -875,26 +864,13 @@ class Lanzador:
         )
         self.historial_ui.tag_configure("body", foreground=TEXTO)
         self.historial_ui.grid(row=0, column=0, sticky="ew")
-        entrada = ttk.Frame(chat, style="Card.TFrame", padding=(8, 6))
-        entrada.grid(row=1, column=0, sticky="ew", pady=(5, 0))
-        entrada.columnconfigure(0, weight=1)
-        self.mensaje = tk.StringVar()
-        self.campo_mensaje = ttk.Entry(entrada, textvariable=self.mensaje)
-        self.campo_mensaje.grid(row=0, column=0, sticky="ew")
-        self.campo_mensaje.bind("<Return>", lambda _: self.enviar())
-        ttk.Button(
-            entrada,
-            text="Enviar  >",
-            style="Accent.TButton",
-            command=self.enviar,
-        ).grid(row=0, column=1, padx=(8, 0))
-        self.estado_chat = tk.StringVar(value="Configurá tus conexiones o iniciá la conversación.")
+        self.estado_chat = tk.StringVar(value="Hablale a Jarvis; el historial queda visible aquí.")
         ttk.Label(
             chat,
             textvariable=self.estado_chat,
             style="Muted.TLabel",
             wraplength=850,
-        ).grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ).grid(row=1, column=0, sticky="w", pady=(6, 0))
         self._animar_nucleo()
 
     def _actualizar_stats(self):
@@ -1674,7 +1650,7 @@ class Lanzador:
             estado = f"Falló la prueba de salida: {error}"
         self.raiz.after(0, self.estado.set, estado)
 
-    def iniciar(self, texto):
+    def iniciar(self):
         if self.asistente_activo:
             return True
         import tools
@@ -1688,12 +1664,16 @@ class Lanzador:
                     "Con permiso, podrá abrir aplicaciones y leer, crear, modificar o "
                     "eliminar archivos en ubicaciones accesibles para tu usuario, y "
                     "usar integraciones conectadas para enviar o publicar cuando se "
-                    "lo pidas. Las acciones solo se ejecutan ante instrucciones tuyas. "
-                    "La autorización se guarda para próximos inicios y se puede revocar "
-                    "en Configuración.",
+                    "lo pidas. También podrá analizar capturas de pantalla necesarias "
+                    "para completar las tareas que le indiques; ese análisis se hace "
+                    "localmente con Ollama y no es una grabación continua. Las acciones "
+                    "solo se ejecutan ante instrucciones tuyas. La autorización se guarda "
+                    "para próximos inicios y se puede revocar en Configuración.",
                     parent=self.raiz,
                 )
                 tools.establecer_permiso_control(permiso)
+            config.COMPARTIENDO_PANTALLA = permiso is True
+            self.bus.publish("pantalla", on=config.COMPARTIENDO_PANTALLA)
         except (OSError, ValueError) as error:
             messagebox.showerror(
                 "No se pudo guardar el permiso",
@@ -1724,15 +1704,15 @@ class Lanzador:
                 self.bus.publish("ajustes")
                 return False
         proveedor_tts = config.PROVEEDOR_TTS
-        if not texto and proveedor_tts == "elevenlabs" and not (
+        if proveedor_tts == "elevenlabs" and not (
             elevenlabs_api_key or os.environ.get("ELEVENLABS_API_KEY")
         ):
             self.bus.publish("msg", rol="jarvis", texto="Falta la API key de ElevenLabs. Guardala desde Ajustes.")
             self.bus.publish("ajustes")
             return False
-        self.modo = "texto" if texto else "voz"
+        self.modo = "voz"
         self.elevenlabs_api_key = elevenlabs_api_key
-        config.USAR_VOZ = not texto
+        config.USAR_VOZ = True
         self.asistente_activo = True
         proveedor_nombre = proveedor.capitalize()
         self.bus.publish("estado", valor="pensando", texto=f"Conectando con {proveedor_nombre}…")
@@ -1747,7 +1727,6 @@ class Lanzador:
     def _crear_chat(self):
         if not hasattr(self, "historial_ui"):
             self._crear_chat_dashboard()
-        self.campo_mensaje.focus_set()
 
     def _animar_nucleo(self):
         canvas = getattr(self, "_orb_canvas", None)
@@ -1825,14 +1804,7 @@ class Lanzador:
             self.pedidos.put((texto, origen))
 
     def enviar(self):
-        texto = self.mensaje.get().strip()
-        if not texto:
-            return
-        if not self.asistente_activo and not self.iniciar(True):
-            return
-        self.mensaje.set("")
-        self._agregar_mensaje("Tú", texto)
-        self._encolar_pedido(texto, "texto")
+        self._estado_visible("Hablale a Jarvis; el control por teclado está desactivado.")
 
     def _confirmar(self, texto):
         import tools
@@ -1875,6 +1847,7 @@ class Lanzador:
             self._agregar_mensaje(config.NOMBRE, f"No pude iniciar el modelo: {error}")
             self._estado("Revisá el proveedor y la API key y volvé a iniciar.")
             self.asistente_activo = False
+            self.modo = None
             return
         error = cerebro.verificar()
         if error:
@@ -1884,32 +1857,40 @@ class Lanzador:
             return
 
         oido = None
-        if self.modo == "voz":
-            self._estado("Iniciando micrófono y reconocimiento de voz...")
-            try:
-                oido = voice.Oido(dispositivo=config.MICROFONO or None)
-            except Exception as error:
-                self._agregar_mensaje(config.NOMBRE, f"No pude iniciar la voz: {error}")
-                self.modo = "texto"
-                config.USAR_VOZ = False
-                self._publicar_info()
-                self._estado(
-                    "Jarvis quedó en modo texto. Corregí el micrófono en Ajustes "
-                    "y usá «Cambiar a voz» para volver a intentarlo."
-                )
+        self._estado("Iniciando micrófono y reconocimiento de voz...")
+        try:
+            oido = voice.Oido(dispositivo=config.MICROFONO or None)
+        except Exception as error:
+            self.oido = None
+            self.modo = None
+            config.USAR_VOZ = True
+            self.asistente_activo = False
+            self._agregar_mensaje(
+                config.NOMBRE,
+                f"No pude iniciar el micrófono: {error}. Revisá la entrada en Ajustes "
+                "y volvé a iniciar por voz.",
+            )
+            self._estado("Micrófono no disponible. Corregí la entrada y reintentá.")
+            return
         self.oido = oido
 
         self._agregar_mensaje(config.NOMBRE, "En línea. Escribime abajo.")
         self._publicar_info()
         self._estado(
             "Micrófono activo. Hablá normalmente; Jarvis te escucha."
-            if oido
-            else "Modo texto listo."
         )
+        saludo = (
+            f"Hola, soy {config.NOMBRE}. Ya estoy en línea y te escucho. "
+            "¿Qué necesitás?"
+        )
+        self._agregar_mensaje(config.NOMBRE, saludo)
+        error_voz = self._hablar(saludo)
+        if error_voz:
+            self._estado(error_voz)
         if oido:
             self._iniciar_escucha(oido)
 
-        while not self.cerrando.is_set():
+        while not self.cerrando.is_set() and self.asistente_activo:
             with self._pedidos_lock:
                 try:
                     pedido, origen = self.pedidos.get_nowait()
@@ -2059,68 +2040,24 @@ class Lanzador:
                     if es_escucha_actual:
                         self.oido = None
                     if es_escucha_actual and self.modo == "voz":
-                        self.modo = "texto"
-                        config.USAR_VOZ = False
+                        self.modo = None
+                        self.asistente_activo = False
+                        config.USAR_VOZ = True
                     if self._escucha_hilo is threading.current_thread():
                         self._escucha_hilo = None
                 self._publicar_info()
                 self._agregar_mensaje(
                     config.NOMBRE,
-                    f"Se interrumpió el micrófono: {error}. Podés seguir por texto "
-                    "y volver a intentar con «Cambiar a voz».",
+                    f"Se interrumpió el micrófono: {error}. Revisá la entrada en "
+                    "Ajustes y volvé a iniciar por voz.",
                 )
-                self._estado("Jarvis quedó en modo texto.")
+                self._estado("Micrófono interrumpido. Corregí la entrada y reintentá.")
                 return
 
     def alternar_modo(self):
         if not self.asistente_activo:
-            return self.iniciar(self.modo == "voz")
-
-        if self.modo == "voz":
-            with self._modo_lock:
-                self.modo = "texto"
-                config.USAR_VOZ = False
-                if self.oido:
-                    self.oido.pausar_escucha.set()
-            self._publicar_info()
-            self._estado("Modo texto activo. El micrófono quedó en pausa.")
-            return True
-
-        try:
-            if config.PROVEEDOR_TTS == "elevenlabs":
-                self.elevenlabs_api_key = self._clave_guardada_o_entorno(
-                    "elevenlabs"
-                )
-                if not self.elevenlabs_api_key:
-                    self._agregar_mensaje(
-                        config.NOMBRE,
-                        "Falta la API key de ElevenLabs. Guardala en Ajustes "
-                        "o elegí Piper/Windows para la voz de respuesta.",
-                    )
-                    self.bus.publish("ajustes")
-                    return False
-        except Exception as error:
-            self._agregar_mensaje(
-                config.NOMBRE, f"No pude leer la clave de voz guardada: {error}"
-            )
-            return False
-
-        with self._modo_lock:
-            self.modo = "voz"
-            config.USAR_VOZ = True
-            if self.oido:
-                self.oido.pausar_escucha.clear()
-                self._iniciar_escucha(self.oido)
-                iniciar = False
-            elif self._voz_iniciando:
-                iniciar = False
-            else:
-                self._voz_iniciando = True
-                iniciar = True
-        self._publicar_info()
-        self._estado("Activando micrófono y reconocimiento de voz…")
-        if iniciar:
-            threading.Thread(target=self._activar_voz, daemon=True).start()
+            return self.iniciar()
+        self._estado("Modo voz activo. Hablale a Jarvis cuando quieras.")
         return True
 
     def _activar_voz(self):
@@ -2130,15 +2067,16 @@ class Lanzador:
             with self._modo_lock:
                 self._voz_iniciando = False
                 if self.modo == "voz":
-                    self.modo = "texto"
-                    config.USAR_VOZ = False
+                    self.modo = None
+                    self.asistente_activo = False
+                    config.USAR_VOZ = True
             self._publicar_info()
             self._agregar_mensaje(
                 config.NOMBRE,
                 f"No pude activar el micrófono: {error}. Revisá la entrada "
-                "en Ajustes; Jarvis sigue disponible en modo texto.",
+                "en Ajustes y volvé a iniciar por voz.",
             )
-            self._estado("Modo texto activo. Corregí el micrófono y reintentá.")
+            self._estado("Micrófono no disponible. Corregí la entrada y reintentá.")
             return
 
         with self._modo_lock:
@@ -2157,28 +2095,24 @@ class Lanzador:
         if self.asistente_activo:
             self._abrir_hud(forzar=True)
         else:
-            self.iniciar(True)
+            self.iniciar()
 
     def abrir_hud_inicial(self):
-        """Al abrir la app: muestra solo el HUD con sus botones de inicio."""
+        """Al abrir la app, inicia la sesión de voz y muestra el HUD."""
         if not self._abrir_hud(inicial=True):
             messagebox.showerror(
                 config.NOMBRE,
                 "No se pudo abrir la interfaz HUD. Verificá que Microsoft Edge o Google Chrome esté instalado.",
             )
+            return
+        self.iniciar()
 
-    def _iniciar_desde_hud(self, solo_texto):
-        if not self.iniciar(solo_texto):
+    def _iniciar_desde_hud(self):
+        if not self.iniciar():
             self._mostrar_ajustes_desde_hud()  # falta configurar algo: mostramos los ajustes
 
     def desde_hud(self, texto):
-        texto = texto.strip()
-        if not texto:
-            return
-        self._agregar_mensaje("Tú", texto)
-        if not self.asistente_activo and not self.iniciar(True):
-            return
-        self._encolar_pedido(texto, "texto")
+        self._estado_visible("Hablale a Jarvis; el control por teclado está desactivado.")
 
     def _configuracion_hud(self):
         import tools
@@ -2605,6 +2539,8 @@ class Lanzador:
             tools.establecer_permiso_control(
                 permiso_control_pc
             )
+            config.COMPARTIENDO_PANTALLA = permiso_control_pc
+            self.bus.publish("pantalla", on=permiso_control_pc)
         self.elevenlabs_api_key = self._clave_guardada_o_entorno("elevenlabs")
         self._publicar_info()
         configuracion = self._configuracion_hud()
@@ -2723,7 +2659,7 @@ class Lanzador:
         self.bus.publish(
             "info",
             nombre=config.NOMBRE,
-            modo=self.modo or "texto",
+            modo="voz",
             ia=nombres_ia.get(config.PROVEEDOR_IA, config.PROVEEDOR_IA),
             modelo=modelo,
             tts=nombres_tts.get(config.PROVEEDOR_TTS, config.PROVEEDOR_TTS),
@@ -2743,8 +2679,8 @@ class Lanzador:
             self.bus.publish("ajustes")
         elif nombre == "preparar_vision":
             self.raiz.after(0, self.preparar_vision)
-        elif nombre in ("iniciar_voz", "iniciar_texto"):
-            self.raiz.after(0, lambda: self._iniciar_desde_hud(nombre == "iniciar_texto"))
+        elif nombre == "iniciar_voz":
+            self.raiz.after(0, self._iniciar_desde_hud)
         elif nombre == "alternar_modo":
             self.raiz.after(0, self.alternar_modo)
         elif nombre == "detener_automatizacion":

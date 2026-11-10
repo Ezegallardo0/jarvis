@@ -207,6 +207,17 @@ class Servidor:
                         return self._enviar(500, "application/json; charset=utf-8", cuerpo)
                     return self._enviar(200, "application/json; charset=utf-8", cuerpo)
                 if ruta == "/screen.jpg":
+                    from tools import permiso_control_pc
+
+                    if (
+                        permiso_control_pc() is not True
+                        or not config.COMPARTIENDO_PANTALLA
+                    ):
+                        return self._enviar(
+                            403,
+                            "text/plain; charset=utf-8",
+                            "El acceso a pantalla está desactivado.".encode("utf-8"),
+                        )
                     try:
                         return self._enviar(200, "image/jpeg", srv._captura_jpeg())
                     except Exception:
@@ -254,9 +265,11 @@ class Servidor:
                     return self._enviar(400, "text/plain", b"JSON invalido")
                 resultado = {"ok": True}
                 if ruta == "/say":
-                    texto = str(datos.get("texto", "")).strip()[:1000]
-                    if texto:
-                        srv.entradas.put(texto)
+                    return self._enviar(
+                        405,
+                        "text/plain; charset=utf-8",
+                        "Jarvis recibe instrucciones por voz.".encode("utf-8"),
+                    )
                 elif ruta == "/upload":
                     nombre = str(datos.get("nombre", "")).strip()
                     contenido = datos.get("contenido")
@@ -387,6 +400,24 @@ class Servidor:
                     srv.bus.responder(datos.get("ok"))
                 elif ruta == "/screen":
                     activar = bool(datos.get("on"))
+                    if activar:
+                        from tools import permiso_control_pc
+
+                        if permiso_control_pc() is not True:
+                            return self._enviar(
+                                403,
+                                "application/json; charset=utf-8",
+                                json.dumps(
+                                    {
+                                        "ok": False,
+                                        "error": (
+                                            "Autorizá primero el control del ordenador "
+                                            "en Configuración para habilitar el análisis de pantalla."
+                                        ),
+                                    },
+                                    ensure_ascii=False,
+                                ).encode("utf-8"),
+                            )
                     config.COMPARTIENDO_PANTALLA = activar
                     srv.bus.publish("pantalla", on=activar)
                     if srv.accion_app:

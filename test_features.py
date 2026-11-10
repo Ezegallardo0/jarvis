@@ -391,12 +391,38 @@ class PermisosYVozTests(unittest.TestCase):
             mock.patch.object(voice, "_reproducir_audio") as reproducir,
         ):
             voice._hablar_elevenlabs(
-                "Prueba", api_key="clave-de-prueba", voice_id="voz-de-prueba"
+                "Prueba",
+                api_key=" \n clave-de-prueba\t ",
+                voice_id="voz-de-prueba",
             )
 
+        self.assertEqual(
+            enviar.call_args.kwargs["headers"]["xi-api-key"],
+            "clave-de-prueba",
+        )
+        self.assertIn(
+            "/v1/text-to-speech/voz-de-prueba",
+            enviar.call_args.args[0],
+        )
         self.assertEqual(enviar.call_args.kwargs["params"], {"output_format": "pcm_24000"})
         reproducir.assert_called_once()
         self.assertEqual(reproducir.call_args.args[1], 24000)
+
+    def test_elevenlabs_normaliza_la_clave_del_entorno(self):
+        respuesta = mock.Mock(status_code=200, is_success=True, content=b"\x00\x00")
+        with (
+            mock.patch.dict("os.environ", {"ELEVENLABS_API_KEY": " \n clave-env\t "}),
+            mock.patch("httpx.post", return_value=respuesta) as enviar,
+            mock.patch.object(voice, "_reproducir_audio"),
+        ):
+            voice._hablar_elevenlabs(
+                "Prueba", api_key=None, voice_id="voz-de-prueba"
+            )
+
+        self.assertEqual(
+            enviar.call_args.kwargs["headers"]["xi-api-key"],
+            "clave-env",
+        )
 
     def test_error_elevenlabs_se_conserva_al_usar_voz_de_respaldo(self):
         with (
@@ -502,6 +528,69 @@ class PermisosYVozTests(unittest.TestCase):
 
 
 class AdjuntosTests(unittest.TestCase):
+    def test_interfaz_rechaza_ordenes_de_texto(self):
+        entradas = queue.Queue()
+        servidor = ui.Servidor(ui.Bus(), entradas)
+        with mock.patch.object(config, "HUD_PUERTO", 18760):
+            servidor.iniciar()
+            try:
+                url = f"http://127.0.0.1:{servidor.puerto}/say?t={servidor.token}"
+                solicitud = Request(
+                    url,
+                    data=json.dumps({"texto": "Hola"}).encode("utf-8"),
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Token": servidor.token,
+                    },
+                    method="POST",
+                )
+                with self.assertRaises(HTTPError) as error:
+                    urlopen(solicitud, timeout=5)
+
+                self.assertEqual(error.exception.code, 405)
+                self.assertTrue(entradas.empty())
+                error.exception.close()
+            finally:
+                servidor.httpd.shutdown()
+                servidor.httpd.server_close()
+
+    def test_pantalla_no_se_comparte_sin_permiso_global(self):
+        servidor = ui.Servidor(ui.Bus(), queue.Queue())
+        with (
+            mock.patch.object(config, "HUD_PUERTO", 18761),
+            mock.patch.object(config, "COMPARTIENDO_PANTALLA", False),
+            mock.patch.object(tools, "permiso_control_pc", return_value=False),
+        ):
+            servidor.iniciar()
+            try:
+                url = f"http://127.0.0.1:{servidor.puerto}/screen?t={servidor.token}"
+                solicitud = Request(
+                    url,
+                    data=json.dumps({"on": True}).encode("utf-8"),
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Token": servidor.token,
+                    },
+                    method="POST",
+                )
+                with self.assertRaises(HTTPError) as error:
+                    urlopen(solicitud, timeout=5)
+
+                self.assertEqual(error.exception.code, 403)
+                self.assertFalse(config.COMPARTIENDO_PANTALLA)
+                error.exception.close()
+                captura = (
+                    f"http://127.0.0.1:{servidor.puerto}/screen.jpg?t={servidor.token}"
+                )
+                with self.assertRaises(HTTPError) as error_captura:
+                    urlopen(captura, timeout=5)
+
+                self.assertEqual(error_captura.exception.code, 403)
+                error_captura.exception.close()
+            finally:
+                servidor.httpd.shutdown()
+                servidor.httpd.server_close()
+
     def test_upload_de_texto_se_guarda_y_se_envia_al_chat(self):
         entradas = queue.Queue()
         servidor = ui.Servidor(ui.Bus(), entradas)

@@ -18,9 +18,9 @@ def capturar_jpeg(ancho_max=1280):
 
 
 @herramienta(
-    "Mira una captura actual de la pantalla solo cuando el usuario pide explícitamente que la analices; "
-    "responde una pregunta sobre lo que se ve "
-    "(describir, leer texto, explicar un error, ayudar con lo que tiene abierto).",
+    "Analiza una captura actual de la pantalla cuando el usuario pide una tarea que requiere conocer "
+    "la interfaz visible o pregunta qué aparece en ella. El análisis corre localmente con Ollama; "
+    "no captura continuamente ni realiza acciones por sí solo.",
     {"pregunta": {"type": "string", "description": "Qué querés saber de la pantalla"}},
     ["pregunta"],
     requiere_pantalla=True,

@@ -274,7 +274,9 @@ def _hablar_elevenlabs(texto, api_key, oido=None, voice_id=None):
     import httpx
     import numpy as np
 
-    clave = api_key or os.environ.get("ELEVENLABS_API_KEY", "")
+    clave = str(api_key or "").strip() or os.environ.get(
+        "ELEVENLABS_API_KEY", ""
+    ).strip()
     id_voz = (voice_id or config.ELEVENLABS_VOICE_ID).strip()
     if not clave:
         raise ValueError(
