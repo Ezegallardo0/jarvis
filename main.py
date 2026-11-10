@@ -50,8 +50,9 @@ def _obtener_clave(proveedor):
         pass
     env_var = {
         "gemini": "GEMINI_API_KEY",
-        "grok": "XAI_API_KEY",
         "openai": "OPENAI_API_KEY",
+        "groq": "GROQ_API_KEY",
+        "cloudflare": "CLOUDFLARE_API_KEY",
         "cursor": "CURSOR_API_KEY",
     }.get(proveedor, "")
     return os.environ.get(env_var, "") if env_var else ""

@@ -1,5 +1,6 @@
 """Configuración compartida para proveedores de chat compatibles con OpenAI."""
 from dataclasses import dataclass
+import json
 import re
 
 import config
@@ -22,12 +23,6 @@ PROVEEDORES = {
         "https://generativelanguage.googleapis.com/v1beta/openai/",
         "max_tokens",
     ),
-    "grok": Proveedor(
-        "Grok",
-        "XAI_API_KEY",
-        "MODELO_GROK",
-        "https://api.x.ai/v1",
-    ),
     "openai": Proveedor(
         "OpenAI",
         "OPENAI_API_KEY",
@@ -47,7 +42,7 @@ PROVEEDORES = {
         limite_tokens="max_tokens",
     ),
     "cursor": Proveedor(
-        "Cursor (Grok Free)",
+        "Cursor",
         "CURSOR_API_KEY",
         "MODELO_CURSOR",
         "https://api.cursor.sh/v1",
@@ -63,12 +58,98 @@ def obtener_modelo(proveedor):
     return getattr(config, especificacion.atributo_modelo)
 
 
+class _ObjetoSimple:
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
+    def model_dump(self, exclude_none=True):
+        def convertir(valor):
+            if isinstance(valor, _ObjetoSimple):
+                return valor.model_dump(exclude_none=exclude_none)
+            if isinstance(valor, list):
+                return [convertir(v) for v in valor]
+            if isinstance(valor, dict):
+                return {k: convertir(v) for k, v in valor.items() if not (exclude_none and v is None)}
+            return valor
+        datos = convertir(self.__dict__)
+        if exclude_none:
+            return {k: v for k, v in datos.items() if v is not None}
+        return datos
+
+
+class _CloudflareCompletions:
+    def __init__(self, account_id, api_token, timeout=30):
+        self.account_id = account_id
+        self.api_token = api_token
+        self.timeout = timeout
+
+    def create(self, **opciones):
+        import httpx
+
+        modelo = opciones.get("model") or config.MODELO_CLOUDFLARE
+        mensajes = opciones.get("messages", [])
+        url = f"https://api.cloudflare.com/client/v4/accounts/{self.account_id}/ai/run/{modelo}"
+        headers = {
+            "Authorization": f"Bearer {self.api_token}",
+            "Content-Type": "application/json",
+        }
+        payload = {"messages": mensajes}
+        for clave in ("max_tokens", "temperature", "stream"):
+            if clave in opciones and opciones[clave] is not None:
+                payload[clave] = opciones[clave]
+
+        respuesta = httpx.post(url, headers=headers, json=payload, timeout=self.timeout)
+        try:
+            datos = respuesta.json()
+        except Exception:
+            datos = {"errors": [{"message": respuesta.text}]}
+        if respuesta.status_code >= 400 or not datos.get("success", True):
+            mensaje = None
+            errores = datos.get("errors") or []
+            if errores and isinstance(errores[0], dict):
+                mensaje = errores[0].get("message")
+            mensaje = mensaje or datos.get("result") or respuesta.text or f"HTTP {respuesta.status_code}"
+            error = RuntimeError(str(mensaje))
+            error.status_code = respuesta.status_code
+            error.body = datos
+            raise error
+
+        resultado = datos.get("result", {}) or {}
+        contenido = (
+            resultado.get("response")
+            or resultado.get("result")
+            or resultado.get("text")
+            or ""
+        )
+        if isinstance(contenido, dict):
+            contenido = json.dumps(contenido, ensure_ascii=False)
+        mensaje = _ObjetoSimple(role="assistant", content=str(contenido).strip(), tool_calls=None)
+        eleccion = _ObjetoSimple(message=mensaje, finish_reason="stop")
+        return _ObjetoSimple(choices=[eleccion])
+
+
+class _CloudflareChat:
+    def __init__(self, account_id, api_token, timeout=30):
+        self.completions = _CloudflareCompletions(account_id, api_token, timeout=timeout)
+
+
+class CloudflareClient:
+    def __init__(self, account_id, api_token, timeout=30):
+        self.chat = _CloudflareChat(account_id, api_token, timeout=timeout)
+
+
 def crear_cliente(proveedor, api_key, timeout=30):
     especificacion = PROVEEDORES.get(proveedor)
     if especificacion is None:
         raise ValueError(f"Proveedor de IA no válido: {proveedor}")
     if not api_key:
         raise ValueError(f"Falta la API key de {especificacion.nombre}.")
+
+    if proveedor == "cloudflare":
+        account_id = config.CLOUDFLARE_ACCOUNT_ID.strip()
+        if not account_id:
+            raise ValueError("Configurá el Account ID de Cloudflare en Conexiones.")
+        return CloudflareClient(account_id, api_key, timeout=timeout)
 
     from openai import OpenAI
 
@@ -79,13 +160,6 @@ def crear_cliente(proveedor, api_key, timeout=30):
     }
     if especificacion.base_url:
         opciones["base_url"] = especificacion.base_url
-    elif proveedor == "cloudflare":
-        account_id = config.CLOUDFLARE_ACCOUNT_ID.strip()
-        if not account_id:
-            raise ValueError("Configurá el Account ID de Cloudflare en Conexiones.")
-        opciones["base_url"] = (
-            f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1"
-        )
     return OpenAI(**opciones)
 
 
@@ -101,8 +175,6 @@ def crear_opciones_solicitud(proveedor, modelo, mensajes, herramientas=None):
     if herramientas is not None:
         opciones["tools"] = herramientas
         opciones["tool_choice"] = "auto"
-    if proveedor == "openai":
-        opciones["reasoning_effort"] = "none"
     return opciones
 
 
@@ -119,8 +191,6 @@ def probar_conexion(proveedor, api_key, modelo=None, timeout=15):
         especificacion.limite_tokens: 8,
         "timeout": timeout,
     }
-    if proveedor == "openai":
-        opciones["reasoning_effort"] = "none"
     inicio = time.perf_counter()
     cliente.chat.completions.create(**opciones)
     return round((time.perf_counter() - inicio) * 1000)
@@ -130,19 +200,47 @@ def error_publico(proveedor, error, api_key=None):
     """Resume un error del proveedor y su causa sin exponer credenciales."""
     nombre = PROVEEDORES.get(proveedor, Proveedor(proveedor, "", "")).nombre
     codigo = getattr(error, "status_code", None)
+    partes = []
     cuerpo = getattr(error, "body", None)
     if isinstance(cuerpo, dict):
         causa = cuerpo.get("error", cuerpo)
         if isinstance(causa, dict):
-            causa = causa.get("message") or causa.get("status")
-        causa = str(causa or "")
-    else:
-        causa = str(error)
+            msg = causa.get("message") or causa.get("status") or causa.get("code") or causa
+            partes.append(str(msg))
+            for clave in ("type", "param", "code"):
+                valor = causa.get(clave)
+                if valor and str(valor) not in str(msg):
+                    partes.append(f"{clave}={valor}")
+        else:
+            partes.append(str(causa))
+    elif cuerpo not in (None, ""):
+        partes.append(str(cuerpo))
+
+    for attr in ("message",):
+        valor = getattr(error, attr, None)
+        if valor and str(valor) not in " ".join(partes):
+            partes.append(str(valor))
+
+    respuesta = getattr(error, "response", None)
+    if respuesta is not None:
+        try:
+            texto_resp = respuesta.text
+        except Exception:
+            texto_resp = ""
+        if texto_resp and texto_resp not in " ".join(partes):
+            partes.append(str(texto_resp))
+
+    if not partes:
+        partes.append(str(error))
+
+    causa = " | ".join(p for p in partes if p)
     if api_key:
         causa = causa.replace(api_key, "[API key oculta]")
     causa = re.sub(r"\bAIza[0-9A-Za-z_-]{20,}\b", "[API key oculta]", causa)
+    causa = re.sub(r"\bxai-[A-Za-z0-9_-]{12,}\b", "[API key oculta]", causa)
+    causa = re.sub(r"\bgsk_[A-Za-z0-9_-]{12,}\b", "[API key oculta]", causa)
     causa = re.sub(r"\bsk-[A-Za-z0-9_-]{12,}\b", "[API key oculta]", causa)
-    causa = re.sub(r"\s+", " ", causa).strip()[:300]
+    causa = re.sub(r"\s+", " ", causa).strip()[:500]
     detalle = f" Detalle: {causa}" if causa else ""
 
     if codigo == 401:

@@ -16,11 +16,10 @@ OLLAMA_HOST = "http://localhost:11434"
 # Con poca RAM/sin GPU probá "qwen2.5:3b". Con buena GPU, "qwen2.5:14b".
 MODELO = "qwen2.5:7b"
 PROVEEDOR_IA = os.environ.get("JARVIS_AI_PROVIDER", "gemini").lower()
-MODELO_GEMINI = "gemini-3.5-flash-lite"
-MODELO_GROK = "grok-4.7"
-MODELO_OPENAI = "gpt-6-luna"
+MODELO_GEMINI = "gemini-1.5-flash"
+MODELO_OPENAI = "gpt-4o-mini"
 MODELO_CURSOR = "grok-3-mini"
-MODELO_GROQ_API = "llama-3.3-70b-versatile"
+MODELO_GROQ_API = "llama-3.1-8b-instant"
 MODELO_CLOUDFLARE = "@cf/zai-org/glm-4.7-flash"
 CLOUDFLARE_ACCOUNT_ID = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "")
 PROVEEDOR_IA_ALTERNATIVO = ""
@@ -33,19 +32,16 @@ MODO_ENSEMBLE = os.environ.get("JARVIS_ENSEMBLE", "auto").lower()
 # "verificar" (el principal responde, los otros verifican), "votar" (mayoría entre modelos)
 ESTRATEGIA_ENSEMBLE = os.environ.get("JARVIS_ENSEMBLE_ESTRATEGIA", "mejor").lower()
 
-# IDs publicados en la documentación oficial. Las listas son sugerencias para el HUD;
-# los modelos siguen siendo editables porque el acceso depende de cada cuenta.
+# Modelos sugeridos para el HUD. Podés editarlos: el acceso depende de cada cuenta/API.
 MODELOS_IA = {
     "gemini": (
-        "gemini-4-argon",
-        "gemini-3.8-flash",
-        "gemini-3.6-flash",
-        "gemini-3.5-flash-lite",
-        "gemini-3.1-flash-lite",
+        "gemini-1.5-flash",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-1.5-flash-8b",
     ),
-    "grok": ("grok-4.7", "grok-4.6", "grok-4.5", "grok-4.3"),
-    "openai": ("gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"),
-    "groq": ("llama-3.3-70b-versatile", "llama-3.1-8b-instant"),
+    "openai": ("gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1"),
+    "groq": ("llama-3.1-8b-instant", "llama-3.3-70b-versatile", "mixtral-8x7b-32768"),
     "cloudflare": (
         "@cf/zai-org/glm-4.7-flash",
         "@cf/openai/gpt-oss-20b",
@@ -53,7 +49,7 @@ MODELOS_IA = {
         "@cf/google/gemma-4-26b-a4b-it",
         "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
     ),
-    "cursor": ("grok-3-mini", "grok-3", "claude-3-5-sonnet"),
+    "cursor": ("grok-3-mini", "grok-3"),
 }
 
 # --- Voz ---

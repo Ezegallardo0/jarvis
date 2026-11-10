@@ -399,7 +399,7 @@ def _consultar_proveedor_simple(proveedor, api_key, mensajes, timeout=30):
 
 
 class CerebroEnsemble:
-    """Cerebro multi-IA: coordina Gemini, Grok, OpenAI y Cursor en conjunto.
+    """Cerebro multi-IA: coordina Gemini, OpenAI, Groq, Cloudflare y Cursor en conjunto.
 
     Estrategias disponibles (config.ESTRATEGIA_ENSEMBLE):
     - "mejor":    Consulta todos en paralelo y sintetiza la mejor respuesta

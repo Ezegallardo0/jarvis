@@ -96,7 +96,6 @@ class Lanzador:
             config.MODELO_VISION,
             config.MODELO,
             config.MODELO_GEMINI,
-            config.MODELO_GROK,
             config.MODELO_OPENAI,
             config.MODELO_CURSOR,
             config.PROVEEDOR_IA_ALTERNATIVO,
@@ -220,7 +219,6 @@ class Lanzador:
         self.proveedores = {
             "Ollama (local)": "ollama",
             "Gemini (rápido)": "gemini",
-            "Grok (xAI)": "grok",
             "OpenAI / ChatGPT": "openai",
             "Groq": "groq",
             "Cloudflare Workers AI": "cloudflare",
@@ -1192,7 +1190,6 @@ class Lanzador:
     def _clave_entorno(proveedor):
         variable = {
             "gemini": "GEMINI_API_KEY",
-            "grok": "XAI_API_KEY",
             "openai": "OPENAI_API_KEY",
             "cursor": "CURSOR_API_KEY",
             "elevenlabs": "ELEVENLABS_API_KEY",
@@ -1332,8 +1329,7 @@ class Lanzador:
                 config.MODELO_VISION,
                 config.MODELO,
                 config.MODELO_GEMINI,
-                config.MODELO_GROK,
-                config.MODELO_OPENAI,
+                    config.MODELO_OPENAI,
                 config.MODELO_CURSOR,
                 config.PROVEEDOR_IA_ALTERNATIVO,
                 config.OLLAMA_HOST,
@@ -1362,8 +1358,7 @@ class Lanzador:
                 config.MODELO_VISION,
                 config.MODELO,
                 config.MODELO_GEMINI,
-                config.MODELO_GROK,
-                config.MODELO_OPENAI,
+                    config.MODELO_OPENAI,
                 config.MODELO_CURSOR,
                 config.PROVEEDOR_IA_ALTERNATIVO,
                 config.OLLAMA_HOST,
@@ -1379,6 +1374,18 @@ class Lanzador:
                 config.MODELO_CLOUDFLARE,
                 config.CLOUDFLARE_ACCOUNT_ID,
             )
+        modelos_rotos = {
+            "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.6-flash",
+            "gemini-3.8-flash", "gemini-4-argon", "gemini-2.5-flash", "gemini-2.0-flash",
+            "grok-4.7", "grok-4.6", "grok-4.5", "grok-4.3", "grok-3-mini",
+            "gpt-6-luna", "gpt-6-astra", "gpt-6.1-sol",
+            "@cf/zai-org/glm-4.7-flash",
+            "llama-3.3-70b-versatile",
+        }
+        def _modelo(clave, predeterminado):
+            valor = str(datos.get(clave, predeterminado) or predeterminado).strip()
+            return predeterminado if valor in modelos_rotos else valor
+
         return (
             datos.get("microfono", config.MICROFONO),
             datos.get("salida", config.AUDIO_SALIDA),
@@ -1393,14 +1400,13 @@ class Lanzador:
             datos.get("spotify_client_id", config.SPOTIFY_CLIENT_ID),
             datos.get("vision_modelo", config.MODELO_VISION),
             datos.get("modelo_ollama", config.MODELO),
-            datos.get("modelo_gemini", config.MODELO_GEMINI),
-            datos.get("modelo_grok", config.MODELO_GROK),
-            datos.get("modelo_openai", config.MODELO_OPENAI),
-            datos.get("modelo_cursor", config.MODELO_CURSOR),
+            _modelo("modelo_gemini", config.MODELO_GEMINI),
+            _modelo("modelo_openai", config.MODELO_OPENAI),
+            _modelo("modelo_cursor", config.MODELO_CURSOR),
             (
                 datos.get("proveedor_ia_alternativo", config.PROVEEDOR_IA_ALTERNATIVO)
                 if datos.get("proveedor_ia_alternativo", config.PROVEEDOR_IA_ALTERNATIVO)
-                in {"", "gemini", "grok", "openai", "groq", "cloudflare", "cursor"}
+                in {"", "gemini", "openai", "groq", "cloudflare", "cursor"}
                 else ""
             ),
             datos.get("ollama_host", config.OLLAMA_HOST),
@@ -1430,8 +1436,8 @@ class Lanzador:
                 if datos.get("estrategia_ensemble") in {"mejor", "rapido", "verificar", "votar"}
                 else config.ESTRATEGIA_ENSEMBLE
             ),
-            datos.get("modelo_groq_api", config.MODELO_GROQ_API),
-            datos.get("modelo_cloudflare", config.MODELO_CLOUDFLARE),
+            _modelo("modelo_groq_api", config.MODELO_GROQ_API),
+            _modelo("modelo_cloudflare", config.MODELO_CLOUDFLARE),
             str(datos.get("cloudflare_account_id", config.CLOUDFLARE_ACCOUNT_ID))[:100],
         )
 
@@ -1466,7 +1472,6 @@ class Lanzador:
                     "vision_modelo": config.MODELO_VISION,
                     "modelo_ollama": config.MODELO,
                     "modelo_gemini": config.MODELO_GEMINI,
-                    "modelo_grok": config.MODELO_GROK,
                     "modelo_openai": config.MODELO_OPENAI,
                     "modelo_groq_api": config.MODELO_GROQ_API,
                     "modelo_cloudflare": config.MODELO_CLOUDFLARE,
@@ -1688,7 +1693,7 @@ class Lanzador:
             if not otras_claves:
                 self.bus.publish("msg", rol="jarvis", texto=(
                     "Necesitas al menos una API key para iniciar Jarvis. "
-                    "Ingresa la clave de Gemini, Grok, OpenAI o Cursor desde Ajustes."
+                    "Ingresá la clave de Gemini, OpenAI, Groq, Cloudflare o Cursor desde Ajustes."
                 ))
                 self.bus.publish("ajustes")
                 return False
@@ -2220,7 +2225,6 @@ class Lanzador:
             "vision_modelo": config.MODELO_VISION,
             "modelo_ollama": config.MODELO,
             "modelo_gemini": config.MODELO_GEMINI,
-            "modelo_grok": config.MODELO_GROK,
             "modelo_openai": config.MODELO_OPENAI,
             "modelo_cursor": config.MODELO_CURSOR,
             "modelo_groq_api": config.MODELO_GROQ_API,
@@ -2284,7 +2288,7 @@ class Lanzador:
                     "proveedor": proveedor,
                     "modelo": "",
                     "estado": "no_disponible",
-                    "error": "La prueba de conexión abarca Gemini, Grok y OpenAI.",
+                    "error": "La prueba de conexión abarca los proveedores configurados.",
                 })
                 continue
             modelo = ai_providers.obtener_modelo(proveedor)
@@ -2389,7 +2393,6 @@ class Lanzador:
             raise ValueError("Indicá el nombre del modelo visual.")
         modelo_ollama = str(datos.get("modelo_ollama", "")).strip()[:200]
         modelo_gemini = str(datos.get("modelo_gemini", "")).strip()[:200]
-        modelo_grok = str(datos.get("modelo_grok", "")).strip()[:200]
         modelo_openai = str(datos.get("modelo_openai", "")).strip()[:200]
         modelo_cursor = str(datos.get("modelo_cursor", config.MODELO_CURSOR)).strip()[:200]
         modelo_groq_api = str(datos.get("modelo_groq_api", config.MODELO_GROQ_API)).strip()[:200]
@@ -2405,7 +2408,6 @@ class Lanzador:
         if not all((
             modelo_ollama,
             modelo_gemini,
-            modelo_grok,
             modelo_openai,
             modelo_groq_api,
             modelo_cloudflare,
@@ -2499,7 +2501,6 @@ class Lanzador:
         config.MODELO_VISION = vision_modelo
         config.MODELO = modelo_ollama
         config.MODELO_GEMINI = modelo_gemini
-        config.MODELO_GROK = modelo_grok
         config.MODELO_OPENAI = modelo_openai
         config.MODELO_CURSOR = modelo_cursor
         config.MODELO_GROQ_API = modelo_groq_api
@@ -2533,7 +2534,6 @@ class Lanzador:
                     "vision_modelo": vision_modelo,
                     "modelo_ollama": modelo_ollama,
                     "modelo_gemini": modelo_gemini,
-                    "modelo_grok": modelo_grok,
                     "modelo_openai": modelo_openai,
                     "modelo_cursor": modelo_cursor,
                     "modelo_groq_api": modelo_groq_api,

@@ -528,7 +528,6 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
   font-size:18px;font-weight:700;flex-shrink:0;
 }
 .ia-provider-card .provider-icon.gemini{background:linear-gradient(135deg,#4285f4,#34a853);color:#fff}
-.ia-provider-card .provider-icon.grok{background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff}
 .ia-provider-card .provider-icon.openai{background:linear-gradient(135deg,#10a37f,#0d8c6d);color:#fff}
 .ia-provider-card .provider-icon.cursor{background:linear-gradient(135deg,#7c3aed,#5b21b6);color:#fff}
 .ia-provider-card .provider-icon.ollama{background:linear-gradient(135deg,#334155,#1e293b);color:#fff}
@@ -605,7 +604,6 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
 .api-key-title .provider-icon.gemini{background:linear-gradient(135deg,#4285f4,#34a853)}
 .api-key-title .provider-icon.openai{background:linear-gradient(135deg,#10a37f,#0d8c6d)}
 .api-key-title .provider-icon.groq{background:linear-gradient(135deg,#f55036,#b52a25)}
-.api-key-title .provider-icon.grok{background:linear-gradient(135deg,#1a1a2e,#16213e)}
 .api-key-title .provider-icon.cursor{background:linear-gradient(135deg,#7c3aed,#5b21b6)}
 .api-key-title .provider-icon.cloudflare{background:linear-gradient(135deg,#f6821f,#e34c25)}
 .api-key-title h4{color:var(--tx);font-size:12px;margin:0}
@@ -835,24 +833,12 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
             <div class="ai-tile-model" id="model-gemini">gemini-3.5-flash</div>
           </div>
 
-          <!-- Grok xAI -->
-          <div class="ai-client-tile" id="tile-grok" onclick="post('/accion', {nombre:'ajustes'})">
-            <div class="ai-tile-top">
-              <div class="ai-tile-brand">
-                <div class="ai-tile-icon" style="background:#000;color:#fff;border:1px solid #334155">𝕏</div>
-                <span>Grok xAI</span>
-              </div>
-              <div class="ai-tile-dot" id="dot-grok"></div>
-            </div>
-            <div class="ai-tile-model" id="model-grok">grok-4.7</div>
-          </div>
-
-          <!-- Cursor Grok Free -->
+          <!-- Cursor -->
           <div class="ai-client-tile" id="tile-cursor" onclick="post('/accion', {nombre:'ajustes'})">
             <div class="ai-tile-top">
               <div class="ai-tile-brand">
                 <div class="ai-tile-icon" style="background:#0ea5e9;color:#fff">C</div>
-                <span>Cursor Grok</span>
+                <span>Cursor</span>
               </div>
               <div class="ai-tile-dot" id="dot-cursor"></div>
             </div>
@@ -1215,11 +1201,10 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
         <label for="cfg-proveedor">Proveedor Principal</label>
         <select id="cfg-proveedor">
           <option value="gemini">Gemini (Google)</option>
-          <option value="grok">Grok (xAI)</option>
           <option value="openai">OpenAI (ChatGPT)</option>
           <option value="groq">Groq</option>
           <option value="cloudflare">Cloudflare Workers AI</option>
-          <option value="cursor">Cursor (Grok Free)</option>
+          <option value="cursor">Cursor</option>
           <option value="ollama">Ollama · Local</option>
         </select>
         <p class="hint" id="cfg-ai-active"></p>
@@ -1228,11 +1213,10 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
         <select id="cfg-ai-fallback">
           <option value="">Desactivado</option>
           <option value="gemini">Gemini</option>
-          <option value="grok">Grok · xAI</option>
           <option value="openai">OpenAI</option>
           <option value="groq">Groq</option>
           <option value="cloudflare">Cloudflare Workers AI</option>
-          <option value="cursor">Cursor · Grok Free</option>
+          <option value="cursor">Cursor</option>
         </select>
         <p class="hint" id="cfg-ai-fallback-status">Se prueba si el principal falla.</p>
 
@@ -1249,10 +1233,6 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
         <input id="cfg-modelo-gemini" list="cfg-modelos-gemini" autocomplete="off">
         <datalist id="cfg-modelos-gemini"></datalist>
 
-        <label for="cfg-modelo-grok">Modelo de Grok (xAI)</label>
-        <input id="cfg-modelo-grok" list="cfg-modelos-grok" autocomplete="off">
-        <datalist id="cfg-modelos-grok"></datalist>
-
         <label for="cfg-modelo-openai">Modelo de OpenAI</label>
         <input id="cfg-modelo-openai" list="cfg-modelos-openai" autocomplete="off">
         <datalist id="cfg-modelos-openai"></datalist>
@@ -1265,7 +1245,7 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
         <input id="cfg-modelo-cloudflare" list="cfg-modelos-cloudflare" autocomplete="off">
         <datalist id="cfg-modelos-cloudflare"></datalist>
 
-        <label for="cfg-modelo-cursor">Modelo de Cursor (Grok Free)</label>
+        <label for="cfg-modelo-cursor">Modelo de Cursor</label>
         <input id="cfg-modelo-cursor" list="cfg-modelos-cursor" autocomplete="off">
         <datalist id="cfg-modelos-cursor"></datalist>
 
@@ -1398,13 +1378,6 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
             <label class="check-row"><input type="checkbox" data-clear-api-key="openai"> Eliminar clave guardada</label>
           </section>
           <section class="api-key-card">
-            <div class="api-key-title"><span class="provider-icon grok">X</span><div><h4>Grok</h4><p>xAI</p></div></div>
-            <label for="cfg-key-grok">API Key</label>
-            <input id="cfg-key-grok" data-api-key="grok" type="password" autocomplete="new-password" placeholder="Pegá tu API key">
-            <p class="hint" id="api-status-grok" role="status"></p>
-            <label class="check-row"><input type="checkbox" data-clear-api-key="grok"> Eliminar clave guardada</label>
-          </section>
-          <section class="api-key-card">
             <div class="api-key-title"><span class="provider-icon groq">GQ</span><div><h4>Groq</h4><p>Groq API</p></div></div>
             <label for="cfg-key-groq">API Key</label>
             <input id="cfg-key-groq" data-api-key="groq" type="password" autocomplete="new-password" placeholder="Pegá tu API key">
@@ -1412,7 +1385,7 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
             <label class="check-row"><input type="checkbox" data-clear-api-key="groq"> Eliminar clave guardada</label>
           </section>
           <section class="api-key-card">
-            <div class="api-key-title"><span class="provider-icon cursor">C</span><div><h4>Cursor</h4><p>Grok Free</p></div></div>
+            <div class="api-key-title"><span class="provider-icon cursor">C</span><div><h4>Cursor</h4><p>Cursor</p></div></div>
             <label for="cfg-key-cursor">API Key</label>
             <input id="cfg-key-cursor" data-api-key="cursor" type="password" autocomplete="new-password" placeholder="Pegá tu API key">
             <p class="hint" id="api-status-cursor" role="status"></p>
@@ -1770,7 +1743,7 @@ function modeloDeProveedor(proveedor, datos){
 }
 
 function actualizarEstadoApiKeys(datos){
-  for(const proveedor of ['gemini','openai','grok','groq','cursor','cloudflare']){
+  for(const proveedor of ['gemini','openai','groq','cursor','cloudflare']){
     const guardada = datos.api_keys_guardadas?.[proveedor];
     const mascara = datos.api_keys_mascaradas?.[proveedor];
     const estado = guardada
@@ -1826,7 +1799,6 @@ async function abrirAjustes(){
     $('cfg-modelo-ollama').value = d.modelo_ollama || '';
     $('cfg-ollama-host').value = d.ollama_host || '';
     $('cfg-modelo-gemini').value = d.modelo_gemini || '';
-    $('cfg-modelo-grok').value = d.modelo_grok || '';
     $('cfg-modelo-openai').value = d.modelo_openai || '';
     $('cfg-modelo-cursor').value = d.modelo_cursor || '';
     $('cfg-modelo-groq-api').value = d.modelo_groq_api || '';
@@ -1843,14 +1815,12 @@ async function abrirAjustes(){
     // Actualizar dots en UI
     $('dot-openai').className = 'ai-tile-dot ' + (activas.includes('openai') ? 'connected' : '');
     $('dot-gemini').className = 'ai-tile-dot ' + (activas.includes('gemini') ? 'connected' : '');
-    $('dot-grok').className = 'ai-tile-dot ' + (activas.includes('grok') ? 'connected' : '');
     $('dot-cursor').className = 'ai-tile-dot ' + (activas.includes('cursor') ? 'connected' : '');
     if(d.modelo_openai) $('model-openai').textContent = d.modelo_openai;
     if(d.modelo_gemini) $('model-gemini').textContent = d.modelo_gemini;
-    if(d.modelo_grok) $('model-grok').textContent = d.modelo_grok;
     if(d.modelo_cursor) $('model-cursor').textContent = d.modelo_cursor;
 
-    for(const proveedor of ['gemini','grok','openai','cursor','groq','cloudflare']){
+    for(const proveedor of ['gemini','openai','cursor','groq','cloudflare']){
       const listaId = proveedor === 'groq' ? 'groq' : proveedor;
       const lista = $(`cfg-modelos-${listaId}`);
       if(lista){
@@ -1928,7 +1898,6 @@ function configuracionFormulario(){
     ollama_host:$('cfg-ollama-host').value,
     cloudflare_account_id:$('cfg-cloudflare-account-id').value,
     modelo_gemini:$('cfg-modelo-gemini').value,
-    modelo_grok:$('cfg-modelo-grok').value,
     modelo_openai:$('cfg-modelo-openai').value,
     modelo_cursor:$('cfg-modelo-cursor').value,
     modelo_groq_api:$('cfg-modelo-groq-api').value,
