@@ -54,6 +54,7 @@ def _obtener_clave(proveedor):
         "groq": "GROQ_API_KEY",
         "cloudflare": "CLOUDFLARE_API_KEY",
         "cursor": "CURSOR_API_KEY",
+        "elevenlabs": "ELEVENLABS_API_KEY",
     }.get(proveedor, "")
     return os.environ.get(env_var, "") if env_var else ""
 
@@ -95,33 +96,48 @@ def main():
             print(f"No pude iniciar el micrófono/reconocimiento ({e}). Sigo en modo texto.")
             config.USAR_VOZ = False
 
+    clave_elevenlabs = _obtener_clave("elevenlabs")
+
+    def hablar(texto):
+        return voice.hablar(texto, api_key=clave_elevenlabs, oido=oido)
+
     def confirmar(texto):
-        voice.hablar(texto)
+        hablar(texto)
         if oido:
             respuesta = voice.normalizar(oido.transcribir(oido.grabar_frase(espera_max=8)))
             print(f"Tú (confirmación): {respuesta}")
             return any(p in respuesta.split() for p in ("si", "dale", "confirmo", "ok", "adelante", "sip"))
         return input("[s/n]: ").strip().lower().startswith(("s", "y"))
 
-    tools.NOTIFICAR = voice.hablar
+    tools.NOTIFICAR = hablar
     tools.CONFIRMAR = confirmar
+
+    if tools.permiso_control_pc() is None:
+        autorizacion = input(
+            "¿Autorizás a Jarvis a controlar este ordenador cuando se lo pidas? "
+            "Podrá abrir aplicaciones y leer, crear, modificar o eliminar archivos "
+            "en ubicaciones accesibles para tu usuario, y usar integraciones conectadas "
+            "para enviar o publicar cuando se lo pidas. La decisión se guarda para "
+            "próximos inicios y se puede revocar en Configuración. [s/n]: "
+        ).strip().lower().startswith(("s", "y"))
+        tools.establecer_permiso_control(autorizacion)
 
     def atender(pedido):
         """Procesa un pedido. Devuelve False si hay que salir."""
         if any(s in voice.normalizar(pedido) for s in SALIDAS):
-            voice.hablar("Hasta luego.")
+            hablar("Hasta luego.")
             return False
         respuesta_modo = voice.cambiar_modo_silencio(pedido)
         if respuesta_modo:
-            voice.hablar(respuesta_modo)
+            hablar(respuesta_modo)
             return True
         try:
-            voice.hablar(cerebro.responder(pedido))
+            hablar(cerebro.responder(pedido))
         except Exception as e:
-            voice.hablar(f"Tuve un problema: {e}")
+            hablar(f"Tuve un problema: {e}")
         return True
 
-    voice.hablar(f"{config.NOMBRE} en línea.")
+    hablar(f"{config.NOMBRE} en línea.")
     try:
         if oido:
             while True:

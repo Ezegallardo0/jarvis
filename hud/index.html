@@ -584,6 +584,30 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
 }
 #settings-modal .cfg-content button:hover{background:var(--cy);color:#031321;border-color:var(--cy)}
 #settings-modal button.pri{background:var(--cy);color:#031321;font-weight:700}
+#settings-modal .cfg-footer .cfg-btns button{
+  min-width:150px;padding:10px 18px;border-radius:8px;font-size:11px;
+  font-weight:700;letter-spacing:.1em;box-shadow:0 4px 14px rgba(0,0,0,.25);
+}
+#settings-modal .cfg-footer .cfg-btns .cfg-cancel{
+  color:var(--tx-sec);background:rgba(148,163,184,.08);border-color:rgba(148,163,184,.3);
+}
+#settings-modal .cfg-footer .cfg-btns .cfg-cancel:hover{
+  color:var(--tx);background:rgba(148,163,184,.18);border-color:var(--tx-sec);
+}
+#settings-modal .cfg-footer .cfg-btns .cfg-save{
+  color:#031321;background:linear-gradient(135deg,var(--cy-bright),var(--cy));
+  border-color:var(--cy-bright);box-shadow:0 0 16px var(--cy-g);
+}
+#settings-modal .cfg-footer .cfg-btns .cfg-save:hover{
+  color:#01070c;filter:brightness(1.12);transform:translateY(-1px);
+  box-shadow:0 0 24px var(--cy-g);
+}
+#settings-modal .cfg-footer .cfg-btns button:focus-visible{
+  outline:2px solid var(--cy-bright);outline-offset:3px;
+}
+#settings-modal .cfg-footer .cfg-btns button:disabled{
+  opacity:.55;cursor:wait;transform:none;
+}
 #settings-modal .hint{color:var(--dim);font-size:10px;line-height:1.45;margin-top:6px}
 #settings-modal .check-row{display:flex;align-items:center;gap:8px;color:var(--tx-sec);font-size:11px;margin-top:8px}
 .cfg-section-block{
@@ -1088,6 +1112,10 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
       <div class="hud-mic-btn" id="btn-modo" title="Alternar modo Voz/Texto">
         <svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm-1-9c0-.55.45-1 1-1s1 .45 1 1v6c0 .55-.45 1-1 1s-1-.45-1-1V5zm6 6c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
       </div>
+      <button class="footer-icon-btn" id="btn-adjunto" type="button" title="Adjuntar archivo de texto">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M16.5 6.5v11a4.5 4.5 0 0 1-9 0v-12a3 3 0 0 1 6 0v11a1.5 1.5 0 0 1-3 0v-10h-2v10a3.5 3.5 0 0 0 7 0v-11a5 5 0 0 0-10 0v12a6.5 6.5 0 0 0 13 0v-11z"/></svg>
+      </button>
+      <input id="archivo-adjunto" type="file" accept=".txt,.md,.csv,.json,.html,.css,.js,.py,.xml" hidden>
     </div>
 
     <form class="command-form" id="form">
@@ -1254,6 +1282,16 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
         <label for="cfg-ollama-host">Dirección Host de Ollama</label>
         <input id="cfg-ollama-host" autocomplete="url">
         </section>
+
+        <section class="cfg-section-block">
+          <h4>Permiso de control del ordenador</h4>
+          <label class="check-row" for="cfg-permiso-control">
+            <input id="cfg-permiso-control" type="checkbox">
+            Autorizar a Jarvis a controlar este ordenador
+          </label>
+          <p class="hint">Al activarlo, las acciones que pidas no volverán a solicitar confirmación individual. Jarvis actuará solo por instrucciones tuyas. Puede abrir las aplicaciones instaladas, leer, crear, modificar o eliminar archivos accesibles para tu usuario, y usar integraciones conectadas para enviar o publicar cuando se lo pidas. Desactivalo aquí para revocar el permiso.</p>
+        </section>
+
         <section class="cfg-section-block">
           <h4>Reconocimiento y sistema</h4>
           <label for="cfg-modelo-whisper">Modelo Whisper</label>
@@ -1297,7 +1335,7 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
           <option value="elevenlabs">ElevenLabs</option>
         </select>
         <label for="cfg-elevenlabs-key">API Key ElevenLabs</label>
-        <input id="cfg-elevenlabs-key" type="password" autocomplete="new-password" placeholder="Vacío = conservar">
+        <input id="cfg-elevenlabs-key" type="text" autocomplete="off" placeholder="API key de ElevenLabs">
         <label class="check-row"><input id="cfg-borrar-elevenlabs" type="checkbox"> Borrar clave ElevenLabs</label>
         <p class="hint" id="cfg-elevenlabs-status"></p>
         <label for="cfg-voice-id">Voice ID</label>
@@ -1331,7 +1369,7 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
           <div>
             <label for="cfg-github">Token de GitHub</label>
-            <input id="cfg-github" type="password" autocomplete="new-password" placeholder="Vacío = conservar">
+            <input id="cfg-github" type="text" autocomplete="off" placeholder="Token de GitHub">
             <label class="check-row"><input id="cfg-borrar-github" type="checkbox"> Borrar token</label>
             <div class="settings-actions">
               <button id="cfg-test-github" type="button">Probar GitHub</button>
@@ -1361,40 +1399,40 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
 
       <section class="cfg-page" id="page-apikey" role="tabpanel" aria-labelledby="tab-apikey">
         <h3>API Keys</h3>
-        <p class="hint">Las claves se guardan localmente en el Administrador de credenciales de Windows. Dejá un campo vacío para conservar la clave actual.</p>
+        <p class="hint">Las claves se guardan localmente en el Administrador de credenciales de Windows y se muestran en este HUD local. No compartas la pantalla mientras estén visibles. Desmarcá «Eliminar clave guardada» para conservarlas.</p>
         <div class="api-key-grid">
           <section class="api-key-card">
             <div class="api-key-title"><span class="provider-icon gemini">G</span><div><h4>Gemini</h4><p>Google AI</p></div></div>
             <label for="cfg-key-gemini">API Key</label>
-            <input id="cfg-key-gemini" data-api-key="gemini" type="password" autocomplete="new-password" placeholder="Pegá tu API key">
+            <input id="cfg-key-gemini" data-api-key="gemini" type="text" autocomplete="off" placeholder="Pegá tu API key">
             <p class="hint" id="api-status-gemini" role="status"></p>
             <label class="check-row"><input type="checkbox" data-clear-api-key="gemini"> Eliminar clave guardada</label>
           </section>
           <section class="api-key-card">
             <div class="api-key-title"><span class="provider-icon openai">O</span><div><h4>OpenAI</h4><p>OpenAI API</p></div></div>
             <label for="cfg-key-openai">API Key</label>
-            <input id="cfg-key-openai" data-api-key="openai" type="password" autocomplete="new-password" placeholder="Pegá tu API key">
+            <input id="cfg-key-openai" data-api-key="openai" type="text" autocomplete="off" placeholder="Pegá tu API key">
             <p class="hint" id="api-status-openai" role="status"></p>
             <label class="check-row"><input type="checkbox" data-clear-api-key="openai"> Eliminar clave guardada</label>
           </section>
           <section class="api-key-card">
             <div class="api-key-title"><span class="provider-icon groq">GQ</span><div><h4>Groq</h4><p>Groq API</p></div></div>
             <label for="cfg-key-groq">API Key</label>
-            <input id="cfg-key-groq" data-api-key="groq" type="password" autocomplete="new-password" placeholder="Pegá tu API key">
+            <input id="cfg-key-groq" data-api-key="groq" type="text" autocomplete="off" placeholder="Pegá tu API key">
             <p class="hint" id="api-status-groq" role="status"></p>
             <label class="check-row"><input type="checkbox" data-clear-api-key="groq"> Eliminar clave guardada</label>
           </section>
           <section class="api-key-card">
             <div class="api-key-title"><span class="provider-icon cursor">C</span><div><h4>Cursor</h4><p>Cursor</p></div></div>
             <label for="cfg-key-cursor">API Key</label>
-            <input id="cfg-key-cursor" data-api-key="cursor" type="password" autocomplete="new-password" placeholder="Pegá tu API key">
+            <input id="cfg-key-cursor" data-api-key="cursor" type="text" autocomplete="off" placeholder="Pegá tu API key">
             <p class="hint" id="api-status-cursor" role="status"></p>
             <label class="check-row"><input type="checkbox" data-clear-api-key="cursor"> Eliminar clave guardada</label>
           </section>
           <section class="api-key-card api-key-cloudflare">
             <div class="api-key-title"><span class="provider-icon cloudflare">CF</span><div><h4>Cloudflare Workers AI</h4><p>Una sola API key para todos los modelos</p></div></div>
             <label for="cfg-key-cloudflare">API Token</label>
-            <input id="cfg-key-cloudflare" data-api-key="cloudflare" type="password" autocomplete="new-password" placeholder="Pegá tu API token">
+            <input id="cfg-key-cloudflare" data-api-key="cloudflare" type="text" autocomplete="off" placeholder="Pegá tu API token">
             <p class="hint" id="api-status-cloudflare" role="status"></p>
             <label class="check-row"><input type="checkbox" data-clear-api-key="cloudflare"> Eliminar clave guardada</label>
             <div class="cf-model-list" aria-label="Modelos Cloudflare disponibles">
@@ -1412,8 +1450,8 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
     <footer class="cfg-footer">
       <div id="settings-status" class="cfg-status" role="status" aria-live="polite"></div>
       <div class="cfg-btns">
-        <button id="cfg-cerrar-bottom" type="button">Cancelar</button>
-        <button id="cfg-guardar" class="pri" type="button">Guardar Configuración</button>
+        <button id="cfg-cerrar-bottom" class="cfg-cancel" type="button">Cancelar</button>
+        <button id="cfg-guardar" class="pri cfg-save" type="button">Guardar cambios</button>
       </div>
     </footer>
   </div>
@@ -1428,7 +1466,10 @@ const H = {'Content-Type':'application/json','X-Token':T};
 const post = async (p,b) => {
   try{
     const r = await fetch(p,{method:'POST',headers:H,body:JSON.stringify(b||{})});
-    const d = await r.json();
+    const tipo = r.headers.get('content-type') || '';
+    const d = tipo.includes('application/json')
+      ? await r.json()
+      : {error: await r.text()};
     if(!r.ok || d.ok === false) throw new Error(d.error || `Error HTTP ${r.status}`);
     return d;
   }catch(e){ setEstado('desconectado', e.message || 'No se pudo completar la acción.'); return null; }
@@ -1683,6 +1724,26 @@ $('form').onsubmit = e => {
   const v = $('txt').value.trim();
   if(v){ post('/say', {texto: v}); $('txt').value = ''; }
 };
+$('btn-adjunto').onclick = () => $('archivo-adjunto').click();
+$('archivo-adjunto').onchange = async e => {
+  const archivo = e.target.files[0];
+  e.target.value = '';
+  if(!archivo) return;
+  if(archivo.size > 50000){
+    alert('El archivo no puede superar los 50 KB.');
+    return;
+  }
+  if(!confirm(`Se guardará una copia local y se enviará el contenido de «${archivo.name}» al proveedor o proveedores de IA configurados. ¿Continuar?`)) return;
+  const pregunta = prompt('¿Qué querés que haga con el archivo?', 'Leé el archivo adjunto y resumilo.');
+  if(pregunta === null) return;
+  try{
+    const contenido = new TextDecoder('utf-8', {fatal:true}).decode(await archivo.arrayBuffer());
+    const respuesta = await post('/upload', {nombre: archivo.name, contenido, pregunta});
+    if(respuesta) setEstado('espera', respuesta.resultado || 'Adjunto enviado al chat.');
+  }catch(error){
+    setEstado('desconectado', 'No pude leer el archivo: ' + (error.message || error));
+  }
+};
 $('si').onclick = () => { post('/confirm', {ok:true}); $('modal').style.display = 'none'; };
 $('no').onclick = () => { post('/confirm', {ok:false}); $('modal').style.display = 'none'; };
 document.querySelectorAll('[data-sp]').forEach(b => b.onclick = () => post('/spotify', {accion: b.dataset.sp}));
@@ -1755,6 +1816,14 @@ function actualizarEstadoApiKeys(datos){
   }
 }
 
+function cargarApiKeys(datos){
+  for(const input of document.querySelectorAll('[data-api-key]')){
+    input.value = datos.api_keys?.[input.dataset.apiKey] || '';
+  }
+  $('cfg-elevenlabs-key').value = datos.elevenlabs_api_key || '';
+  $('cfg-github').value = datos.github_token || '';
+}
+
 function llenarSelect(id, dispositivos, seleccionado, predeterminado){
   const el = $(id);
   el.replaceChildren();
@@ -1789,6 +1858,7 @@ async function abrirAjustes(){
     llenarSelect('cfg-microfono', d.microfonos, d.microfono, 'Predeterminado de Windows');
     llenarSelect('cfg-salida', d.salidas, d.salida, 'Predeterminada de Windows');
     $('cfg-proveedor').value = d.proveedor;
+    $('cfg-permiso-control').checked = d.permiso_control_pc === true;
     $('cfg-ai-fallback').value = d.proveedor_ia_alternativo || '';
     $('cfg-ai-active').textContent = `Activo: ${d.proveedor} · ${modeloDeProveedor(d.proveedor, d)}`;
     $('cfg-tts').value = d.proveedor_tts;
@@ -1844,6 +1914,7 @@ async function abrirAjustes(){
     volumenEfectos = Number($('cfg-volumen-efectos').value) / 100;
 
     actualizarEstadoApiKeys(d);
+    cargarApiKeys(d);
     
     $('cfg-elevenlabs-status').textContent = d.elevenlabs_key_guardada ? 'Clave guardada en Windows.' : 'ElevenLabs sin configurar.';
     $('cfg-github-status').textContent = d.github_token_guardado ? 'Token de GitHub guardado.' : 'GitHub sin configurar.';
@@ -1883,6 +1954,7 @@ function configuracionFormulario(){
     microfono:$('cfg-microfono').value,
     salida:$('cfg-salida').value,
     proveedor:$('cfg-proveedor').value,
+    permiso_control_pc:$('cfg-permiso-control').checked,
     api_keys:Object.fromEntries(Array.from(document.querySelectorAll('[data-api-key]')).map(input => [input.dataset.apiKey, input.value])),
     borrar_api_keys:Object.fromEntries(Array.from(document.querySelectorAll('[data-clear-api-key]')).map(input => [input.dataset.clearApiKey, input.checked])),
     proveedor_tts:$('cfg-tts').value,
@@ -1919,11 +1991,18 @@ async function guardarAjustes(){
   const datos = configuracionFormulario();
   const r = await post('/settings', datos);
   if(!r) { $('settings-status').textContent = 'No se pudo guardar. Revisá la conexión e intentá de nuevo.'; return null; }
-  document.querySelectorAll('[data-api-key]').forEach(input => { input.value = ''; });
+  cargarApiKeys(r.configuracion);
   document.querySelectorAll('[data-clear-api-key]').forEach(input => { input.checked = false; });
   actualizarEstadoApiKeys(r.configuracion);
+  $('cfg-permiso-control').checked = r.configuracion.permiso_control_pc === true;
   $('cfg-ai-active').textContent = `Activo: ${r.configuracion.proveedor} · ${modeloDeProveedor(r.configuracion.proveedor, r.configuracion)}`;
   for(const id of ['cfg-borrar-elevenlabs','cfg-borrar-github']) $(id).checked = false;
+  $('cfg-elevenlabs-status').textContent = r.configuracion.elevenlabs_key_guardada
+    ? 'Clave guardada en Windows.'
+    : 'ElevenLabs sin configurar.';
+  $('cfg-github-status').textContent = r.configuracion.github_token_guardado
+    ? 'Token de GitHub guardado.'
+    : 'GitHub sin configurar.';
   $('settings-status').textContent = r.configuracion?.requiere_reinicio
     ? 'Configuración guardada. Reiniciá Jarvis para aplicar cambios de hardware.'
     : 'Configuración guardada con éxito.';

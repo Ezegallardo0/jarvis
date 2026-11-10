@@ -1191,6 +1191,8 @@ class Lanzador:
         variable = {
             "gemini": "GEMINI_API_KEY",
             "openai": "OPENAI_API_KEY",
+            "groq": "GROQ_API_KEY",
+            "cloudflare": "CLOUDFLARE_API_KEY",
             "cursor": "CURSOR_API_KEY",
             "elevenlabs": "ELEVENLABS_API_KEY",
             "github": "GITHUB_TOKEN",
@@ -1675,6 +1677,30 @@ class Lanzador:
     def iniciar(self, texto):
         if self.asistente_activo:
             return True
+        import tools
+
+        try:
+            permiso = tools.permiso_control_pc()
+            if permiso is None:
+                permiso = messagebox.askyesno(
+                    "Permiso para controlar el ordenador",
+                    "¿Autorizás a Jarvis a controlar este ordenador cuando se lo pidas?\n\n"
+                    "Con permiso, podrá abrir aplicaciones y leer, crear, modificar o "
+                    "eliminar archivos en ubicaciones accesibles para tu usuario, y "
+                    "usar integraciones conectadas para enviar o publicar cuando se "
+                    "lo pidas. Las acciones solo se ejecutan ante instrucciones tuyas. "
+                    "La autorización se guarda para próximos inicios y se puede revocar "
+                    "en Configuración.",
+                    parent=self.raiz,
+                )
+                tools.establecer_permiso_control(permiso)
+        except (OSError, ValueError) as error:
+            messagebox.showerror(
+                "No se pudo guardar el permiso",
+                f"No iniciaré acciones del ordenador porque no pude guardar el permiso: {error}",
+                parent=self.raiz,
+            )
+            return False
         proveedor = config.PROVEEDOR_IA
         try:
             api_key = self._clave_guardada_o_entorno(proveedor)
@@ -1809,6 +1835,10 @@ class Lanzador:
         self._encolar_pedido(texto, "texto")
 
     def _confirmar(self, texto):
+        import tools
+
+        if tools.permiso_control_pc() is True:
+            return True
         if self.bus.hay_hud():
             return self.bus.preguntar(texto, timeout=60)
         resultado = threading.Event()
@@ -2151,6 +2181,8 @@ class Lanzador:
         self._encolar_pedido(texto, "texto")
 
     def _configuracion_hud(self):
+        import tools
+
         dispositivos = sd.query_devices()
         apis = sd.query_hostapis()
         microfonos = []
@@ -2191,8 +2223,10 @@ class Lanzador:
 
         proveedor = config.PROVEEDOR_IA
         claves_mascaradas = {}
+        claves_api = {}
         for nombre in ai_providers.PROVEEDORES:
             clave = self._clave_guardada_o_entorno(nombre)
+            claves_api[nombre] = clave
             if clave:
                 claves_mascaradas[nombre] = f"••••••{clave[-4:]}"
         claves_guardadas = {
@@ -2212,14 +2246,20 @@ class Lanzador:
             "api_keys_guardadas": claves_guardadas,
             "api_key_mascarada": claves_mascaradas.get(proveedor, ""),
             "api_keys_mascaradas": claves_mascaradas,
+            "api_keys": claves_api,
             "proveedor_ia_alternativo": config.PROVEEDOR_IA_ALTERNATIVO,
             "clave_alternativa_guardada": bool(
                 claves_guardadas.get(config.PROVEEDOR_IA_ALTERNATIVO, False)
             ),
             "proveedor_tts": config.PROVEEDOR_TTS,
-            "elevenlabs_key_guardada": self._clave_local_guardada("elevenlabs"),
+            "elevenlabs_key_guardada": bool(
+                self._clave_guardada_o_entorno("elevenlabs")
+            ),
+            "elevenlabs_api_key": self._clave_guardada_o_entorno("elevenlabs"),
             "elevenlabs_voice_id": config.ELEVENLABS_VOICE_ID,
             "github_token_guardado": self._clave_local_guardada("github"),
+            "github_token": self._clave_guardada_o_entorno("github"),
+            "permiso_control_pc": tools.permiso_control_pc() is True,
             "spotify_client_id": config.SPOTIFY_CLIENT_ID,
             "ubicacion": config.UBICACION,
             "vision_modelo": config.MODELO_VISION,
@@ -2447,27 +2487,30 @@ class Lanzador:
             raise ValueError("La selección de claves para eliminar no es válida.")
         clave_elevenlabs = str(datos.get("elevenlabs_api_key", "")).strip()
         token_github = str(datos.get("github_token", "")).strip()
+        permiso_control_pc = datos.get("permiso_control_pc")
+        if permiso_control_pc is not None and not isinstance(permiso_control_pc, bool):
+            raise ValueError("El permiso de control no tiene un valor válido.")
 
         if proveedor == "ollama" and (clave_ia or datos.get("borrar_api_key")):
             raise ValueError("Ollama es local y no admite una API key.")
-        if clave_ia:
-            self._guardar_clave(proveedor, clave_ia)
-        elif datos.get("borrar_api_key"):
+        if datos.get("borrar_api_key"):
             self._eliminar_clave(proveedor)
+        elif clave_ia:
+            self._guardar_clave(proveedor, clave_ia)
         for codigo in ai_providers.PROVEEDORES:
             clave = str(claves_api.get(codigo, "")).strip()
-            if clave:
-                self._guardar_clave(codigo, clave)
-            elif borrar_claves_api.get(codigo):
+            if borrar_claves_api.get(codigo):
                 self._eliminar_clave(codigo)
-        if clave_elevenlabs:
-            self._guardar_clave("elevenlabs", clave_elevenlabs)
-        elif datos.get("borrar_elevenlabs_key"):
+            elif clave:
+                self._guardar_clave(codigo, clave)
+        if datos.get("borrar_elevenlabs_key"):
             self._eliminar_clave("elevenlabs")
-        if token_github:
-            self._guardar_clave("github", token_github)
-        elif datos.get("borrar_github_token"):
+        elif clave_elevenlabs:
+            self._guardar_clave("elevenlabs", clave_elevenlabs)
+        if datos.get("borrar_github_token"):
             self._eliminar_clave("github")
+        elif token_github:
+            self._guardar_clave("github", token_github)
 
         # Validar que haya al menos 1 API key si no es Ollama
         if proveedor != "ollama":
@@ -2556,6 +2599,13 @@ class Lanzador:
             encoding="utf-8",
         )
         temporal.replace(ruta)
+        import tools
+
+        if permiso_control_pc is not None:
+            tools.establecer_permiso_control(
+                permiso_control_pc
+            )
+        self.elevenlabs_api_key = self._clave_guardada_o_entorno("elevenlabs")
         self._publicar_info()
         configuracion = self._configuracion_hud()
         configuracion["requiere_reinicio"] = requiere_reinicio
@@ -2623,7 +2673,9 @@ class Lanzador:
         return f"Conectado como {usuario}. Búsquedas de solo lectura."
 
     def _detectar_ubicacion_hud(self):
-        if not self.bus.preguntar(
+        import tools
+
+        if tools.permiso_control_pc() is not True and not self.bus.preguntar(
             "Jarvis enviará tu dirección IP a ipapi.co para estimar ciudad y región. "
             "La ubicación puede ser imprecisa. ¿Querés continuar?",
             timeout=60,

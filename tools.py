@@ -4,12 +4,14 @@ import datetime
 import json
 import math
 import os
+import random
 import re
 import shutil
 import subprocess
 import threading
 import tempfile
 import time
+import unicodedata
 import webbrowser
 import zipfile
 from pathlib import Path
@@ -28,6 +30,8 @@ _EXTENSIONES_TEXTO = {
     ".csv", ".css", ".html", ".js", ".json", ".md", ".py", ".txt", ".xml"
 }
 _MAX_TEXTO_ARCHIVO = 500_000
+_APLICACIONES_CACHE = None
+_APLICACIONES_CACHE_HASTA = 0.0
 
 
 def NOTIFICAR(texto):  # main.py lo reemplaza para hablar en voz alta
@@ -52,6 +56,34 @@ def reiniciar_detencion():
 
 def detencion_solicitada():
     return _EVENTO_DETENCION.is_set()
+
+
+def permiso_control_pc():
+    """Devuelve True/False si ya hay una decisión, o None antes de pedirla."""
+    ruta = config.CARPETA_DATOS / "permisos.json"
+    if not ruta.exists():
+        return None
+    datos = json.loads(ruta.read_text(encoding="utf-8"))
+    permiso = datos.get("control_pc")
+    if not isinstance(permiso, bool):
+        raise ValueError(f"El permiso de control está dañado: {ruta}")
+    return permiso
+
+
+def establecer_permiso_control(autorizado):
+    if not isinstance(autorizado, bool):
+        raise TypeError("El permiso de control debe ser verdadero o falso.")
+    carpeta = config.CARPETA_DATOS
+    carpeta.mkdir(parents=True, exist_ok=True)
+    ruta = carpeta / "permisos.json"
+    if ruta.is_symlink():
+        raise OSError("El archivo de permisos no puede ser un enlace simbólico.")
+    temporal = ruta.with_suffix(".tmp")
+    temporal.write_text(
+        json.dumps({"control_pc": autorizado}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    temporal.replace(ruta)
 
 
 def _verificar_detencion():
@@ -110,23 +142,17 @@ def ejecutar(nombre, args):
     if detencion_solicitada():
         return "Acción cancelada antes de empezar por solicitud del usuario."
     args = args or {}
+    if h["confirmar"] and permiso_control_pc() is not True:
+        return (
+            "No puedo ejecutar esa acción hasta que autorices el control del "
+            "ordenador en el inicio o en Configuración."
+        )
     try:
         registrar_accion(nombre, "iniciada")
     except OSError as error:
         return f"No ejecuté {nombre}: no pude guardar el registro de acciones ({error})."
     try:
         _verificar_detencion()
-        if h["confirmar"]:
-            texto = h["texto_confirmacion"]
-            if callable(texto):
-                pregunta = texto(**args)
-            elif texto:
-                pregunta = texto.format(**args)
-            else:
-                pregunta = f"Voy a ejecutar {nombre} con {json.dumps(args, ensure_ascii=False)}. ¿Confirmás?"
-            if not CONFIRMAR(pregunta):
-                registrar_accion(nombre, "cancelada")
-                return "El usuario canceló la acción."
         _verificar_detencion()
         resultado = str(h["fn"](**args))
     except AutomatizacionDetenida:
@@ -156,6 +182,8 @@ def ejecutar(nombre, args):
 
 def _ruta_segura(ruta):
     p = Path(ruta).expanduser().resolve()
+    if permiso_control_pc() is True:
+        return p
     for base in config.CARPETAS_PERMITIDAS:
         try:
             p.relative_to(base.resolve())
@@ -514,44 +542,235 @@ ALIAS_APPS = {
     "configuración": "configuracion",
     "ajustes": "configuracion",
     "google chrome": "chrome",
+    "microsoft edge": "edge",
+    "microsoft word": "word",
+    "microsoft excel": "excel",
     "visual studio code": "vscode",
+    "vs code": "vscode",
+    "vscode": "vscode",
     "code": "vscode",
 }
 
 
-@herramienta(
-    "Abre sin pedir confirmación una aplicación de la PC solo cuando el usuario lo solicite explícitamente. "
-    "El nombre debe ser exactamente uno de la lista permitida; no uses esta herramienta para otras acciones.",
-    {"nombre": {"type": "string", "enum": list(config.APPS), "description": "Nombre exacto de la aplicación"}},
-    ["nombre"],
-)
-def abrir_aplicacion(nombre):
+def _normalizar_nombre_app(nombre):
+    normalizado = unicodedata.normalize("NFD", str(nombre).casefold())
+    normalizado = "".join(
+        caracter
+        for caracter in normalizado
+        if unicodedata.category(caracter) != "Mn"
+    )
+    return re.sub(r"[^a-z0-9]+", " ", normalizado).strip()
+
+
+def _aplicaciones_instaladas():
+    global _APLICACIONES_CACHE, _APLICACIONES_CACHE_HASTA
+    ahora = time.monotonic()
+    if _APLICACIONES_CACHE is not None and ahora < _APLICACIONES_CACHE_HASTA:
+        return _APLICACIONES_CACHE
+
+    aplicaciones = {}
+    if os.name == "nt":
+        carpetas_inicio = (
+            Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+            if os.environ.get("APPDATA")
+            else None,
+            Path(os.environ["PROGRAMDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+            if os.environ.get("PROGRAMDATA")
+            else None,
+        )
+        for carpeta in carpetas_inicio:
+            if not carpeta or not carpeta.is_dir():
+                continue
+            for raiz, _, nombres in os.walk(carpeta):
+                for archivo in nombres:
+                    if not archivo.lower().endswith(".lnk"):
+                        continue
+                    acceso = Path(raiz) / archivo
+                    nombre = acceso.stem
+                    clave = _normalizar_nombre_app(nombre)
+                    if clave:
+                        aplicaciones.setdefault(clave, (nombre, str(acceso)))
+
+        import winreg
+
+        ruta_app_paths = r"Software\Microsoft\Windows\CurrentVersion\App Paths"
+        vistas = (0, winreg.KEY_WOW64_32KEY, winreg.KEY_WOW64_64KEY)
+        for raiz in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+            for vista in vistas:
+                try:
+                    clave_raiz = winreg.OpenKey(
+                        raiz, ruta_app_paths, 0, winreg.KEY_READ | vista
+                    )
+                except FileNotFoundError:
+                    continue
+                with clave_raiz:
+                    indice = 0
+                    while True:
+                        try:
+                            nombre_exe = winreg.EnumKey(clave_raiz, indice)
+                        except OSError:
+                            break
+                        indice += 1
+                        try:
+                            with winreg.OpenKey(clave_raiz, nombre_exe) as clave_app:
+                                destino, _ = winreg.QueryValueEx(clave_app, None)
+                        except (FileNotFoundError, OSError):
+                            continue
+                        ruta = Path(os.path.expandvars(str(destino).strip('"')))
+                        if ruta.is_file():
+                            nombre = Path(nombre_exe).stem
+                            clave = _normalizar_nombre_app(nombre)
+                            if clave:
+                                aplicaciones.setdefault(clave, (nombre, str(ruta)))
+
+    _APLICACIONES_CACHE = aplicaciones
+    _APLICACIONES_CACHE_HASTA = ahora + 60
+    return aplicaciones
+
+
+def resolver_aplicacion(nombre):
     import difflib
 
-    n = nombre.lower().strip()
-    n = ALIAS_APPS.get(n, n)
-    if n not in config.APPS:
-        cerca = difflib.get_close_matches(n, list(config.APPS), n=1, cutoff=0.6)
-        if cerca:
-            n = cerca[0]
+    buscado = _normalizar_nombre_app(nombre)
+    if not buscado:
+        return None
+    for alias, destino in ALIAS_APPS.items():
+        if _normalizar_nombre_app(alias) == buscado:
+            buscado = _normalizar_nombre_app(destino)
+            break
+    nombres_configurados = {
+        _normalizar_nombre_app(nombre_config): nombre_config
+        for nombre_config in config.APPS
+    }
+    if buscado in nombres_configurados:
+        return nombres_configurados[buscado]
+
+    instaladas = _aplicaciones_instaladas()
+    if buscado in instaladas:
+        return instaladas[buscado][0]
+    coincidencia = difflib.get_close_matches(
+        buscado, list(instaladas), n=1, cutoff=0.58
+    )
+    return instaladas[coincidencia[0]][0] if coincidencia else None
+
+
+@herramienta(
+    "Abre una aplicación instalada en Windows por su nombre.",
+    {"nombre": {"type": "string", "description": "Nombre de la aplicación instalada"}},
+    ["nombre"],
+    confirmar=True,
+    texto_confirmacion=lambda nombre: f"Voy a abrir {nombre}. ¿Confirmás?",
+)
+def abrir_aplicacion(nombre):
+    n = resolver_aplicacion(nombre)
+    if not n:
+        return (
+            f"No encontré una aplicación instalada que coincida con «{nombre}». "
+            "Probá con el nombre que figura en el menú Inicio."
+        )
+    clave_normalizada = _normalizar_nombre_app(n)
+    configuradas = {
+        _normalizar_nombre_app(nombre_config): nombre_config
+        for nombre_config in config.APPS
+    }
+    if clave_normalizada not in configuradas:
+        destino = _aplicaciones_instaladas()[clave_normalizada][1]
+        os.startfile(destino)
+        return f"Abriendo {n}."
+    n = configuradas[clave_normalizada]
     destino = config.APPS.get(n)
-    if not destino:
-        return f"NO se abrió nada: no conozco '{nombre}'. Apps disponibles: {', '.join(config.APPS)}"
-    if n == "vscode":
-        candidatos = []
-        local = os.environ.get("LOCALAPPDATA")
-        if local:
-            candidatos.append(Path(local) / "Programs" / "Microsoft VS Code" / "Code.exe")
-        for variable in ("ProgramFiles", "ProgramFiles(x86)"):
-            carpeta = os.environ.get(variable)
-            if carpeta:
-                candidatos.append(Path(carpeta) / "Microsoft VS Code" / "Code.exe")
-        destino = next((str(p) for p in candidatos if p.is_file()), destino)
-    ejecutable = shutil.which(destino)
-    if ejecutable:
-        destino = ejecutable
-    os.startfile(destino)
+    programas = [
+        Path(os.environ[variable])
+        for variable in ("ProgramFiles", "ProgramFiles(x86)")
+        if os.environ.get(variable)
+    ]
+    local = Path(os.environ["LOCALAPPDATA"]) if os.environ.get("LOCALAPPDATA") else None
+    candidatos = {
+        "chrome": [
+            *(base / "Google" / "Chrome" / "Application" / "chrome.exe" for base in programas),
+            *((local / "Google" / "Chrome" / "Application" / "chrome.exe",) if local else ()),
+        ],
+        "edge": [
+            *(base / "Microsoft" / "Edge" / "Application" / "msedge.exe" for base in programas),
+        ],
+        "firefox": [
+            *(base / "Mozilla Firefox" / "firefox.exe" for base in programas),
+            *((local / "Mozilla Firefox" / "firefox.exe",) if local else ()),
+        ],
+        "vscode": [
+            *((local / "Programs" / "Microsoft VS Code" / "Code.exe",) if local else ()),
+            *(base / "Microsoft VS Code" / "Code.exe" for base in programas),
+        ],
+        "spotify": [
+            *((local / "Microsoft" / "WindowsApps" / "Spotify.exe",) if local else ()),
+            *((local / "Spotify" / "Spotify.exe",) if local else ()),
+        ],
+        "terminal": [
+            *((local / "Microsoft" / "WindowsApps" / "wt.exe",) if local else ()),
+        ],
+        "word": [
+            *(base / "Microsoft Office" / "root" / "Office16" / "WINWORD.EXE" for base in programas),
+        ],
+        "excel": [
+            *(base / "Microsoft Office" / "root" / "Office16" / "EXCEL.EXE" for base in programas),
+        ],
+    }
+    destino_encontrado = next(
+        (str(candidato) for candidato in candidatos.get(n, ()) if candidato.is_file()),
+        None,
+    )
+    if destino_encontrado:
+        destino = destino_encontrado
+    else:
+        ejecutable = shutil.which(destino)
+        if ejecutable:
+            destino = ejecutable
+
+    if not destino.endswith(":") and not destino.lower().startswith("ms-settings:") and not Path(destino).is_file():
+        raiz_windows = os.environ.get("SystemRoot")
+        candidato_sistema = Path(raiz_windows) / "System32" / Path(destino).name if raiz_windows else None
+        if candidato_sistema and candidato_sistema.is_file():
+            destino = str(candidato_sistema)
+        elif n == "spotify":
+            destino = "spotify:"
+        else:
+            acceso = _aplicaciones_instaladas().get(
+                _normalizar_nombre_app(n)
+            )
+            if acceso:
+                destino = acceso[1]
+            else:
+                raise FileNotFoundError(
+                    f"No encontré una aplicación instalada para «{n}» "
+                    f"(comando configurado: {config.APPS[n]}). "
+                    "Instalala o corregí su ruta en config.py."
+                )
+
+    os.startfile(str(destino))
     return f"Abriendo {n}."
+
+
+@herramienta(
+    "Abre Gmail en el navegador para que el usuario acceda con su propia sesión. "
+    "No lee ni envía correos directamente.",
+    confirmar=True,
+    texto_confirmacion="Voy a abrir Gmail en el navegador. ¿Confirmás?",
+)
+def abrir_gmail():
+    if not webbrowser.open("https://mail.google.com/"):
+        raise OSError("Windows no pudo abrir Gmail en el navegador predeterminado.")
+    return "Abrí Gmail en el navegador. Iniciá sesión si Google te lo solicita."
+
+
+@herramienta(
+    "Abre la pantalla de Aplicaciones instaladas de Windows para que el usuario gestione o desinstale programas. "
+    "Jarvis no desinstala programas automáticamente.",
+    confirmar=True,
+    texto_confirmacion="Voy a abrir Configuración > Aplicaciones instaladas. ¿Confirmás?",
+)
+def abrir_configuracion_aplicaciones():
+    os.startfile("ms-settings:appsfeatures")
+    return "Abrí la pantalla de Aplicaciones instaladas de Windows."
 
 
 @herramienta(
@@ -615,6 +834,8 @@ def cerrar_aplicacion(nombre):
     "Abre una página web en el navegador predeterminado.",
     {"url": {"type": "string", "description": "Dirección, ej: https://www.youtube.com"}},
     ["url"],
+    confirmar=True,
+    texto_confirmacion=lambda url: f"Voy a abrir este sitio en el navegador: {url}. ¿Confirmás?",
 )
 def abrir_web(url):
     url = url.strip()
@@ -628,10 +849,108 @@ def abrir_web(url):
     return f"Abrí {url}."
 
 
+def _abrir_url_en_chrome(url):
+    if os.name != "nt":
+        navegador = webbrowser.get("chrome")
+        if not navegador.open(url):
+            raise OSError("Chrome no pudo abrir el enlace.")
+        return
+
+    programas = [
+        Path(os.environ[variable])
+        for variable in ("ProgramFiles", "ProgramFiles(x86)")
+        if os.environ.get(variable)
+    ]
+    local = Path(os.environ["LOCALAPPDATA"]) if os.environ.get("LOCALAPPDATA") else None
+    candidatos = [
+        *(base / "Google" / "Chrome" / "Application" / "chrome.exe" for base in programas),
+        *((local / "Google" / "Chrome" / "Application" / "chrome.exe",) if local else ()),
+    ]
+    ejecutable = next((ruta for ruta in candidatos if ruta.is_file()), None)
+    if ejecutable is None:
+        for clave, (_, destino) in _aplicaciones_instaladas().items():
+            if "chrome" not in clave:
+                continue
+            ruta = Path(destino)
+            if ruta.suffix.casefold() == ".exe" and ruta.is_file():
+                ejecutable = ruta
+                break
+            if ruta.suffix.casefold() == ".lnk" and ruta.is_file():
+                os.startfile(str(ruta), arguments=f'"{url}"')
+                return
+    if ejecutable is None:
+        for comando in ("chrome.exe", "chrome"):
+            encontrado = shutil.which(comando)
+            if encontrado:
+                ejecutable = Path(encontrado)
+                break
+    if ejecutable is None:
+        raise FileNotFoundError("No encontré Google Chrome instalado.")
+    subprocess.Popen([str(ejecutable), url], shell=False)
+
+
+@herramienta(
+    "Busca videos públicos en YouTube y reproduce uno al azar entre los resultados. "
+    "Si se pide un tema, limita la búsqueda a ese tema; si no, busca videos populares.",
+    {
+        "consulta": {
+            "type": "string",
+            "description": "Tema opcional del video; vacío para elegir entre videos populares",
+        },
+        "navegador": {
+            "type": "string",
+            "enum": ["predeterminado", "chrome"],
+            "description": "Navegador que pidió el usuario",
+        },
+    },
+    confirmar=True,
+)
+def reproducir_video_youtube(consulta="", navegador="predeterminado"):
+    from ddgs import DDGS
+
+    consulta = str(consulta).strip()[:200] or "videos populares"
+    navegador = str(navegador).strip().casefold()
+    if navegador not in {"predeterminado", "chrome"}:
+        raise ValueError("El navegador debe ser «predeterminado» o «chrome».")
+    _verificar_detencion()
+    resultados = DDGS().videos(consulta, region="wt-wt", max_results=20)
+    videos = []
+    for resultado in resultados:
+        url = resultado.get("url") or resultado.get("href") or resultado.get("content")
+        if not isinstance(url, str):
+            continue
+        partes = urlsplit(url)
+        host = (partes.hostname or "").casefold()
+        youtube = host == "youtube.com" or host.endswith(".youtube.com") or host == "youtu.be"
+        video = (
+            (host == "youtu.be" and partes.path.strip("/"))
+            or (host.endswith("youtube.com") and (
+                (partes.path == "/watch" and re.search(r"(?:^|&)v=[^&]+", partes.query))
+                or re.match(r"^/(?:shorts|live)/[^/]+", partes.path)
+            ))
+        )
+        if partes.scheme in {"http", "https"} and youtube and video:
+            videos.append(url)
+    if not videos:
+        return "No encontré videos públicos de YouTube para esa búsqueda."
+    _verificar_detencion()
+    url = random.SystemRandom().choice(videos)
+    if navegador == "chrome":
+        _abrir_url_en_chrome(url)
+    elif not webbrowser.open(url):
+        raise OSError("Windows no pudo abrir el video en el navegador predeterminado.")
+    destino = "Chrome" if navegador == "chrome" else "el navegador predeterminado"
+    return f"Abrí un video de YouTube en {destino}."
+
+
 @herramienta(
     "Busca algo en Google en el navegador.",
     {"consulta": {"type": "string", "description": "Texto a buscar"}},
     ["consulta"],
+    confirmar=True,
+    texto_confirmacion=lambda consulta: (
+        f"Voy a buscar «{consulta}» en Google y abrir el resultado en el navegador. ¿Confirmás?"
+    ),
 )
 def buscar_en_google(consulta):
     url = f"https://www.google.com/search?q={quote_plus(consulta)}"
@@ -1042,6 +1361,10 @@ def presionar_tecla(ventana, tecla, repeticiones=1):
         "accion": {"type": "string", "enum": ["activar", "minimizar", "maximizar", "restaurar"]},
     },
     ["titulo", "accion"],
+    confirmar=True,
+    texto_confirmacion=lambda titulo, accion: (
+        f"Voy a {accion} la ventana «{titulo}». ¿Confirmás?"
+    ),
 )
 def controlar_ventana(titulo, accion):
     if accion not in {"activar", "minimizar", "maximizar", "restaurar"}:
@@ -1060,7 +1383,11 @@ def controlar_ventana(titulo, accion):
     return f"Ventana «{nombre}»: {accion}."
 
 
-@herramienta("Saca una captura de pantalla y la guarda en la carpeta de Jarvis.")
+@herramienta(
+    "Saca una captura de pantalla y la guarda en la carpeta de Jarvis.",
+    confirmar=True,
+    texto_confirmacion="Voy a guardar una captura de tu pantalla en la carpeta de Jarvis. ¿Confirmás?",
+)
 def captura_pantalla():
     from PIL import ImageGrab
 
@@ -1075,6 +1402,10 @@ def captura_pantalla():
     "Lista los archivos y carpetas de una carpeta del usuario.",
     {"carpeta": {"type": "string", "description": "Ruta, ej: ~/Documents"}},
     ["carpeta"],
+    confirmar=True,
+    texto_confirmacion=lambda carpeta: (
+        f"Voy a mostrar los nombres de los elementos de «{carpeta}». ¿Confirmás?"
+    ),
 )
 def listar_archivos(carpeta):
     p = _ruta_segura(carpeta)
@@ -1083,9 +1414,14 @@ def listar_archivos(carpeta):
 
 
 @herramienta(
-    "Lee el contenido de un archivo de texto del usuario (máx. 4000 caracteres).",
+    "Lee el contenido de un archivo de texto del usuario (máx. 4000 caracteres) después de confirmar que se comparte con el modelo de IA configurado.",
     {"ruta": {"type": "string", "description": "Ruta del archivo"}},
     ["ruta"],
+    confirmar=True,
+    texto_confirmacion=lambda ruta: (
+        f"Jarvis leerá «{ruta}» y enviará su contenido al proveedor o proveedores de IA configurados. "
+        "¿Autorizás?"
+    ),
 )
 def leer_archivo(ruta):
     p = _ruta_usuario(ruta)
@@ -1100,6 +1436,11 @@ def leer_archivo(ruta):
         "carpeta": {"type": "string", "description": "Carpeta donde buscar; por defecto la carpeta del usuario"},
     },
     ["consulta"],
+    confirmar=True,
+    texto_confirmacion=lambda consulta, carpeta="": (
+        f"Voy a buscar el nombre «{consulta}» en "
+        f"«{carpeta or Path.home()}». ¿Confirmás?"
+    ),
 )
 def buscar_archivos(consulta, carpeta=""):
     consulta = consulta.strip().casefold()
@@ -1147,6 +1488,8 @@ def buscar_archivos(consulta, carpeta=""):
     "Crea una carpeta nueva dentro de las carpetas permitidas; no sobrescribe elementos existentes.",
     {"ruta": {"type": "string", "description": "Ruta de la carpeta nueva"}},
     ["ruta"],
+    confirmar=True,
+    texto_confirmacion=lambda ruta: f"Voy a crear la carpeta «{ruta}». ¿Confirmás?",
 )
 def crear_carpeta(ruta):
     _verificar_detencion()
@@ -1164,6 +1507,10 @@ def crear_carpeta(ruta):
         "contenido": {"type": "string", "description": "Contenido del archivo (máx. 500.000 caracteres)"},
     },
     ["ruta", "contenido"],
+    confirmar=True,
+    texto_confirmacion=lambda ruta, **_: (
+        f"Voy a crear el archivo «{ruta}» dentro de las carpetas permitidas. ¿Confirmás?"
+    ),
 )
 def crear_archivo(ruta, contenido):
     _verificar_detencion()
@@ -1321,6 +1668,10 @@ def consultar_registro_acciones(limite=20):
         "contenido": {"type": "string"},
     },
     ["titulo", "contenido"],
+    confirmar=True,
+    texto_confirmacion=lambda titulo, **_: (
+        f"Voy a guardar la nota «{titulo}» en los archivos locales de Jarvis. ¿Confirmás?"
+    ),
 )
 def crear_nota(titulo, contenido):
     carpeta = config.CARPETA_DATOS / "notas"
@@ -1343,6 +1694,12 @@ def crear_nota(titulo, contenido):
         "ruta": {"type": "string", "description": "Ruta .docx opcional dentro de la carpeta del usuario"},
     },
     ["titulo", "contenido"],
+    confirmar=True,
+    texto_confirmacion=lambda titulo, ruta="", **_: (
+        f"Voy a crear el documento Word «{titulo}»"
+        + (f" en «{ruta}»" if ruta else " en la carpeta de documentos de Jarvis")
+        + " y abrirlo. ¿Confirmás?"
+    ),
 )
 def crear_documento_word(titulo, contenido, ruta=""):
     if len(contenido) > 50000:
@@ -1428,6 +1785,10 @@ def _coordenada(valor, limite):
         "fondo": {"type": "string", "description": "Color de fondo, por ejemplo #07111C"},
     },
     ["titulo", "elementos"],
+    confirmar=True,
+    texto_confirmacion=lambda titulo, **_: (
+        f"Voy a crear «{titulo}» como imagen y abrirlo en Paint. ¿Confirmás?"
+    ),
 )
 def dibujar_en_paint(titulo, elementos, ancho=1200, alto=800, fondo="#FFFFFF"):
     from PIL import Image, ImageDraw, ImageFont
@@ -1555,6 +1916,11 @@ def _confirmacion_envio_correo(destinatarios, asunto, cuerpo):
         "cuerpo": {"type": "string"},
     },
     ["destinatarios", "asunto", "cuerpo"],
+    confirmar=True,
+    texto_confirmacion=lambda destinatarios, asunto, **_: (
+        f"Voy a preparar en tu aplicación de correo un borrador para {destinatarios}, "
+        f"con el asunto «{asunto}». ¿Confirmás?"
+    ),
 )
 def redactar_correo(destinatarios, asunto, cuerpo):
     destino = _datos_correo(destinatarios, asunto, cuerpo)
@@ -1666,6 +2032,8 @@ def crear_alerta(hora, mensaje):
     "Guarda un dato sobre el usuario en la memoria permanente (gustos, nombres, preferencias).",
     {"dato": {"type": "string", "description": "El dato a recordar"}},
     ["dato"],
+    confirmar=True,
+    texto_confirmacion="Voy a guardar este dato en la memoria local de Jarvis. ¿Confirmás?",
 )
 def guardar_en_memoria(dato):
     config.CARPETA_DATOS.mkdir(parents=True, exist_ok=True)

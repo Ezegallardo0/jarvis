@@ -88,39 +88,55 @@ def hablar(texto, api_key=None, oido=None):
         try:
             return _hablar_elevenlabs(limpio, api_key, oido)
         except Exception as error:
-            mensaje = f"No se pudo generar la voz de ElevenLabs: {error}"
-            print(f"({mensaje})")
-            return mensaje
+            return _usar_voz_windows(limpio, f"ElevenLabs: {error}")
     if config.PROVEEDOR_TTS == "piper":
         try:
             return _hablar_piper(limpio, oido)
         except Exception as error:
-            mensaje = f"No se pudo generar la voz local de Piper: {error}"
-            print(f"({mensaje})")
-            return mensaje
+            return _usar_voz_windows(limpio, f"Piper: {error}")
 
     try:
-        import pyttsx3
+        _hablar_windows(limpio)
+    except Exception as e:
+        mensaje = f"No se pudo reproducir la voz de Windows: {e}"
+        print(f"({mensaje})")
+        return mensaje
+    return None
 
-        motor = pyttsx3.init()  # un motor nuevo por frase evita cuelgues en Windows
-        for v in motor.getProperty("voices"):
-            nombre = (v.name + v.id).lower()
-            if "spanish" in nombre or "español" in nombre or "es-" in nombre or "_es_" in nombre:
-                motor.setProperty("voice", v.id)
+
+def _hablar_windows(texto):
+    import pyttsx3
+
+    motor = pyttsx3.init()
+    try:
+        for voz in motor.getProperty("voices"):
+            nombre = (voz.name + voz.id).lower()
+            if any(indicador in nombre for indicador in ("spanish", "español", "es-", "_es_")):
+                motor.setProperty("voice", voz.id)
                 break
         motor.setProperty(
             "rate", round(175 * max(70, min(130, config.VELOCIDAD_VOZ)) / 100)
         )
-        with tempfile.TemporaryDirectory() as carpeta:
-            ruta = Path(carpeta) / "respuesta.wav"
-            motor.save_to_file(limpio, str(ruta))
-            motor.runAndWait()
-            motor.stop()
-            audio, frecuencia = _leer_wav(ruta)
-            return _reproducir_audio(audio, frecuencia, oido)
-    except Exception as e:
-        print(f"(voz no disponible: {e})")
-    return None
+        motor.setProperty("volume", max(0, min(100, config.VOLUMEN_VOZ)) / 100)
+        motor.say(texto)
+        motor.runAndWait()
+    finally:
+        motor.stop()
+
+
+def _usar_voz_windows(texto, motivo):
+    try:
+        _hablar_windows(texto)
+    except Exception as error_windows:
+        mensaje = (
+            f"No se pudo reproducir audio con {motivo}, ni con la voz de Windows: "
+            f"{error_windows}"
+        )
+        print(f"({mensaje})")
+        return mensaje
+    mensaje = f"{motivo}. Se usó la voz local de Windows como alternativa."
+    print(f"({mensaje})")
+    return mensaje
 
 
 def _cargar_voz_piper():
