@@ -109,6 +109,9 @@ class Lanzador:
             config.TEMA_HUD,
             config.MODO_ENSEMBLE,
             config.ESTRATEGIA_ENSEMBLE,
+            config.MODELO_GROQ_API,
+            config.MODELO_CLOUDFLARE,
+            config.CLOUDFLARE_ACCOUNT_ID,
         ) = self._leer_seleccion()
         try:
             config.GITHUB_TOKEN = self._clave_guardada_o_entorno("github")
@@ -219,6 +222,8 @@ class Lanzador:
             "Gemini (rápido)": "gemini",
             "Grok (xAI)": "grok",
             "OpenAI / ChatGPT": "openai",
+            "Groq": "groq",
+            "Cloudflare Workers AI": "cloudflare",
         }
         self.proveedor_var = tk.StringVar(
             value=next((label for label, code in self.proveedores.items() if code == proveedor), "Gemini (rápido)")
@@ -1340,6 +1345,9 @@ class Lanzador:
                 config.TEMA_HUD,
                 config.MODO_ENSEMBLE,
                 config.ESTRATEGIA_ENSEMBLE,
+                config.MODELO_GROQ_API,
+                config.MODELO_CLOUDFLARE,
+                config.CLOUDFLARE_ACCOUNT_ID,
             )
         except (OSError, ValueError) as error:
             messagebox.showerror("Configuración de audio", f"No pude leer la selección guardada:\n{error}")
@@ -1367,6 +1375,9 @@ class Lanzador:
                 config.TEMA_HUD,
                 config.MODO_ENSEMBLE,
                 config.ESTRATEGIA_ENSEMBLE,
+                config.MODELO_GROQ_API,
+                config.MODELO_CLOUDFLARE,
+                config.CLOUDFLARE_ACCOUNT_ID,
             )
         return (
             datos.get("microfono", config.MICROFONO),
@@ -1389,7 +1400,7 @@ class Lanzador:
             (
                 datos.get("proveedor_ia_alternativo", config.PROVEEDOR_IA_ALTERNATIVO)
                 if datos.get("proveedor_ia_alternativo", config.PROVEEDOR_IA_ALTERNATIVO)
-                in {"", "gemini", "grok", "openai", "cursor"}
+                in {"", "gemini", "grok", "openai", "groq", "cloudflare", "cursor"}
                 else ""
             ),
             datos.get("ollama_host", config.OLLAMA_HOST),
@@ -1419,6 +1430,9 @@ class Lanzador:
                 if datos.get("estrategia_ensemble") in {"mejor", "rapido", "verificar", "votar"}
                 else config.ESTRATEGIA_ENSEMBLE
             ),
+            datos.get("modelo_groq_api", config.MODELO_GROQ_API),
+            datos.get("modelo_cloudflare", config.MODELO_CLOUDFLARE),
+            str(datos.get("cloudflare_account_id", config.CLOUDFLARE_ACCOUNT_ID))[:100],
         )
 
     def _guardar(self):
@@ -1454,6 +1468,9 @@ class Lanzador:
                     "modelo_gemini": config.MODELO_GEMINI,
                     "modelo_grok": config.MODELO_GROK,
                     "modelo_openai": config.MODELO_OPENAI,
+                    "modelo_groq_api": config.MODELO_GROQ_API,
+                    "modelo_cloudflare": config.MODELO_CLOUDFLARE,
+                    "cloudflare_account_id": config.CLOUDFLARE_ACCOUNT_ID,
                     "proveedor_ia_alternativo": config.PROVEEDOR_IA_ALTERNATIVO,
                     "ollama_host": config.OLLAMA_HOST,
                     "modelo_whisper": config.WHISPER_MODELO,
@@ -2206,6 +2223,9 @@ class Lanzador:
             "modelo_grok": config.MODELO_GROK,
             "modelo_openai": config.MODELO_OPENAI,
             "modelo_cursor": config.MODELO_CURSOR,
+            "modelo_groq_api": config.MODELO_GROQ_API,
+            "modelo_cloudflare": config.MODELO_CLOUDFLARE,
+            "cloudflare_account_id": config.CLOUDFLARE_ACCOUNT_ID,
             "modelos_ia": config.MODELOS_IA,
             "ollama_host": config.OLLAMA_HOST,
             "modelo_whisper": config.WHISPER_MODELO,
@@ -2219,6 +2239,7 @@ class Lanzador:
             "ensemble_proveedores_activos": [
                 p for p in ai_providers.PROVEEDORES
                 if self._clave_guardada_o_entorno(p)
+                and (p != "cloudflare" or config.CLOUDFLARE_ACCOUNT_ID)
             ],
         }
 
@@ -2292,7 +2313,7 @@ class Lanzador:
                     "proveedor": proveedor,
                     "modelo": modelo,
                     "estado": "error",
-                    "error": ai_providers.error_publico(proveedor, error),
+                    "error": ai_providers.error_publico(proveedor, error, clave),
                 })
             else:
                 resultados.append({
@@ -2371,6 +2392,13 @@ class Lanzador:
         modelo_grok = str(datos.get("modelo_grok", "")).strip()[:200]
         modelo_openai = str(datos.get("modelo_openai", "")).strip()[:200]
         modelo_cursor = str(datos.get("modelo_cursor", config.MODELO_CURSOR)).strip()[:200]
+        modelo_groq_api = str(datos.get("modelo_groq_api", config.MODELO_GROQ_API)).strip()[:200]
+        modelo_cloudflare = str(
+            datos.get("modelo_cloudflare", config.MODELO_CLOUDFLARE)
+        ).strip()[:200]
+        cloudflare_account_id = str(
+            datos.get("cloudflare_account_id", config.CLOUDFLARE_ACCOUNT_ID)
+        ).strip()[:100]
         ollama_host = str(datos.get("ollama_host", "")).strip()[:500]
         modelo_whisper = str(datos.get("modelo_whisper", "")).strip()[:100]
         idioma = str(datos.get("idioma", "")).strip()[:10]
@@ -2379,6 +2407,8 @@ class Lanzador:
             modelo_gemini,
             modelo_grok,
             modelo_openai,
+            modelo_groq_api,
+            modelo_cloudflare,
             ollama_host,
             modelo_whisper,
             idioma,
@@ -2386,6 +2416,8 @@ class Lanzador:
             raise ValueError("Completá los modelos de IA, Ollama, Whisper y el idioma.")
         if not ollama_host.startswith(("http://", "https://")):
             raise ValueError("La dirección de Ollama debe comenzar con http:// o https://.")
+        if proveedor == "cloudflare" and not cloudflare_account_id:
+            raise ValueError("Configurá el Account ID de Cloudflare en Conexiones.")
         modo_ensemble = str(datos.get("modo_ensemble", config.MODO_ENSEMBLE)).lower()
         if modo_ensemble not in {"auto", "on", "off"}:
             modo_ensemble = "auto"
@@ -2405,6 +2437,12 @@ class Lanzador:
         if tema_hud not in {"cian", "violeta", "verde"}:
             raise ValueError("Elegí un tema visual disponible.")
         clave_ia = str(datos.get("api_key", "")).strip()
+        claves_api = datos.get("api_keys", {})
+        if not isinstance(claves_api, dict):
+            raise ValueError("Las API keys enviadas no tienen un formato válido.")
+        borrar_claves_api = datos.get("borrar_api_keys", {})
+        if not isinstance(borrar_claves_api, dict):
+            raise ValueError("La selección de claves para eliminar no es válida.")
         clave_elevenlabs = str(datos.get("elevenlabs_api_key", "")).strip()
         token_github = str(datos.get("github_token", "")).strip()
 
@@ -2414,6 +2452,12 @@ class Lanzador:
             self._guardar_clave(proveedor, clave_ia)
         elif datos.get("borrar_api_key"):
             self._eliminar_clave(proveedor)
+        for codigo in ai_providers.PROVEEDORES:
+            clave = str(claves_api.get(codigo, "")).strip()
+            if clave:
+                self._guardar_clave(codigo, clave)
+            elif borrar_claves_api.get(codigo):
+                self._eliminar_clave(codigo)
         if clave_elevenlabs:
             self._guardar_clave("elevenlabs", clave_elevenlabs)
         elif datos.get("borrar_elevenlabs_key"):
@@ -2432,7 +2476,7 @@ class Lanzador:
             if not claves_disponibles:
                 raise ValueError(
                     "Necesitás al menos una API key configurada para usar Jarvis. "
-                    "Ingresá la clave de Gemini, Grok, OpenAI o Cursor."
+                    "Ingresá una API key compatible desde la sección API Keys."
                 )
 
         requiere_reinicio = self.asistente_activo and any(
@@ -2458,6 +2502,9 @@ class Lanzador:
         config.MODELO_GROK = modelo_grok
         config.MODELO_OPENAI = modelo_openai
         config.MODELO_CURSOR = modelo_cursor
+        config.MODELO_GROQ_API = modelo_groq_api
+        config.MODELO_CLOUDFLARE = modelo_cloudflare
+        config.CLOUDFLARE_ACCOUNT_ID = cloudflare_account_id
         config.PROVEEDOR_IA_ALTERNATIVO = proveedor_alternativo
         config.OLLAMA_HOST = ollama_host
         config.WHISPER_MODELO = modelo_whisper
@@ -2489,6 +2536,9 @@ class Lanzador:
                     "modelo_grok": modelo_grok,
                     "modelo_openai": modelo_openai,
                     "modelo_cursor": modelo_cursor,
+                    "modelo_groq_api": modelo_groq_api,
+                    "modelo_cloudflare": modelo_cloudflare,
+                    "cloudflare_account_id": cloudflare_account_id,
                     "proveedor_ia_alternativo": proveedor_alternativo,
                     "ollama_host": ollama_host,
                     "modelo_whisper": modelo_whisper,

@@ -20,6 +20,9 @@ MODELO_GEMINI = "gemini-3.5-flash-lite"
 MODELO_GROK = "grok-4.7"
 MODELO_OPENAI = "gpt-6-luna"
 MODELO_CURSOR = "grok-3-mini"
+MODELO_GROQ_API = "llama-3.3-70b-versatile"
+MODELO_CLOUDFLARE = "@cf/zai-org/glm-4.7-flash"
+CLOUDFLARE_ACCOUNT_ID = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "")
 PROVEEDOR_IA_ALTERNATIVO = ""
 
 # --- Ensemble multi-IA ---
@@ -42,6 +45,14 @@ MODELOS_IA = {
     ),
     "grok": ("grok-4.7", "grok-4.6", "grok-4.5", "grok-4.3"),
     "openai": ("gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"),
+    "groq": ("llama-3.3-70b-versatile", "llama-3.1-8b-instant"),
+    "cloudflare": (
+        "@cf/zai-org/glm-4.7-flash",
+        "@cf/openai/gpt-oss-20b",
+        "@cf/meta/llama-3.1-8b-instruct-fp8",
+        "@cf/google/gemma-4-26b-a4b-it",
+        "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    ),
     "cursor": ("grok-3-mini", "grok-3", "claude-3-5-sonnet"),
 }
 

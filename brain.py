@@ -286,7 +286,7 @@ class Cerebro:
                 codigo = getattr(error, "status_code", None)
                 tipo = type(error).__name__.casefold()
                 reintentable = (
-                    codigo in {401, 403, 404, 408, 409, 429}
+                    codigo in {400, 401, 403, 404, 408, 409, 429}
                     or (isinstance(codigo, int) and codigo >= 500)
                     or "connection" in tipo
                     or "timeout" in tipo
@@ -297,7 +297,7 @@ class Cerebro:
                     and not fallback_usado
                 ):
                     error_proveedor_principal = ai_providers.error_publico(
-                        self.proveedor, error
+                        self.proveedor, error, self.api_key
                     )
                     try:
                         fallback_activo = self._activar_fallback()
@@ -307,7 +307,9 @@ class Cerebro:
                             "y configuración."
                             if isinstance(error_fallback, ValueError)
                             else ai_providers.error_publico(
-                                self.proveedor_alternativo, error_fallback
+                                self.proveedor_alternativo,
+                                error_fallback,
+                                self.clave_alternativa,
                             )
                         )
                         raise RuntimeError(
@@ -365,7 +367,7 @@ class Cerebro:
         return "Me trabé con ese pedido, ¿podés reformularlo?"
 
     def _explicar_error_api(self, error):
-        return ai_providers.error_publico(self.proveedor, error)
+        return ai_providers.error_publico(self.proveedor, error, self.api_key)
 
     def _activar_fallback(self):
         proveedor = self.proveedor_alternativo

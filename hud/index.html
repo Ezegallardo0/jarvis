@@ -503,6 +503,7 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
 .cfg-tab:hover{color:var(--tx);background:rgba(56,189,248,0.06)}
 .cfg-tab.activa{color:var(--cy);background:rgba(56,189,248,0.1);border-left-color:var(--cy)}
 .cfg-tab svg{width:16px;height:16px;flex-shrink:0;fill:currentColor}
+.cfg-tab:focus-visible{outline:2px solid var(--cy);outline-offset:-2px}
 /* Content area */
 .cfg-content{
   grid-row:2;overflow-y:auto;padding:20px 28px;
@@ -591,6 +592,31 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
 }
 .cfg-section-block h4{color:var(--cy-bright,var(--cy));font-size:11px;letter-spacing:.12em;text-transform:uppercase;margin:0 0 10px}
 .cfg-two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.api-key-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-top:16px}
+.api-key-card{
+  min-width:0;background:rgba(6,22,40,.65);border:1px solid var(--ln);border-radius:10px;padding:16px;
+}
+.api-key-card:focus-within{border-color:rgba(56,189,248,.65);box-shadow:0 0 14px var(--cy-g)}
+.api-key-title{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.api-key-title .provider-icon{
+  width:36px;height:36px;border-radius:10px;display:grid;place-items:center;
+  font-size:12px;font-weight:700;color:#fff;flex-shrink:0;
+}
+.api-key-title .provider-icon.gemini{background:linear-gradient(135deg,#4285f4,#34a853)}
+.api-key-title .provider-icon.openai{background:linear-gradient(135deg,#10a37f,#0d8c6d)}
+.api-key-title .provider-icon.groq{background:linear-gradient(135deg,#f55036,#b52a25)}
+.api-key-title .provider-icon.grok{background:linear-gradient(135deg,#1a1a2e,#16213e)}
+.api-key-title .provider-icon.cursor{background:linear-gradient(135deg,#7c3aed,#5b21b6)}
+.api-key-title .provider-icon.cloudflare{background:linear-gradient(135deg,#f6821f,#e34c25)}
+.api-key-title h4{color:var(--tx);font-size:12px;margin:0}
+.api-key-title p{color:var(--dim);font-size:10px;margin:4px 0 0}
+.api-key-card .hint{min-height:14px}
+.api-key-card .check-row{font-size:10px}
+.cf-model-list{display:grid;gap:6px;margin-top:14px}
+.cf-model-list span{
+  overflow-wrap:anywhere;padding:7px 8px;border:1px solid var(--ln2);border-radius:6px;
+  background:rgba(2,11,20,.75);color:var(--tx-sec);font:10px var(--f-mono);
+}
 /* Footer */
 .cfg-footer{
   grid-column:1 / -1;display:flex;justify-content:space-between;align-items:center;
@@ -598,6 +624,25 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
 }
 .cfg-footer .cfg-status{font-size:11px;color:var(--dim);flex:1}
 .cfg-footer .cfg-btns{display:flex;gap:10px}
+@media(max-width:720px){
+  #settings-modal{padding:8px}
+  #settings-modal .panel{
+    width:100%;height:100%;max-height:96vh;grid-template-columns:minmax(0,1fr);
+    grid-template-rows:auto auto minmax(0,1fr) auto;
+  }
+  .cfg-sidebar{
+    grid-row:auto;flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid var(--ln);
+    width:100%;min-width:0;padding:4px;gap:2px;scrollbar-width:none;
+  }
+  .cfg-sidebar::-webkit-scrollbar{display:none}
+  .cfg-tab{min-width:0;flex:1 1 0;justify-content:center;gap:0;padding:10px 3px;border-left:0;border-bottom:2px solid transparent;white-space:nowrap;font-size:10px;letter-spacing:0}
+  .cfg-tab>span:first-child{display:none}
+  .cfg-tab.activa{border-left-color:transparent;border-bottom-color:var(--cy)}
+  .cfg-content{grid-row:auto;min-width:0;padding:16px}
+  .cfg-footer{grid-row:auto;padding:12px 16px;align-items:flex-start;flex-direction:column}
+  .cfg-footer .cfg-btns{width:100%;justify-content:flex-end}
+  .api-key-grid{grid-template-columns:1fr}
+}
 
 #modal{
   position:fixed;inset:0;z-index:110;background:rgba(1, 5, 12, 0.85);display:none;
@@ -1118,16 +1163,31 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
 <!-- Modal Completo de Configuración -->
 <div id="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
   <div class="panel">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;border-bottom:1px solid var(--ln);padding-bottom:10px">
-      <h2 id="settings-title" style="color:var(--cy);font-size:16px;letter-spacing:.2em;text-transform:uppercase">Configuración del Sistema</h2>
-      <button id="cfg-cerrar" type="button" style="background:none;border:none;color:var(--cy);font-size:18px;cursor:pointer">✕</button>
-    </div>
-    
-    <div class="settings-grid">
-      <!-- 1. Ensemble Multi-IA -->
-      <section class="settings-card" style="grid-column:1 / -1;border-color:var(--cy)">
-        <h3>Trabajo en Conjunto (Ensemble Multi-IA)</h3>
-        <p class="hint">Al poner 2 o más API keys (Gemini, Grok, OpenAI, Cursor), Jarvis las ejecuta juntas para obtener respuestas de máxima calidad.</p>
+    <header class="cfg-header">
+      <h2 id="settings-title">Configuración del Sistema</h2>
+      <button id="cfg-cerrar" class="cfg-close" type="button" aria-label="Cerrar configuración">✕</button>
+    </header>
+    <nav class="cfg-sidebar" aria-label="Secciones de configuración" role="tablist" aria-orientation="vertical">
+      <button class="cfg-tab activa" id="tab-configuracion" type="button" role="tab" aria-selected="true" aria-controls="page-configuracion" data-settings-tab="configuracion">
+        <span aria-hidden="true">⚙</span><span>Configuración</span>
+      </button>
+      <button class="cfg-tab" id="tab-audio" type="button" role="tab" aria-selected="false" aria-controls="page-audio" data-settings-tab="audio">
+        <span aria-hidden="true">♫</span><span>Audio</span>
+      </button>
+      <button class="cfg-tab" id="tab-conexiones" type="button" role="tab" aria-selected="false" aria-controls="page-conexiones" data-settings-tab="conexiones">
+        <span aria-hidden="true">⌁</span><span>Conexiones</span>
+      </button>
+      <button class="cfg-tab" id="tab-apikey" type="button" role="tab" aria-selected="false" aria-controls="page-apikey" data-settings-tab="apikey">
+        <span aria-hidden="true">⌘</span><span>API Keys</span>
+      </button>
+    </nav>
+
+    <main class="cfg-content">
+      <section class="cfg-page activa" id="page-configuracion" role="tabpanel" aria-labelledby="tab-configuracion">
+        <h3>Configuración general</h3>
+        <section class="cfg-section-block">
+        <h4>Trabajo en Conjunto (Ensemble Multi-IA)</h4>
+        <p class="hint">Con dos o más API keys, Jarvis puede combinar proveedores para mejorar las respuestas.</p>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">
           <div>
             <label for="cfg-modo-ensemble">Modo Ensemble</label>
@@ -1148,25 +1208,21 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
           </div>
         </div>
         <p class="hint" id="cfg-ensemble-status" style="margin-top:8px;color:var(--cy-bright)">IAs activas: comprobando...</p>
-      </section>
+        </section>
 
-      <!-- 2. Proveedor Principal & Claves -->
-      <section class="settings-card">
-        <h3>Proveedor Principal & Claves</h3>
+        <section class="cfg-section-block">
+        <h4>Proveedor principal</h4>
         <label for="cfg-proveedor">Proveedor Principal</label>
         <select id="cfg-proveedor">
           <option value="gemini">Gemini (Google)</option>
           <option value="grok">Grok (xAI)</option>
           <option value="openai">OpenAI (ChatGPT)</option>
+          <option value="groq">Groq</option>
+          <option value="cloudflare">Cloudflare Workers AI</option>
           <option value="cursor">Cursor (Grok Free)</option>
           <option value="ollama">Ollama · Local</option>
         </select>
         <p class="hint" id="cfg-ai-active"></p>
-
-        <label for="cfg-api-key">API Key para este proveedor</label>
-        <input id="cfg-api-key" type="password" autocomplete="new-password" placeholder="Vacío = conservar la guardada">
-        <label class="check-row"><input id="cfg-borrar-api" type="checkbox"> Borrar la clave guardada para este proveedor</label>
-        <p class="hint" id="cfg-api-status"></p>
 
         <label for="cfg-ai-fallback">Proveedor Alternativo Automático</label>
         <select id="cfg-ai-fallback">
@@ -1174,6 +1230,8 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
           <option value="gemini">Gemini</option>
           <option value="grok">Grok · xAI</option>
           <option value="openai">OpenAI</option>
+          <option value="groq">Groq</option>
+          <option value="cloudflare">Cloudflare Workers AI</option>
           <option value="cursor">Cursor · Grok Free</option>
         </select>
         <p class="hint" id="cfg-ai-fallback-status">Se prueba si el principal falla.</p>
@@ -1183,11 +1241,10 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
           <button id="cfg-benchmark-ai" type="button">Comparar proveedores</button>
         </div>
         <div id="cfg-ai-results" class="hint" role="status" aria-live="polite"></div>
-      </section>
+        </section>
 
-      <!-- 3. Modelos de IA -->
-      <section class="settings-card">
-        <h3>Modelos de Inteligencia</h3>
+        <section class="cfg-section-block">
+        <h4>Modelos de inteligencia</h4>
         <label for="cfg-modelo-gemini">Modelo de Gemini</label>
         <input id="cfg-modelo-gemini" list="cfg-modelos-gemini" autocomplete="off">
         <datalist id="cfg-modelos-gemini"></datalist>
@@ -1200,6 +1257,14 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
         <input id="cfg-modelo-openai" list="cfg-modelos-openai" autocomplete="off">
         <datalist id="cfg-modelos-openai"></datalist>
 
+        <label for="cfg-modelo-groq-api">Modelo de Groq</label>
+        <input id="cfg-modelo-groq-api" list="cfg-modelos-groq" autocomplete="off">
+        <datalist id="cfg-modelos-groq"></datalist>
+
+        <label for="cfg-modelo-cloudflare">Modelo de Cloudflare Workers AI</label>
+        <input id="cfg-modelo-cloudflare" list="cfg-modelos-cloudflare" autocomplete="off">
+        <datalist id="cfg-modelos-cloudflare"></datalist>
+
         <label for="cfg-modelo-cursor">Modelo de Cursor (Grok Free)</label>
         <input id="cfg-modelo-cursor" list="cfg-modelos-cursor" autocomplete="off">
         <datalist id="cfg-modelos-cursor"></datalist>
@@ -1208,11 +1273,32 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
         <input id="cfg-modelo-ollama" autocomplete="off">
         <label for="cfg-ollama-host">Dirección Host de Ollama</label>
         <input id="cfg-ollama-host" autocomplete="url">
+        </section>
+        <section class="cfg-section-block">
+          <h4>Reconocimiento y sistema</h4>
+          <label for="cfg-modelo-whisper">Modelo Whisper</label>
+          <select id="cfg-modelo-whisper">
+            <option value="tiny">tiny · rápido</option>
+            <option value="base">base</option>
+            <option value="small">small · recomendado</option>
+            <option value="medium">medium · preciso</option>
+            <option value="large-v3">large-v3</option>
+          </select>
+          <label for="cfg-idioma">Idioma</label>
+          <input id="cfg-idioma" autocomplete="off" placeholder="es">
+          <label for="cfg-tema">Tema Visual del HUD</label>
+          <select id="cfg-tema">
+            <option value="cian">Cian · Holográfico Mark LXXXV</option>
+            <option value="violeta">Violeta · Quantum Core</option>
+            <option value="verde">Verde · Matrix Stealth</option>
+          </select>
+        </section>
       </section>
 
-      <!-- 4. Audio & Voz -->
-      <section class="settings-card">
-        <h3>Audio y Voz</h3>
+      <section class="cfg-page" id="page-audio" role="tabpanel" aria-labelledby="tab-audio">
+        <h3>Audio</h3>
+        <section class="cfg-section-block">
+        <h4>Dispositivos de audio</h4>
         <label for="cfg-microfono">Micrófono de Entrada</label>
         <select id="cfg-microfono"></select>
         <div class="settings-actions">
@@ -1237,30 +1323,9 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
         <label for="cfg-voice-id">Voice ID</label>
         <input id="cfg-voice-id" autocomplete="off">
         <div class="settings-actions"><button data-test-audio="voz">Probar Voz</button></div>
-      </section>
-
-      <!-- 5. Reconocimiento & Ajustes -->
-      <section class="settings-card">
-        <h3>Reconocimiento & Sistema</h3>
-        <label for="cfg-modelo-whisper">Modelo Whisper</label>
-        <select id="cfg-modelo-whisper">
-          <option value="tiny">tiny · rápido</option>
-          <option value="base">base</option>
-          <option value="small">small · recomendado</option>
-          <option value="medium">medium · preciso</option>
-          <option value="large-v3">large-v3</option>
-        </select>
-
-        <label for="cfg-idioma">Idioma</label>
-        <input id="cfg-idioma" autocomplete="off" placeholder="es">
-
-        <label for="cfg-tema">Tema Visual del HUD</label>
-        <select id="cfg-tema">
-          <option value="cian">Cian · Holográfico Mark LXXXV</option>
-          <option value="violeta">Violeta · Quantum Core</option>
-          <option value="verde">Verde · Matrix Stealth</option>
-        </select>
-
+        </section>
+        <section class="cfg-section-block">
+          <h4>Niveles y efectos</h4>
         <label for="cfg-volumen-voz">Volumen de Voz</label>
         <div class="range-row"><input id="cfg-volumen-voz" type="range" min="0" max="100" step="1"><output id="cfg-volumen-voz-valor"></output></div>
 
@@ -1270,11 +1335,19 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
         <label for="cfg-volumen-efectos">Volumen Efectos Sonoros</label>
         <div class="range-row"><input id="cfg-volumen-efectos" type="range" min="0" max="100" step="1"><output id="cfg-volumen-efectos-valor"></output></div>
         <label class="check-row"><input id="cfg-sonidos-activos" type="checkbox"> Activar efectos sonoros sci-fi</label>
+        </section>
       </section>
 
-      <!-- 6. Integraciones & Ubicación -->
-      <section class="settings-card" style="grid-column:1 / -1">
-        <h3>Integraciones de Servicios</h3>
+      <section class="cfg-page" id="page-conexiones" role="tabpanel" aria-labelledby="tab-conexiones">
+        <h3>Conexiones</h3>
+        <section class="cfg-section-block">
+          <h4>Cloudflare Workers AI</h4>
+          <label for="cfg-cloudflare-account-id">Account ID</label>
+          <input id="cfg-cloudflare-account-id" autocomplete="off" placeholder="ID de cuenta de Cloudflare">
+          <p class="hint">Necesario para conectar los modelos de Workers AI. La API key se administra en API Keys.</p>
+        </section>
+        <section class="cfg-section-block">
+        <h4>Integraciones de servicios</h4>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
           <div>
             <label for="cfg-github">Token de GitHub</label>
@@ -1303,14 +1376,73 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
           <input id="cfg-modelo-vision" autocomplete="off">
           <div class="settings-actions"><button id="cfg-descargar-vision" type="button">Descargar Modelo Visual</button></div>
         </div>
+        </section>
       </section>
-    </div>
 
-    <div id="settings-status" role="status" aria-live="polite" style="margin-top:12px"></div>
-    <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:16px;border-top:1px solid var(--ln);padding-top:14px">
-      <button id="cfg-cerrar-bottom" type="button">Cancelar</button>
-      <button id="cfg-guardar" class="pri" type="button">Guardar Configuración</button>
-    </div>
+      <section class="cfg-page" id="page-apikey" role="tabpanel" aria-labelledby="tab-apikey">
+        <h3>API Keys</h3>
+        <p class="hint">Las claves se guardan localmente en el Administrador de credenciales de Windows. Dejá un campo vacío para conservar la clave actual.</p>
+        <div class="api-key-grid">
+          <section class="api-key-card">
+            <div class="api-key-title"><span class="provider-icon gemini">G</span><div><h4>Gemini</h4><p>Google AI</p></div></div>
+            <label for="cfg-key-gemini">API Key</label>
+            <input id="cfg-key-gemini" data-api-key="gemini" type="password" autocomplete="new-password" placeholder="Pegá tu API key">
+            <p class="hint" id="api-status-gemini" role="status"></p>
+            <label class="check-row"><input type="checkbox" data-clear-api-key="gemini"> Eliminar clave guardada</label>
+          </section>
+          <section class="api-key-card">
+            <div class="api-key-title"><span class="provider-icon openai">O</span><div><h4>OpenAI</h4><p>OpenAI API</p></div></div>
+            <label for="cfg-key-openai">API Key</label>
+            <input id="cfg-key-openai" data-api-key="openai" type="password" autocomplete="new-password" placeholder="Pegá tu API key">
+            <p class="hint" id="api-status-openai" role="status"></p>
+            <label class="check-row"><input type="checkbox" data-clear-api-key="openai"> Eliminar clave guardada</label>
+          </section>
+          <section class="api-key-card">
+            <div class="api-key-title"><span class="provider-icon grok">X</span><div><h4>Grok</h4><p>xAI</p></div></div>
+            <label for="cfg-key-grok">API Key</label>
+            <input id="cfg-key-grok" data-api-key="grok" type="password" autocomplete="new-password" placeholder="Pegá tu API key">
+            <p class="hint" id="api-status-grok" role="status"></p>
+            <label class="check-row"><input type="checkbox" data-clear-api-key="grok"> Eliminar clave guardada</label>
+          </section>
+          <section class="api-key-card">
+            <div class="api-key-title"><span class="provider-icon groq">GQ</span><div><h4>Groq</h4><p>Groq API</p></div></div>
+            <label for="cfg-key-groq">API Key</label>
+            <input id="cfg-key-groq" data-api-key="groq" type="password" autocomplete="new-password" placeholder="Pegá tu API key">
+            <p class="hint" id="api-status-groq" role="status"></p>
+            <label class="check-row"><input type="checkbox" data-clear-api-key="groq"> Eliminar clave guardada</label>
+          </section>
+          <section class="api-key-card">
+            <div class="api-key-title"><span class="provider-icon cursor">C</span><div><h4>Cursor</h4><p>Grok Free</p></div></div>
+            <label for="cfg-key-cursor">API Key</label>
+            <input id="cfg-key-cursor" data-api-key="cursor" type="password" autocomplete="new-password" placeholder="Pegá tu API key">
+            <p class="hint" id="api-status-cursor" role="status"></p>
+            <label class="check-row"><input type="checkbox" data-clear-api-key="cursor"> Eliminar clave guardada</label>
+          </section>
+          <section class="api-key-card api-key-cloudflare">
+            <div class="api-key-title"><span class="provider-icon cloudflare">CF</span><div><h4>Cloudflare Workers AI</h4><p>Una sola API key para todos los modelos</p></div></div>
+            <label for="cfg-key-cloudflare">API Token</label>
+            <input id="cfg-key-cloudflare" data-api-key="cloudflare" type="password" autocomplete="new-password" placeholder="Pegá tu API token">
+            <p class="hint" id="api-status-cloudflare" role="status"></p>
+            <label class="check-row"><input type="checkbox" data-clear-api-key="cloudflare"> Eliminar clave guardada</label>
+            <div class="cf-model-list" aria-label="Modelos Cloudflare disponibles">
+              <span>@cf/zai-org/glm-4.7-flash</span>
+              <span>@cf/openai/gpt-oss-20b</span>
+              <span>@cf/meta/llama-3.1-8b-instruct-fp8</span>
+              <span>@cf/google/gemma-4-26b-a4b-it</span>
+              <span>@cf/meta/llama-3.3-70b-instruct-fp8-fast</span>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <footer class="cfg-footer">
+      <div id="settings-status" class="cfg-status" role="status" aria-live="polite"></div>
+      <div class="cfg-btns">
+        <button id="cfg-cerrar-bottom" type="button">Cancelar</button>
+        <button id="cfg-guardar" class="pri" type="button">Guardar Configuración</button>
+      </div>
+    </footer>
   </div>
 </div>
 
@@ -1615,6 +1747,41 @@ addEventListener('keydown', e => {
 });
 
 /* ---------- Modal de Configuración ---------- */
+function mostrarPaginaConfiguracion(nombre){
+  document.querySelectorAll('[data-settings-tab]').forEach(tab => {
+    const activa = tab.dataset.settingsTab === nombre;
+    tab.classList.toggle('activa', activa);
+    tab.setAttribute('aria-selected', String(activa));
+  });
+  document.querySelectorAll('.cfg-page').forEach(page => {
+    page.classList.toggle('activa', page.id === `page-${nombre}`);
+  });
+}
+document.querySelectorAll('[data-settings-tab]').forEach(tab => {
+  tab.onclick = () => mostrarPaginaConfiguracion(tab.dataset.settingsTab);
+});
+
+function modeloDeProveedor(proveedor, datos){
+  const campos = {
+    groq:'modelo_groq_api',
+    cloudflare:'modelo_cloudflare',
+  };
+  return datos[campos[proveedor] || `modelo_${proveedor}`] || '';
+}
+
+function actualizarEstadoApiKeys(datos){
+  for(const proveedor of ['gemini','openai','grok','groq','cursor','cloudflare']){
+    const guardada = datos.api_keys_guardadas?.[proveedor];
+    const mascara = datos.api_keys_mascaradas?.[proveedor];
+    const estado = guardada
+      ? `Clave guardada en Windows${mascara ? `: ${mascara}` : ''}.`
+      : 'No hay una clave guardada.';
+    $(`api-status-${proveedor}`).textContent = proveedor === 'cloudflare' && !datos.cloudflare_account_id
+      ? `${estado} Falta el Account ID en Conexiones.`
+      : estado;
+  }
+}
+
 function llenarSelect(id, dispositivos, seleccionado, predeterminado){
   const el = $(id);
   el.replaceChildren();
@@ -1639,6 +1806,7 @@ function aplicarTema(t){
 
 async function abrirAjustes(){
   $('settings-modal').classList.add('abierto');
+  mostrarPaginaConfiguracion('configuracion');
   $('settings-status').textContent = 'Cargando configuración…';
   try{
     const r = await fetch('/settings?t=' + encodeURIComponent(T), {headers:{'X-Token':T}});
@@ -1648,10 +1816,8 @@ async function abrirAjustes(){
     llenarSelect('cfg-microfono', d.microfonos, d.microfono, 'Predeterminado de Windows');
     llenarSelect('cfg-salida', d.salidas, d.salida, 'Predeterminada de Windows');
     $('cfg-proveedor').value = d.proveedor;
-    proveedorClaveEnCampo = d.proveedor;
     $('cfg-ai-fallback').value = d.proveedor_ia_alternativo || '';
-    $('cfg-ai-active').textContent = `Activo: ${d.proveedor} · ${d['modelo_' + d.proveedor] || ''}`;
-    $('cfg-api-key').disabled = d.proveedor === 'ollama';
+    $('cfg-ai-active').textContent = `Activo: ${d.proveedor} · ${modeloDeProveedor(d.proveedor, d)}`;
     $('cfg-tts').value = d.proveedor_tts;
     $('cfg-voice-id').value = d.elevenlabs_voice_id || '';
     $('cfg-spotify').value = d.spotify_client_id || '';
@@ -1663,6 +1829,9 @@ async function abrirAjustes(){
     $('cfg-modelo-grok').value = d.modelo_grok || '';
     $('cfg-modelo-openai').value = d.modelo_openai || '';
     $('cfg-modelo-cursor').value = d.modelo_cursor || '';
+    $('cfg-modelo-groq-api').value = d.modelo_groq_api || '';
+    $('cfg-modelo-cloudflare').value = d.modelo_cloudflare || '';
+    $('cfg-cloudflare-account-id').value = d.cloudflare_account_id || '';
     $('cfg-modo-ensemble').value = d.modo_ensemble || 'auto';
     $('cfg-estrategia-ensemble').value = d.estrategia_ensemble || 'mejor';
 
@@ -1681,8 +1850,9 @@ async function abrirAjustes(){
     if(d.modelo_grok) $('model-grok').textContent = d.modelo_grok;
     if(d.modelo_cursor) $('model-cursor').textContent = d.modelo_cursor;
 
-    for(const proveedor of ['gemini','grok','openai','cursor']){
-      const lista = $(`cfg-modelos-${proveedor}`);
+    for(const proveedor of ['gemini','grok','openai','cursor','groq','cloudflare']){
+      const listaId = proveedor === 'groq' ? 'groq' : proveedor;
+      const lista = $(`cfg-modelos-${listaId}`);
       if(lista){
         lista.replaceChildren(...(d.modelos_ia?.[proveedor] || []).map(modelo => {
           const opcion = document.createElement('option');
@@ -1703,11 +1873,7 @@ async function abrirAjustes(){
     aplicarTema($('cfg-tema').value);
     volumenEfectos = Number($('cfg-volumen-efectos').value) / 100;
 
-    $('cfg-api-status').textContent = d.api_key_guardada
-      ? `Clave guardada en Windows: ${d.api_key_mascarada}.`
-      : d.proveedor === 'ollama'
-        ? 'Ollama se ejecuta localmente y no necesita API key.'
-        : 'No hay una clave guardada para este proveedor.';
+    actualizarEstadoApiKeys(d);
     
     $('cfg-elevenlabs-status').textContent = d.elevenlabs_key_guardada ? 'Clave guardada en Windows.' : 'ElevenLabs sin configurar.';
     $('cfg-github-status').textContent = d.github_token_guardado ? 'Token de GitHub guardado.' : 'GitHub sin configurar.';
@@ -1723,6 +1889,10 @@ $('cfg-cerrar-bottom').onclick = cerrarAjustes;
 $('settings-modal').onclick = e => { if(e.target === $('settings-modal')) cerrarAjustes(); };
 
 $('cfg-tema').onchange = () => aplicarTema($('cfg-tema').value);
+$('cfg-proveedor').onchange = () => {
+  const proveedor = $('cfg-proveedor').value;
+  $('cfg-ai-active').textContent = `Proveedor seleccionado: ${proveedor} · ${modeloDeProveedor(proveedor, configuracionFormulario())}`;
+};
 $('cfg-sonidos-activos').onchange = () => establecerSonidos($('cfg-sonidos-activos').checked);
 
 function actualizarEtiquetasVolumen(){
@@ -1738,34 +1908,13 @@ for(const id of ['cfg-volumen-voz','cfg-velocidad-voz','cfg-volumen-efectos']){
 $('cfg-github-dashboard').onclick = () => window.open('https://github.com/settings/personal-access-tokens/new','_blank','noopener');
 $('cfg-spotify-dashboard').onclick = () => window.open('https://developer.spotify.com/dashboard','_blank','noopener');
 
-let aiKeyDrafts = {};
-let proveedorClaveEnCampo = '';
-$('cfg-proveedor').onchange = async () => {
-  const anterior = proveedorClaveEnCampo;
-  if(anterior) aiKeyDrafts[anterior] = $('cfg-api-key').value;
-  proveedorClaveEnCampo = $('cfg-proveedor').value;
-  $('cfg-api-key').value = aiKeyDrafts[proveedorClaveEnCampo] || '';
-  $('cfg-api-key').disabled = proveedorClaveEnCampo === 'ollama';
-  $('cfg-ai-active').textContent = `Proveedor seleccionado: ${proveedorClaveEnCampo}`;
-  try{
-    const r = await fetch('/settings?t=' + encodeURIComponent(T), {headers:{'X-Token':T}});
-    const d = await r.json();
-    const tieneClave = d.api_keys_guardadas?.[proveedorClaveEnCampo];
-    $('cfg-api-status').textContent = tieneClave
-      ? `Clave guardada en Windows: ${d.api_keys_mascaradas?.[proveedorClaveEnCampo] || '••••••'}.`
-      : proveedorClaveEnCampo === 'ollama'
-        ? 'Ollama se ejecuta localmente y no necesita API key.'
-        : 'No hay una clave guardada para este proveedor.';
-  }catch(e){}
-};
-
 function configuracionFormulario(){
   return {
     microfono:$('cfg-microfono').value,
     salida:$('cfg-salida').value,
     proveedor:$('cfg-proveedor').value,
-    api_key:$('cfg-api-key').value,
-    borrar_api_key:$('cfg-borrar-api').checked,
+    api_keys:Object.fromEntries(Array.from(document.querySelectorAll('[data-api-key]')).map(input => [input.dataset.apiKey, input.value])),
+    borrar_api_keys:Object.fromEntries(Array.from(document.querySelectorAll('[data-clear-api-key]')).map(input => [input.dataset.clearApiKey, input.checked])),
     proveedor_tts:$('cfg-tts').value,
     elevenlabs_api_key:$('cfg-elevenlabs-key').value,
     borrar_elevenlabs_key:$('cfg-borrar-elevenlabs').checked,
@@ -1777,10 +1926,13 @@ function configuracionFormulario(){
     vision_modelo:$('cfg-modelo-vision').value,
     modelo_ollama:$('cfg-modelo-ollama').value,
     ollama_host:$('cfg-ollama-host').value,
+    cloudflare_account_id:$('cfg-cloudflare-account-id').value,
     modelo_gemini:$('cfg-modelo-gemini').value,
     modelo_grok:$('cfg-modelo-grok').value,
     modelo_openai:$('cfg-modelo-openai').value,
     modelo_cursor:$('cfg-modelo-cursor').value,
+    modelo_groq_api:$('cfg-modelo-groq-api').value,
+    modelo_cloudflare:$('cfg-modelo-cloudflare').value,
     modo_ensemble:$('cfg-modo-ensemble').value,
     estrategia_ensemble:$('cfg-estrategia-ensemble').value,
     proveedor_ia_alternativo:$('cfg-ai-fallback').value,
@@ -1798,10 +1950,11 @@ async function guardarAjustes(){
   const datos = configuracionFormulario();
   const r = await post('/settings', datos);
   if(!r) { $('settings-status').textContent = 'No se pudo guardar. Revisá la conexión e intentá de nuevo.'; return null; }
-  delete aiKeyDrafts[datos.proveedor];
-  $('cfg-api-key').value = '';
-  $('cfg-ai-active').textContent = `Activo: ${r.configuracion.proveedor} · ${r.configuracion['modelo_' + r.configuracion.proveedor] || ''}`;
-  for(const id of ['cfg-borrar-api','cfg-borrar-elevenlabs','cfg-borrar-github']) $(id).checked = false;
+  document.querySelectorAll('[data-api-key]').forEach(input => { input.value = ''; });
+  document.querySelectorAll('[data-clear-api-key]').forEach(input => { input.checked = false; });
+  actualizarEstadoApiKeys(r.configuracion);
+  $('cfg-ai-active').textContent = `Activo: ${r.configuracion.proveedor} · ${modeloDeProveedor(r.configuracion.proveedor, r.configuracion)}`;
+  for(const id of ['cfg-borrar-elevenlabs','cfg-borrar-github']) $(id).checked = false;
   $('settings-status').textContent = r.configuracion?.requiere_reinicio
     ? 'Configuración guardada. Reiniciá Jarvis para aplicar cambios de hardware.'
     : 'Configuración guardada con éxito.';
@@ -1813,7 +1966,7 @@ async function probarIA(comparar){
   const guardado = await guardarAjustes();
   if(!guardado) return;
   $('cfg-ai-results').textContent = comparar
-    ? 'Midiendo Gemini, Grok, OpenAI y Cursor con solicitud en paralelo…'
+    ? 'Midiendo los proveedores configurados con una solicitud en paralelo…'
     : 'Probando conexión con el proveedor principal…';
   const resultado = await post('/test-ai', {comparar});
   if(!resultado){
