@@ -21,6 +21,7 @@ import psutil
 import config
 
 HUD_DIR = Path(__file__).parent / "hud"
+ICON_PATH = Path(__file__).parent / "jarvis.ico"
 
 
 class _ServidorExclusivo(ThreadingHTTPServer):
@@ -166,8 +167,19 @@ class Servidor:
         srv = self
 
         class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
             def log_message(self, *_):
                 pass
+
+            def _enviar_evento(self, evento):
+                cuerpo = (
+                    f"data: {json.dumps(evento, ensure_ascii=False)}\n\n"
+                ).encode("utf-8")
+                self.wfile.write(f"{len(cuerpo):X}\r\n".encode("ascii"))
+                self.wfile.write(cuerpo)
+                self.wfile.write(b"\r\n")
+                self.wfile.flush()
 
             def _autorizado(self):
                 host = self.headers.get("Host", "")
@@ -182,14 +194,17 @@ class Servidor:
                 self.send_header("Content-Type", tipo)
                 self.send_header("Content-Length", str(len(cuerpo)))
                 self.send_header("Cache-Control", "no-store")
+                self.send_header("Connection", "close")
                 self.end_headers()
                 self.wfile.write(cuerpo)
+                self.close_connection = True
 
             def do_GET(self):
                 if urlparse(self.path).path == "/favicon.ico":
-                    self.send_response(204)
-                    self.end_headers()
-                    return
+                    try:
+                        return self._enviar(200, "image/x-icon", ICON_PATH.read_bytes())
+                    except OSError:
+                        return self._enviar(404, "text/plain", b"No existe")
                 if not self._autorizado():
                     return self._enviar(403, "text/html; charset=utf-8", PAGINA_PROHIBIDO.encode("utf-8"))
                 ruta = urlparse(self.path).path
@@ -225,21 +240,27 @@ class Servidor:
                 if ruta == "/events":
                     self.send_response(200)
                     self.send_header("Content-Type", "text/event-stream")
-                    self.send_header("Cache-Control", "no-cache")
+                    self.send_header("Cache-Control", "no-cache, no-transform")
+                    self.send_header("Connection", "keep-alive")
+                    self.send_header("Transfer-Encoding", "chunked")
                     self.end_headers()
                     q = srv.bus.suscribir()
                     try:
                         while True:
                             try:
                                 ev = q.get(timeout=15)
-                                self.wfile.write(f"data: {json.dumps(ev, ensure_ascii=False)}\n\n".encode("utf-8"))
+                                self._enviar_evento(ev)
                             except queue.Empty:
-                                self.wfile.write(b": ping\n\n")
-                            self.wfile.flush()
+                                cuerpo = b": ping\n\n"
+                                self.wfile.write(f"{len(cuerpo):X}\r\n".encode("ascii"))
+                                self.wfile.write(cuerpo)
+                                self.wfile.write(b"\r\n")
+                                self.wfile.flush()
                     except OSError:
                         pass
                     finally:
                         srv.bus.desuscribir(q)
+                        self.close_connection = True
                     return
                 self._enviar(404, "text/plain", b"No existe")
 

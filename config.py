@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 NOMBRE = "Jarvis"
+NOMBRE_USUARIO = ""
 
 # Palabras que activan al asistente (Whisper a veces transcribe distinto)
 PALABRAS_ACTIVACION = ["jarvis", "yarvis", "jarbis", "charvis", "jarvi"]
@@ -55,10 +56,11 @@ MODELOS_IA = {
 # --- Voz ---
 USAR_VOZ = True            # main.py --texto lo pone en False
 VOZ_SILENCIADA = False     # modo silencio: conserva el micrófono, desactiva las respuestas habladas
-PROVEEDOR_TTS = os.environ.get("JARVIS_TTS_PROVIDER", "piper").lower()
+PROVEEDOR_TTS = os.environ.get("JARVIS_TTS_PROVIDER", "cartesia").lower()
 ELEVENLABS_VOICE_ID = os.environ.get(
     "ELEVENLABS_VOICE_ID", "wBXNqKUATyqu0RtYt25i"
 ).strip()
+CARTESIA_VOICE_ID = os.environ.get("CARTESIA_VOICE_ID", "").strip()
 VOLUMEN_VOZ = 100
 VELOCIDAD_VOZ = 100
 PIPER_MODELO_VOZ = "es_MX-claude-high"

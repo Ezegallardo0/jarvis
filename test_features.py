@@ -2,6 +2,7 @@
 import json
 import queue
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -17,6 +18,85 @@ import voice
 
 
 class PermisosYVozTests(unittest.TestCase):
+    def test_umbral_de_voz_admite_habla_baja_sobre_ruido_ambiente(self):
+        ruido_ambiente = 0.00816
+        nivel_habla = 0.010399
+
+        umbral = voice._calcular_umbral_voz(ruido_ambiente)
+
+        self.assertAlmostEqual(umbral, 0.008976)
+        self.assertLess(umbral, nivel_habla)
+        self.assertEqual(voice._calcular_umbral_voz(0), 0.00008)
+
+    def test_cartesia_envia_audio_pcm_y_usa_la_voz_configurada(self):
+        respuesta = mock.Mock(is_success=True, content=b"\x00\x00\xff\x7f")
+        with (
+            mock.patch("httpx.post", return_value=respuesta) as enviar,
+            mock.patch.object(voice, "_reproducir_audio") as reproducir,
+            mock.patch.object(config, "IDIOMA", "es"),
+            mock.patch.object(config, "VELOCIDAD_VOZ", 110),
+        ):
+            voice._hablar_cartesia(
+                "Hola, Jarvis.",
+                "clave-cartesia-prueba",
+                voice_id="voz-prueba",
+            )
+
+        solicitud = enviar.call_args
+        self.assertEqual(solicitud.args[0], voice.CARTESIA_TTS_URL)
+        self.assertEqual(
+            solicitud.kwargs["headers"],
+            {
+                "Authorization": "Bearer clave-cartesia-prueba",
+                "Cartesia-Version": voice.CARTESIA_API_VERSION,
+                "Content-Type": "application/json",
+            },
+        )
+        self.assertEqual(
+            solicitud.kwargs["json"],
+            {
+                "model_id": "sonic-3.6",
+                "transcript": "Hola, Jarvis.",
+                "voice": "voz-prueba",
+                "language": "es",
+                "output_format": {
+                    "container": "raw",
+                    "encoding": "pcm_s16le",
+                    "sample_rate": 24000,
+                },
+                "generation_config": {"speed": 1.1},
+            },
+        )
+        reproducir.assert_called_once()
+        self.assertEqual(reproducir.call_args.args[1], 24000)
+        self.assertAlmostEqual(reproducir.call_args.args[0][-1], 32767 / 32768)
+
+    def test_cartesia_falla_a_piper_si_falta_credencial_o_voz(self):
+        with (
+            mock.patch.object(config, "PROVEEDOR_TTS", "cartesia"),
+            mock.patch.object(voice, "_hablar_piper") as piper,
+            mock.patch.object(voice, "_hablar_windows") as windows,
+            mock.patch("builtins.print"),
+        ):
+            resultado = voice.hablar("Prueba", cartesia_api_key="", cartesia_voice_id="")
+
+        piper.assert_called_once_with("Prueba", None)
+        windows.assert_not_called()
+        self.assertIn("Falta la API key de Cartesia", resultado)
+        self.assertIn("Piper como alternativa", resultado)
+
+    def test_cartesia_omite_clave_de_error_remoto(self):
+        respuesta = mock.Mock(
+            is_success=False,
+            status_code=401,
+            content=b"",
+            text="Unauthorized",
+        )
+        respuesta.json.return_value = {"message": "Invalid API key"}
+        with mock.patch("httpx.post", return_value=respuesta):
+            with self.assertRaisesRegex(RuntimeError, "HTTP 401: Invalid API key"):
+                voice._hablar_cartesia("Hola", "clave-cartesia-prueba", voice_id="voz")
+
     def test_saludos_se_tratan_como_conversacion_normal(self):
         for texto in (
             "Hola",
@@ -528,6 +608,42 @@ class PermisosYVozTests(unittest.TestCase):
 
 
 class AdjuntosTests(unittest.TestCase):
+    def test_eventos_hud_usan_un_flujo_sse_persistente(self):
+        bus = ui.Bus()
+        servidor = ui.Servidor(bus, queue.Queue())
+        with mock.patch.object(config, "HUD_PUERTO", 18766):
+            servidor.iniciar()
+            try:
+                url = f"http://127.0.0.1:{servidor.puerto}/events?t={servidor.token}"
+                with urlopen(url, timeout=5) as respuesta:
+                    self.assertEqual(respuesta.status, 200)
+                    self.assertEqual(respuesta.version, 11)
+                    self.assertEqual(
+                        respuesta.headers.get("Transfer-Encoding"), "chunked"
+                    )
+
+                    for _ in range(100):
+                        if bus.hay_hud():
+                            break
+                        time.sleep(0.01)
+                    self.assertTrue(bus.hay_hud())
+                    bus.publish("estado", valor="escuchando", texto="flujo-prueba")
+
+                    evento_recibido = False
+                    while True:
+                        linea = respuesta.readline()
+                        if not linea:
+                            break
+                        if linea.startswith(b"data: "):
+                            evento = json.loads(linea[6:])
+                            if evento.get("texto") == "flujo-prueba":
+                                evento_recibido = True
+                                break
+                    self.assertTrue(evento_recibido)
+            finally:
+                servidor.httpd.shutdown()
+                servidor.httpd.server_close()
+
     def test_interfaz_rechaza_ordenes_de_texto(self):
         entradas = queue.Queue()
         servidor = ui.Servidor(ui.Bus(), entradas)

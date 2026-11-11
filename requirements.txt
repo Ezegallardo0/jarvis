@@ -12,3 +12,4 @@ keyring
 piper-tts
 pywin32
 spotipy
+pyinstaller

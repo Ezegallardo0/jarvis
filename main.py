@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-if __name__ == "__main__":
+if __name__ == "__main__" and not getattr(sys, "frozen", False):
     proyecto = Path(__file__).resolve().parent
     entorno = proyecto / "venv"
     if Path(sys.prefix).resolve() != entorno.resolve():
@@ -30,10 +30,30 @@ import tools
 import visionTools
 import voice
 from brain import Cerebro, crear_cerebro
+import preferencias_usuario
 
 _ = visionTools
 
 SALIDAS = ("salir", "adios", "apagate", "hasta luego", "chau")
+
+
+def _obtener_nombre_usuario():
+    ruta = config.CARPETA_DATOS / "preferencias_usuario.json"
+    try:
+        nombre = preferencias_usuario.cargar_nombre_usuario(ruta)
+    except (OSError, ValueError) as error:
+        print(f"Aviso: no pude leer el nombre guardado: {error}")
+        nombre = ""
+    if nombre or not sys.stdin.isatty():
+        return nombre
+    nombre = input("¿Cómo querés que te llame? ").strip()
+    if not nombre:
+        return ""
+    try:
+        return preferencias_usuario.guardar_nombre_usuario(ruta, nombre)
+    except (OSError, ValueError) as error:
+        print(f"Aviso: no pude guardar tu nombre: {error}")
+        return ""
 
 
 def _obtener_clave(proveedor):
@@ -54,6 +74,7 @@ def _obtener_clave(proveedor):
         "cloudflare": "CLOUDFLARE_API_KEY",
         "cursor": "CURSOR_API_KEY",
         "elevenlabs": "ELEVENLABS_API_KEY",
+        "cartesia": "CARTESIA_API_KEY",
     }.get(proveedor, "")
     return os.environ.get(env_var, "") if env_var else ""
 
@@ -72,6 +93,7 @@ def main():
         voice.probar_microfono()
         return
     config.CARPETA_DATOS.mkdir(parents=True, exist_ok=True)
+    config.NOMBRE_USUARIO = _obtener_nombre_usuario()
 
     try:
         cerebro = crear_cerebro(_obtener_clave)
@@ -92,9 +114,15 @@ def main():
         sys.exit(1)
 
     clave_elevenlabs = _obtener_clave("elevenlabs")
+    clave_cartesia = _obtener_clave("cartesia")
 
     def hablar(texto):
-        return voice.hablar(texto, api_key=clave_elevenlabs, oido=oido)
+        return voice.hablar(
+            texto,
+            api_key=clave_elevenlabs,
+            oido=oido,
+            cartesia_api_key=clave_cartesia,
+        )
 
     def confirmar(texto):
         hablar(texto)
@@ -135,7 +163,12 @@ def main():
             hablar(f"Tuve un problema: {e}")
         return True
 
-    hablar(f"Hola, soy {config.NOMBRE}. Ya estoy en línea y te escucho. ¿Qué necesitás?")
+    saludo = (
+        f"Hola, {config.NOMBRE_USUARIO}. Soy {config.NOMBRE}. "
+        if config.NOMBRE_USUARIO
+        else f"Hola, soy {config.NOMBRE}. "
+    )
+    hablar(f"{saludo}Ya estoy en línea y te escucho. ¿Qué necesitás?")
     try:
         while True:
             pedido = oido.escuchar_continuo()

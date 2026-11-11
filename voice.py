@@ -1,4 +1,4 @@
-"""Voz: reconocimiento local y síntesis local o mediante ElevenLabs."""
+"""Voz: reconocimiento local y síntesis mediante Cartesia, Piper o ElevenLabs."""
 import os
 import re
 import tempfile
@@ -12,6 +12,10 @@ from pathlib import Path
 import config
 
 SR = 16000
+CARTESIA_TTS_URL = "https://api.cartesia.ai/tts/bytes"
+CARTESIA_API_VERSION = "2026-08-14"
+CARTESIA_TTS_MODEL = "sonic-3.6"
+CARTESIA_SAMPLE_RATE = 24000
 _PIPER_REVISION = "e7229f7d33a10e145e109b886d661984201ac3c4"
 _PIPER_FILES = {
     f"{config.PIPER_MODELO_VOZ}.onnx": 63122309,
@@ -30,6 +34,10 @@ def normalizar(texto):
     texto = unicodedata.normalize("NFD", texto.lower())
     texto = "".join(c for c in texto if unicodedata.category(c) != "Mn")
     return re.sub(r"[^\w\s]", " ", texto)
+
+
+def _calcular_umbral_voz(nivel_ruido):
+    return max(0.00008, nivel_ruido * 1.1)
 
 
 def cambiar_modo_silencio(texto):
@@ -79,7 +87,13 @@ def _ajustar_nivel_audio(audio):
     return np.clip(audio * ganancia, -1.0, 1.0)
 
 
-def hablar(texto, api_key=None, oido=None):
+def hablar(
+    texto,
+    api_key=None,
+    oido=None,
+    cartesia_api_key=None,
+    cartesia_voice_id=None,
+):
     print(f"{config.NOMBRE}: {texto}")
     if not config.USAR_VOZ or config.VOZ_SILENCIADA:
         return None
@@ -89,6 +103,24 @@ def hablar(texto, api_key=None, oido=None):
             return _hablar_elevenlabs(limpio, api_key, oido)
         except Exception as error:
             return _usar_voz_windows(limpio, f"ElevenLabs: {error}")
+    if config.PROVEEDOR_TTS == "cartesia":
+        try:
+            return _hablar_cartesia(
+                limpio,
+                cartesia_api_key,
+                oido,
+                voice_id=cartesia_voice_id,
+            )
+        except Exception as error:
+            try:
+                _hablar_piper(limpio, oido)
+            except Exception as error_piper:
+                return _usar_voz_windows(
+                    limpio, f"Cartesia: {error}. Piper: {error_piper}"
+                )
+            mensaje = f"Cartesia: {error}. Se usó Piper como alternativa."
+            print(f"({mensaje})")
+            return mensaje
     if config.PROVEEDOR_TTS == "piper":
         try:
             return _hablar_piper(limpio, oido)
@@ -260,6 +292,77 @@ def _hablar_piper(texto, oido=None):
                 )
             audio, frecuencia = _leer_wav(ruta)
             return _reproducir_audio(audio, frecuencia, oido)
+
+
+def probar_cartesia(texto, api_key, voice_id=None, oido=None):
+    """Genera y reproduce una frase mediante Cartesia."""
+    if not texto.strip():
+        raise ValueError("El texto de prueba está vacío.")
+    _hablar_cartesia(texto, api_key, oido, voice_id=voice_id)
+    return 200
+
+
+def _hablar_cartesia(texto, api_key, oido=None, voice_id=None):
+    import httpx
+    import numpy as np
+
+    clave = str(api_key or "").strip() or os.environ.get(
+        "CARTESIA_API_KEY", ""
+    ).strip()
+    id_voz = str(voice_id or config.CARTESIA_VOICE_ID).strip()
+    if not clave:
+        raise ValueError(
+            "Falta la API key de Cartesia. Ingresala en Ajustes > Audio."
+        )
+    if not id_voz:
+        raise ValueError(
+            "Falta un Voice ID de Cartesia. Elegí una voz en play.cartesia.ai/voices."
+        )
+    if not texto.strip():
+        return
+
+    try:
+        respuesta = httpx.post(
+            CARTESIA_TTS_URL,
+            headers={
+                "Authorization": f"Bearer {clave}",
+                "Cartesia-Version": CARTESIA_API_VERSION,
+                "Content-Type": "application/json",
+            },
+            json={
+                "model_id": CARTESIA_TTS_MODEL,
+                "transcript": texto,
+                "voice": id_voz,
+                "language": config.IDIOMA,
+                "output_format": {
+                    "container": "raw",
+                    "encoding": "pcm_s16le",
+                    "sample_rate": CARTESIA_SAMPLE_RATE,
+                },
+                "generation_config": {
+                    "speed": max(0.6, min(1.5, config.VELOCIDAD_VOZ / 100))
+                },
+            },
+            timeout=60,
+        )
+    except httpx.RequestError as error:
+        raise RuntimeError(f"No pude conectar con Cartesia: {error}") from error
+
+    if not respuesta.is_success:
+        try:
+            cuerpo = respuesta.json()
+            detalle = cuerpo.get("message") or cuerpo.get("error") or cuerpo
+        except (ValueError, AttributeError):
+            detalle = respuesta.text
+        detalle = str(detalle).replace(clave, "[API key oculta]")[:500]
+        raise RuntimeError(
+            f"Cartesia respondió HTTP {respuesta.status_code}: {detalle}"
+        )
+    if not respuesta.content or len(respuesta.content) % 2:
+        raise RuntimeError("Cartesia devolvió audio PCM vacío o inválido.")
+
+    audio = np.frombuffer(respuesta.content, dtype="<i2").astype(np.float32) / 32768
+    return _reproducir_audio(audio, CARTESIA_SAMPLE_RATE, oido)
 
 
 def probar_elevenlabs(texto, api_key, voice_id=None, oido=None):
@@ -627,7 +730,7 @@ class Oido:
             )
         ruido = float(self.np.sqrt(self.np.mean(audio**2)))
         self.ruido_ambiente = ruido
-        self.umbral = max(0.00008, ruido * 1.35)
+        self.umbral = _calcular_umbral_voz(ruido)
         print(
             f"Nivel ambiente: {ruido:.5f}; umbral de voz: {self.umbral:.5f} "
             "(sensibilidad aumentada)"
@@ -682,7 +785,7 @@ class Oido:
                     self.ruido_ambiente = (
                         self.ruido_ambiente * 0.99 + nivel * 0.01
                     )
-                    self.umbral = max(0.00008, self.ruido_ambiente * 1.35)
+                    self.umbral = _calcular_umbral_voz(self.ruido_ambiente)
                 if nivel >= self.umbral:
                     if not hablando:
                         buf = list(pre)

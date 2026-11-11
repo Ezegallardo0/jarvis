@@ -12,7 +12,7 @@ import webbrowser
 from datetime import datetime
 from pathlib import Path
 
-if __name__ == "__main__":
+if __name__ == "__main__" and not getattr(sys, "frozen", False):
     proyecto = Path(__file__).resolve().parent
     entorno = proyecto / "venv"
     if Path(sys.prefix).resolve() != entorno.resolve():
@@ -30,10 +30,11 @@ if __name__ == "__main__":
         )
 
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog, ttk
 
 import config
 import ai_providers
+import preferencias_usuario
 import sounddevice as sd
 import ui
 import voice
@@ -111,9 +112,11 @@ class Lanzador:
             config.MODELO_GROQ_API,
             config.MODELO_CLOUDFLARE,
             config.CLOUDFLARE_ACCOUNT_ID,
+            config.CARTESIA_VOICE_ID,
         ) = self._leer_seleccion()
         try:
             config.GITHUB_TOKEN = self._clave_guardada_o_entorno("github")
+            self.cartesia_api_key = self._clave_guardada_o_entorno("cartesia")
         except Exception as error:
             messagebox.showerror(
                 "Credenciales no disponibles",
@@ -121,6 +124,7 @@ class Lanzador:
                 parent=raiz,
             )
             config.GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+            self.cartesia_api_key = self._clave_entorno("cartesia")
         import tools
 
         config.COMPARTIENDO_PANTALLA = tools.permiso_control_pc() is True
@@ -252,6 +256,7 @@ class Lanzador:
             "Piper (español argentino, gratis)": "piper",
             "Windows (local)": "windows",
             "ElevenLabs": "elevenlabs",
+            "Cartesia": "cartesia",
         }
         self.proveedor_tts_var = tk.StringVar(
             value=next(
@@ -260,10 +265,22 @@ class Lanzador:
             )
         )
         self.elevenlabs_api_key_var = tk.StringVar(value=clave_elevenlabs)
+        try:
+            clave_cartesia = self._clave_guardada_o_entorno("cartesia")
+        except Exception as error:
+            messagebox.showerror(
+                "No se pudo leer la API key de Cartesia",
+                f"No pude leer la clave del Administrador de credenciales de Windows:\n{error}",
+                parent=raiz,
+            )
+            clave_cartesia = self._clave_entorno("cartesia")
+        self.cartesia_api_key_var = tk.StringVar(value=clave_cartesia)
         self.elevenlabs_api_key = ""
+        self.cartesia_api_key = ""
         self.elevenlabs_voice_id_var = tk.StringVar(
             value=config.ELEVENLABS_VOICE_ID
         )
+        self.cartesia_voice_id_var = tk.StringVar(value=config.CARTESIA_VOICE_ID)
 
         ttk.Label(principal, text="Micrófono (entrada)").grid(row=2, column=0, sticky="w", pady=4)
         self.entrada_menu = ttk.Combobox(
@@ -325,24 +342,42 @@ class Lanzador:
             principal,
             text="Copiá el Voice ID de la voz elegida en ElevenLabs. Se guarda en la configuración local.",
         ).grid(row=10, column=0, columnspan=2, sticky="w")
+        ttk.Label(principal, text="API key de Cartesia (se guarda en Windows)").grid(
+            row=11, column=0, sticky="w", pady=4
+        )
+        self.cartesia_api_key_entry = ttk.Entry(
+            principal, textvariable=self.cartesia_api_key_var, show="*", width=56
+        )
+        self.cartesia_api_key_entry.grid(row=11, column=1, sticky="ew", pady=4)
+        ttk.Label(principal, text="Voice ID de Cartesia").grid(
+            row=12, column=0, sticky="w", pady=4
+        )
+        self.cartesia_voice_id_entry = ttk.Entry(
+            principal, textvariable=self.cartesia_voice_id_var, width=56
+        )
+        self.cartesia_voice_id_entry.grid(row=12, column=1, sticky="ew", pady=4)
+        ttk.Label(
+            principal,
+            text="API key y Voice ID desde play.cartesia.ai. Si no están configurados, Jarvis usa Piper.",
+        ).grid(row=13, column=0, columnspan=2, sticky="w")
         ttk.Label(
             principal,
             text=f"Voz local predeterminada: Claude ({config.PIPER_MODELO_VOZ}), gratis y sin conexión.",
-        ).grid(row=11, column=0, columnspan=2, sticky="w")
+        ).grid(row=14, column=0, columnspan=2, sticky="w")
         ttk.Checkbutton(
             principal,
             text="Permitir que Jarvis analice la pantalla cuando se lo pida (captura bajo demanda)",
             variable=self.compartir_pantalla_var,
             command=self._cambiar_permiso_pantalla,
-        ).grid(row=12, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ).grid(row=15, column=0, columnspan=2, sticky="w", pady=(8, 0))
         ttk.Button(
             principal,
             text=f"Descargar modelo visual (~3 GB): {config.MODELO_VISION}",
             command=self.preparar_vision,
-        ).grid(row=13, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ).grid(row=16, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
         acciones = ttk.Frame(principal)
-        acciones.grid(row=14, column=0, columnspan=2, sticky="ew", pady=(16, 8))
+        acciones.grid(row=17, column=0, columnspan=2, sticky="ew", pady=(16, 8))
         ttk.Button(acciones, text="Probar micrófono", command=self.probar_microfono).grid(
             row=0, column=0, padx=(0, 6)
         )
@@ -371,14 +406,15 @@ class Lanzador:
 
         self.estado = tk.StringVar(value="Seleccioná los dispositivos y probalos antes de iniciar.")
         ttk.Label(principal, textvariable=self.estado, wraplength=780).grid(
-            row=15, column=0, columnspan=2, sticky="w", pady=(8, 0)
+            row=18, column=0, columnspan=2, sticky="w", pady=(8, 0)
         )
         ttk.Label(
             principal,
             text="La prueba del micrófono dura 5 segundos: hablá durante la medición.",
-        ).grid(row=16, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ).grid(row=19, column=0, columnspan=2, sticky="w", pady=(8, 0))
         self.api_key_entry.bind("<FocusOut>", self._guardar_claves_al_perder_foco)
         self.elevenlabs_api_key_entry.bind("<FocusOut>", self._guardar_claves_al_perder_foco)
+        self.cartesia_api_key_entry.bind("<FocusOut>", self._guardar_claves_al_perder_foco)
 
         if not entradas:
             self.estado.set("Windows no informa entradas de audio. Revisá permisos y conexión del micrófono.")
@@ -1171,6 +1207,7 @@ class Lanzador:
             "cloudflare": "CLOUDFLARE_API_KEY",
             "cursor": "CURSOR_API_KEY",
             "elevenlabs": "ELEVENLABS_API_KEY",
+            "cartesia": "CARTESIA_API_KEY",
             "github": "GITHUB_TOKEN",
         }.get(proveedor, "")
         return os.environ.get(variable, "") if variable else ""
@@ -1250,6 +1287,9 @@ class Lanzador:
         self._guardar_clave(
             "elevenlabs", self.elevenlabs_api_key_var.get().strip()
         )
+        self._guardar_clave(
+            "cartesia", self.cartesia_api_key_var.get().strip()
+        )
         token_github = self.github_token_var.get().strip()
         self._guardar_clave("github", token_github)
         config.GITHUB_TOKEN = token_github
@@ -1258,6 +1298,7 @@ class Lanzador:
         if evento.widget not in (
             self.api_key_entry,
             self.elevenlabs_api_key_entry,
+            self.cartesia_api_key_entry,
         ):
             return
         try:
@@ -1322,6 +1363,7 @@ class Lanzador:
                 config.MODELO_GROQ_API,
                 config.MODELO_CLOUDFLARE,
                 config.CLOUDFLARE_ACCOUNT_ID,
+                config.CARTESIA_VOICE_ID,
             )
         except (OSError, ValueError) as error:
             messagebox.showerror("Configuración de audio", f"No pude leer la selección guardada:\n{error}")
@@ -1351,6 +1393,7 @@ class Lanzador:
                 config.MODELO_GROQ_API,
                 config.MODELO_CLOUDFLARE,
                 config.CLOUDFLARE_ACCOUNT_ID,
+                config.CARTESIA_VOICE_ID,
             )
         modelos_rotos = {
             "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.6-flash",
@@ -1370,7 +1413,7 @@ class Lanzador:
             datos.get("proveedor", config.PROVEEDOR_IA),
             (
                 config.PROVEEDOR_TTS
-                if datos.get("tts_version", 0) < 1
+                if datos.get("tts_version", 0) < 2
                 else datos.get("proveedor_tts", config.PROVEEDOR_TTS)
             ),
             datos.get("elevenlabs_voice_id", config.ELEVENLABS_VOICE_ID),
@@ -1417,6 +1460,7 @@ class Lanzador:
             _modelo("modelo_groq_api", config.MODELO_GROQ_API),
             _modelo("modelo_cloudflare", config.MODELO_CLOUDFLARE),
             str(datos.get("cloudflare_account_id", config.CLOUDFLARE_ACCOUNT_ID))[:100],
+            str(datos.get("cartesia_voice_id", config.CARTESIA_VOICE_ID))[:200],
         )
 
     def _guardar(self):
@@ -1431,6 +1475,7 @@ class Lanzador:
         proveedor = self.proveedores[self.proveedor_var.get()]
         proveedor_tts = self.proveedores_tts[self.proveedor_tts_var.get()]
         voice_id = self.elevenlabs_voice_id_var.get().strip()
+        cartesia_voice_id = self.cartesia_voice_id_var.get().strip()[:200]
         ubicacion = self.ubicacion_var.get().strip()
         spotify_client_id = self.spotify_client_id_var.get().strip()
         config.CARPETA_DATOS.mkdir(parents=True, exist_ok=True)
@@ -1443,8 +1488,9 @@ class Lanzador:
                     "salida": salida,
                     "proveedor": proveedor,
                     "proveedor_tts": proveedor_tts,
-                    "tts_version": 1,
+                    "tts_version": 2,
                     "elevenlabs_voice_id": voice_id,
+                    "cartesia_voice_id": cartesia_voice_id,
                     "ubicacion": ubicacion,
                     "spotify_client_id": spotify_client_id,
                     "vision_modelo": config.MODELO_VISION,
@@ -1478,6 +1524,7 @@ class Lanzador:
         config.PROVEEDOR_IA = proveedor
         config.PROVEEDOR_TTS = proveedor_tts
         config.ELEVENLABS_VOICE_ID = voice_id
+        config.CARTESIA_VOICE_ID = cartesia_voice_id
         config.UBICACION = ubicacion
         config.SPOTIFY_CLIENT_ID = spotify_client_id
         return microfono, salida, proveedor
@@ -1569,6 +1616,7 @@ class Lanzador:
             )
             return
         self.elevenlabs_api_key = self.elevenlabs_api_key_var.get().strip()
+        self.cartesia_api_key = self.cartesia_api_key_var.get().strip()
         self.estado.set("Probando la voz seleccionada...")
         threading.Thread(target=self._reproducir_prueba_voz, daemon=True).start()
 
@@ -1576,10 +1624,12 @@ class Lanzador:
         error = voice.hablar(
             "Hola, soy Jarvis. Esta es una prueba de voz.",
             api_key=self.elevenlabs_api_key,
+            cartesia_api_key=self.cartesia_api_key,
+            cartesia_voice_id=self.cartesia_voice_id_var.get().strip(),
         )
         estado = error or (
             "Prueba de voz completada."
-            if config.PROVEEDOR_TTS == "elevenlabs"
+            if config.PROVEEDOR_TTS in {"elevenlabs", "cartesia"}
             else "Prueba de voz local completada."
         )
         self.raiz.after(0, self.estado.set, estado)
@@ -1685,6 +1735,7 @@ class Lanzador:
         try:
             api_key = self._clave_guardada_o_entorno(proveedor)
             elevenlabs_api_key = self._clave_guardada_o_entorno("elevenlabs")
+            cartesia_api_key = self._clave_guardada_o_entorno("cartesia")
         except Exception as error:
             self.bus.publish("msg", rol="jarvis", texto=f"No pude leer las credenciales guardadas: {error}")
             self.bus.publish("estado", valor="desconectado", texto="Revisá las credenciales desde Ajustes.")
@@ -1712,6 +1763,7 @@ class Lanzador:
             return False
         self.modo = "voz"
         self.elevenlabs_api_key = elevenlabs_api_key
+        self.cartesia_api_key = cartesia_api_key
         config.USAR_VOZ = True
         self.asistente_activo = True
         proveedor_nombre = proveedor.capitalize()
@@ -1880,7 +1932,12 @@ class Lanzador:
             "Micrófono activo. Hablá normalmente; Jarvis te escucha."
         )
         saludo = (
-            f"Hola, soy {config.NOMBRE}. Ya estoy en línea y te escucho. "
+            (
+                f"Hola, {config.NOMBRE_USUARIO}. Soy {config.NOMBRE}. "
+                if config.NOMBRE_USUARIO
+                else f"Hola, soy {config.NOMBRE}. "
+            )
+            + "Ya estoy en línea y te escucho. "
             "¿Qué necesitás?"
         )
         self._agregar_mensaje(config.NOMBRE, saludo)
@@ -1983,10 +2040,15 @@ class Lanzador:
                         texto,
                         api_key=self.elevenlabs_api_key,
                         oido=oido,
+                        cartesia_api_key=self.cartesia_api_key,
+                        cartesia_voice_id=config.CARTESIA_VOICE_ID,
                     )
             else:
                 resultado = voice.hablar(
-                    texto, api_key=self.elevenlabs_api_key
+                    texto,
+                    api_key=self.elevenlabs_api_key,
+                    cartesia_api_key=self.cartesia_api_key,
+                    cartesia_voice_id=config.CARTESIA_VOICE_ID,
                 )
             if isinstance(resultado, voice.InterrupcionVoz):
                 pedido = resultado.texto.strip()
@@ -2191,6 +2253,16 @@ class Lanzador:
             ),
             "elevenlabs_api_key": self._clave_guardada_o_entorno("elevenlabs"),
             "elevenlabs_voice_id": config.ELEVENLABS_VOICE_ID,
+            "cartesia_key_guardada": bool(
+                self._clave_guardada_o_entorno("cartesia")
+            ),
+            "cartesia_api_key": self._clave_guardada_o_entorno("cartesia"),
+            "cartesia_voice_id": config.CARTESIA_VOICE_ID,
+            "cartesia_key_guardada": bool(
+                self._clave_guardada_o_entorno("cartesia")
+            ),
+            "cartesia_api_key": self._clave_guardada_o_entorno("cartesia"),
+            "cartesia_voice_id": config.CARTESIA_VOICE_ID,
             "github_token_guardado": self._clave_local_guardada("github"),
             "github_token": self._clave_guardada_o_entorno("github"),
             "permiso_control_pc": tools.permiso_control_pc() is True,
@@ -2311,7 +2383,7 @@ class Lanzador:
 
     def _guardar_configuracion_hud(self, datos):
         proveedores = {"ollama", *ai_providers.PROVEEDORES}
-        voces = {"piper", "windows", "elevenlabs"}
+        voces = {"piper", "windows", "elevenlabs", "cartesia"}
         proveedor = str(datos.get("proveedor", "")).lower()
         proveedor_tts = str(datos.get("proveedor_tts", "")).lower()
         proveedor_alternativo = str(
@@ -2360,6 +2432,7 @@ class Lanzador:
             }
         salida = elegir_dispositivo("salida", "output")
         voice_id = str(datos.get("elevenlabs_voice_id", "")).strip()[:200]
+        cartesia_voice_id = str(datos.get("cartesia_voice_id", "")).strip()[:200]
         spotify_client_id = str(datos.get("spotify_client_id", "")).strip()[:200]
         ubicacion = str(datos.get("ubicacion", "")).strip()[:200]
         vision_modelo = str(datos.get("vision_modelo", "")).strip()[:200]
@@ -2420,6 +2493,10 @@ class Lanzador:
         if not isinstance(borrar_claves_api, dict):
             raise ValueError("La selección de claves para eliminar no es válida.")
         clave_elevenlabs = str(datos.get("elevenlabs_api_key", "")).strip()
+        clave_cartesia = str(datos.get("cartesia_api_key", "")).strip()
+        borrar_clave_cartesia = datos.get("borrar_cartesia_key", False)
+        if not isinstance(borrar_clave_cartesia, bool):
+            raise ValueError("La selección para borrar la API key de Cartesia no es válida.")
         token_github = str(datos.get("github_token", "")).strip()
         permiso_control_pc = datos.get("permiso_control_pc")
         if permiso_control_pc is not None and not isinstance(permiso_control_pc, bool):
@@ -2441,6 +2518,10 @@ class Lanzador:
             self._eliminar_clave("elevenlabs")
         elif clave_elevenlabs:
             self._guardar_clave("elevenlabs", clave_elevenlabs)
+        if borrar_clave_cartesia:
+            self._eliminar_clave("cartesia")
+        elif clave_cartesia:
+            self._guardar_clave("cartesia", clave_cartesia)
         if datos.get("borrar_github_token"):
             self._eliminar_clave("github")
         elif token_github:
@@ -2504,8 +2585,9 @@ class Lanzador:
                     "salida": salida,
                     "proveedor": proveedor,
                     "proveedor_tts": proveedor_tts,
-                    "tts_version": 1,
+                    "tts_version": 2,
                     "elevenlabs_voice_id": voice_id,
+                    "cartesia_voice_id": cartesia_voice_id,
                     "ubicacion": ubicacion,
                     "spotify_client_id": spotify_client_id,
                     "vision_modelo": vision_modelo,
@@ -2542,6 +2624,8 @@ class Lanzador:
             config.COMPARTIENDO_PANTALLA = permiso_control_pc
             self.bus.publish("pantalla", on=permiso_control_pc)
         self.elevenlabs_api_key = self._clave_guardada_o_entorno("elevenlabs")
+        self.cartesia_api_key = self._clave_guardada_o_entorno("cartesia")
+        config.CARTESIA_VOICE_ID = cartesia_voice_id
         self._publicar_info()
         configuracion = self._configuracion_hud()
         configuracion["requiere_reinicio"] = requiere_reinicio
@@ -2579,6 +2663,8 @@ class Lanzador:
                 resultado = voice.hablar(
                     "Hola, soy Jarvis. Esta es una prueba de voz.",
                     api_key=self._clave_guardada_o_entorno("elevenlabs"),
+                    cartesia_api_key=self._clave_guardada_o_entorno("cartesia"),
+                    cartesia_voice_id=config.CARTESIA_VOICE_ID,
                 )
             finally:
                 config.USAR_VOZ = usar_voz
@@ -2649,7 +2735,12 @@ class Lanzador:
             "ollama": "Ollama",
             **{codigo: proveedor.nombre for codigo, proveedor in ai_providers.PROVEEDORES.items()},
         }
-        nombres_tts = {"piper": "Piper", "windows": "Windows", "elevenlabs": "ElevenLabs"}
+        nombres_tts = {
+            "piper": "Piper",
+            "windows": "Windows",
+            "elevenlabs": "ElevenLabs",
+            "cartesia": "Cartesia",
+        }
         modelo = (
             config.MODELO
             if config.PROVEEDOR_IA == "ollama"
@@ -2858,9 +2949,58 @@ def _instancia_unica():
     return candado
 
 
+def _solicitar_nombre_usuario(raiz):
+    ruta = config.CARPETA_DATOS / "preferencias_usuario.json"
+    try:
+        nombre = preferencias_usuario.cargar_nombre_usuario(ruta)
+    except (OSError, ValueError) as error:
+        messagebox.showerror(
+            config.NOMBRE,
+            f"No pude leer el nombre guardado: {error}",
+            parent=raiz,
+        )
+        nombre = ""
+    if nombre:
+        return nombre
+
+    while True:
+        nombre = simpledialog.askstring(
+            "Bienvenido a Jarvis",
+            "¿Cómo querés que te llame?",
+            parent=raiz,
+        )
+        if nombre is None:
+            return ""
+        nombre = nombre.strip()
+        if not nombre:
+            messagebox.showwarning(
+                config.NOMBRE,
+                "Escribí un nombre o elegí Cancelar para continuar sin guardarlo.",
+                parent=raiz,
+            )
+            continue
+        if len(nombre) > 60:
+            messagebox.showwarning(
+                config.NOMBRE,
+                "El nombre puede tener como máximo 60 caracteres.",
+                parent=raiz,
+            )
+            continue
+        try:
+            return preferencias_usuario.guardar_nombre_usuario(ruta, nombre)
+        except OSError as error:
+            messagebox.showerror(
+                config.NOMBRE,
+                f"No pude guardar tu nombre: {error}",
+                parent=raiz,
+            )
+            return ""
+
+
 def main():
     raiz = tk.Tk()
     raiz.withdraw()  # no mostrar esta ventana: la interfaz principal es el HUD
+    raiz.iconbitmap(str(Path(__file__).resolve().parent / "jarvis.ico"))
     candado = _instancia_unica()
     if candado is None:
         messagebox.showinfo(
@@ -2870,6 +3010,7 @@ def main():
         )
         raiz.destroy()
         return
+    config.NOMBRE_USUARIO = _solicitar_nombre_usuario(raiz)
     lanzador = Lanzador(raiz)
     lanzador._candado = candado  # se mantiene abierto mientras viva el programa
     raiz.after(300, lanzador.abrir_hud_inicial)

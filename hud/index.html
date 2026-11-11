@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/favicon.ico" sizes="any">
 <title>{{NOMBRE}} // MARK LXXXV // ADVANCED AI HUD</title>
 <style>
 :root{
@@ -912,7 +913,7 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
         </div>
         <ul class="sub-list" id="sub">
           <li class="sub-row"><div class="sub-name"><span class="sub-dot ok" data-k="ia"></span>Cerebro Multi-IA</div><b class="sub-val" id="s-ia">Ensemble Activo</b></li>
-          <li class="sub-row"><div class="sub-name"><span class="sub-dot ok" data-k="voz"></span>Voz Neural</div><b class="sub-val" id="s-voz">Piper / Eleven</b></li>
+          <li class="sub-row"><div class="sub-name"><span class="sub-dot ok" data-k="voz"></span>Voz Neural</div><b class="sub-val" id="s-voz">Cartesia / Piper</b></li>
           <li class="sub-row"><div class="sub-name"><span class="sub-dot" data-k="spotify"></span>Spotify Connect</div><b class="sub-val" id="s-spotify">En espera</b></li>
           <li class="sub-row"><div class="sub-name"><span class="sub-dot" data-k="vision"></span>Visión Computacional</div><b class="sub-val" id="s-vision">Habilitada</b></li>
           <li class="sub-row"><div class="sub-name"><span class="sub-dot" data-k="github"></span>GitHub Token</div><b class="sub-val" id="s-github">Conectado</b></li>
@@ -1276,6 +1277,7 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
 
         <label for="cfg-tts">Proveedor de Voz</label>
         <select id="cfg-tts">
+          <option value="cartesia">Cartesia · Principal</option>
           <option value="piper">Piper · Local</option>
           <option value="windows">Voz de Windows</option>
           <option value="elevenlabs">ElevenLabs</option>
@@ -1286,6 +1288,13 @@ body[data-estado="hablando"] .reactor-box{animation:reactor-glow 1.1s ease-in-ou
         <p class="hint" id="cfg-elevenlabs-status"></p>
         <label for="cfg-voice-id">Voice ID</label>
         <input id="cfg-voice-id" autocomplete="off">
+        <label for="cfg-cartesia-key">API Key de Cartesia</label>
+        <input id="cfg-cartesia-key" type="password" autocomplete="off" placeholder="sk_car_...">
+        <label class="check-row"><input id="cfg-borrar-cartesia" type="checkbox"> Borrar clave Cartesia</label>
+        <p class="hint" id="cfg-cartesia-status"></p>
+        <label for="cfg-cartesia-voice-id">Voice ID de Cartesia</label>
+        <input id="cfg-cartesia-voice-id" autocomplete="off" placeholder="ID de una voz compatible con español">
+        <p class="hint">Elegí una voz en <a href="https://play.cartesia.ai/voices" target="_blank" rel="noopener">Cartesia Voice Library</a>. Si falta la clave o el ID, Jarvis usa Piper como respaldo.</p>
         <div class="settings-actions"><button data-test-audio="voz">Probar Voz</button></div>
         </section>
         <section class="cfg-section-block">
@@ -1753,6 +1762,7 @@ function cargarApiKeys(datos){
     input.value = datos.api_keys?.[input.dataset.apiKey] || '';
   }
   $('cfg-elevenlabs-key').value = datos.elevenlabs_api_key || '';
+  $('cfg-cartesia-key').value = datos.cartesia_api_key || '';
   $('cfg-github').value = datos.github_token || '';
 }
 
@@ -1795,6 +1805,7 @@ async function abrirAjustes(){
     $('cfg-ai-active').textContent = `Activo: ${d.proveedor} · ${modeloDeProveedor(d.proveedor, d)}`;
     $('cfg-tts').value = d.proveedor_tts;
     $('cfg-voice-id').value = d.elevenlabs_voice_id || '';
+    $('cfg-cartesia-voice-id').value = d.cartesia_voice_id || '';
     $('cfg-spotify').value = d.spotify_client_id || '';
     $('cfg-ubicacion').value = d.ubicacion || '';
     $('cfg-modelo-vision').value = d.vision_modelo || '';
@@ -1849,6 +1860,9 @@ async function abrirAjustes(){
     cargarApiKeys(d);
     
     $('cfg-elevenlabs-status').textContent = d.elevenlabs_key_guardada ? 'Clave guardada en Windows.' : 'ElevenLabs sin configurar.';
+    $('cfg-cartesia-status').textContent = d.cartesia_key_guardada
+      ? 'Clave guardada en Windows.'
+      : 'Cartesia necesita una API key para generar voz; Piper quedará como respaldo.';
     $('cfg-github-status').textContent = d.github_token_guardado ? 'Token de GitHub guardado.' : 'GitHub sin configurar.';
     $('settings-status').textContent = '';
   }catch(e){
@@ -1893,6 +1907,9 @@ function configuracionFormulario(){
     elevenlabs_api_key:$('cfg-elevenlabs-key').value,
     borrar_elevenlabs_key:$('cfg-borrar-elevenlabs').checked,
     elevenlabs_voice_id:$('cfg-voice-id').value,
+    cartesia_api_key:$('cfg-cartesia-key').value,
+    borrar_cartesia_key:$('cfg-borrar-cartesia').checked,
+    cartesia_voice_id:$('cfg-cartesia-voice-id').value,
     github_token:$('cfg-github').value,
     borrar_github_token:$('cfg-borrar-github').checked,
     spotify_client_id:$('cfg-spotify').value,
@@ -1929,9 +1946,13 @@ async function guardarAjustes(){
   $('cfg-permiso-control').checked = r.configuracion.permiso_control_pc === true;
   $('cfg-ai-active').textContent = `Activo: ${r.configuracion.proveedor} · ${modeloDeProveedor(r.configuracion.proveedor, r.configuracion)}`;
   for(const id of ['cfg-borrar-elevenlabs','cfg-borrar-github']) $(id).checked = false;
+  $('cfg-borrar-cartesia').checked = false;
   $('cfg-elevenlabs-status').textContent = r.configuracion.elevenlabs_key_guardada
     ? 'Clave guardada en Windows.'
     : 'ElevenLabs sin configurar.';
+  $('cfg-cartesia-status').textContent = r.configuracion.cartesia_key_guardada
+    ? 'Clave guardada en Windows.'
+    : 'Cartesia necesita una API key para generar voz; Piper quedará como respaldo.';
   $('cfg-github-status').textContent = r.configuracion.github_token_guardado
     ? 'Token de GitHub guardado.'
     : 'GitHub sin configurar.';
