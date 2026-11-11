@@ -326,7 +326,9 @@ class Servidor:
                 except (TypeError, ValueError, json.JSONDecodeError):
                     return self._enviar(400, "text/plain", b"JSON invalido")
                 resultado = {"ok": True}
-                if ruta == "/say":
+                if ruta == "/heartbeat":
+                    srv._registrar_actividad_hud()
+                elif ruta == "/say":
                     return self._enviar(
                         405,
                         "text/plain; charset=utf-8",

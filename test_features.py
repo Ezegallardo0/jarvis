@@ -608,6 +608,29 @@ class PermisosYVozTests(unittest.TestCase):
 
 
 class AdjuntosTests(unittest.TestCase):
+    def test_heartbeat_mantiene_el_hud_activo_aunque_falle_sse(self):
+        servidor = ui.Servidor(ui.Bus(), queue.Queue())
+        with mock.patch.object(config, "HUD_PUERTO", 18763):
+            servidor.iniciar()
+            try:
+                url = f"http://127.0.0.1:{servidor.puerto}/heartbeat?t={servidor.token}"
+                solicitud = Request(
+                    url,
+                    data=b"{}",
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Token": servidor.token,
+                    },
+                    method="POST",
+                )
+                with urlopen(solicitud, timeout=5) as respuesta:
+                    self.assertEqual(respuesta.status, 200)
+
+                self.assertTrue(servidor.hud_activo())
+            finally:
+                servidor.httpd.shutdown()
+                servidor.httpd.server_close()
+
     def test_sondeo_alternativo_recupera_eventos_y_mantiene_el_hud_activo(self):
         bus = ui.Bus()
         bus.publish("estado", valor="escuchando", texto="evento-inicial")

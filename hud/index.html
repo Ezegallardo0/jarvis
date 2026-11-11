@@ -1672,6 +1672,11 @@ const manejadores = {
 };
 const es = new EventSource('/events?t=' + encodeURIComponent(T));
 let cursorHud = 0;
+const enviarLatidoHud = () => {
+  fetch('/heartbeat?t=' + encodeURIComponent(T), {method:'POST', headers:H, body:'{}'}).catch(() => {});
+};
+enviarLatidoHud();
+setInterval(enviarLatidoHud, 4000);
 const aplicarEventoHud = d => {
   cursorHud = Math.max(cursorHud, Number(d._secuencia) || 0);
   (manejadores[d.tipo] || (()=>{}))(d);
