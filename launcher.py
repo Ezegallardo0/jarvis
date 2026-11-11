@@ -2897,7 +2897,8 @@ class Lanzador:
         """Mantiene el proceso oculto mientras la ventana del HUD esté abierta."""
         if self.cerrando.is_set():
             return
-        if self.bus.hay_hud():
+        hud_activo = self.hud_servidor and self.hud_servidor.hud_activo()
+        if self.bus.hay_hud() or hud_activo:
             self._hud_visto = True
             self._hud_ausente = None
             self._hud_lanzado_en = None

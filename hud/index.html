@@ -1671,9 +1671,49 @@ const manejadores = {
   },
 };
 const es = new EventSource('/events?t=' + encodeURIComponent(T));
-es.onmessage = e => { const d = JSON.parse(e.data); (manejadores[d.tipo] || (()=>{}))(d); };
-es.onerror = () => { setEstado('desconectado', 'Enlace con ' + NOMBRE + ' interrumpido. Reintentando…'); $('chip-red').className = 'hud-pill'; };
-es.onopen = () => { $('chip-red').className = 'hud-pill online'; if(estadoActual === 'desconectado') setEstado('espera', 'Sistema en línea.'); };
+let cursorHud = 0;
+const aplicarEventoHud = d => {
+  cursorHud = Math.max(cursorHud, Number(d._secuencia) || 0);
+  (manejadores[d.tipo] || (()=>{}))(d);
+};
+es.onmessage = e => aplicarEventoHud(JSON.parse(e.data));
+let sondeoActivo = false;
+let sondeoEnCurso = false;
+let temporizadorSondeo = null;
+async function sondearEventosHud(){
+  if(!sondeoActivo || sondeoEnCurso) return;
+  sondeoEnCurso = true;
+  try{
+    const r = await fetch('/poll?t=' + encodeURIComponent(T) + '&desde=' + cursorHud, {headers:{'X-Token':T}});
+    if(!r.ok) throw new Error(`Error HTTP ${r.status}`);
+    const d = await r.json();
+    for(const evento of d.eventos){
+      if((Number(evento._secuencia) || 0) > cursorHud) aplicarEventoHud(evento);
+    }
+    cursorHud = Math.max(cursorHud, d.secuencia);
+    $('chip-red').className = 'hud-pill online';
+    if(estadoActual === 'desconectado') setEstado('espera', 'Sincronización alternativa activa.');
+  }catch(error){
+    if(sondeoActivo) setEstado('desconectado', 'No se pudo sincronizar con ' + NOMBRE + ': ' + (error.message || error));
+  }finally{
+    sondeoEnCurso = false;
+    if(sondeoActivo) temporizadorSondeo = setTimeout(sondearEventosHud, 1000);
+  }
+}
+es.onerror = () => {
+  setEstado('desconectado', 'Enlace con ' + NOMBRE + ' interrumpido. Reintentando…');
+  $('chip-red').className = 'hud-pill';
+  if(!sondeoActivo){
+    sondeoActivo = true;
+    sondearEventosHud();
+  }
+};
+es.onopen = () => {
+  sondeoActivo = false;
+  if(temporizadorSondeo !== null){ clearTimeout(temporizadorSondeo); temporizadorSondeo = null; }
+  $('chip-red').className = 'hud-pill online';
+  if(estadoActual === 'desconectado') setEstado('espera', 'Sistema en línea.');
+};
 
 /* ---------- Entrada por voz y adjuntos ---------- */
 $('btn-adjunto').onclick = () => $('archivo-adjunto').click();
@@ -1699,7 +1739,7 @@ $('si').onclick = () => { post('/confirm', {ok:true}); $('modal').style.display 
 $('no').onclick = () => { post('/confirm', {ok:false}); $('modal').style.display = 'none'; };
 document.querySelectorAll('[data-sp]').forEach(b => b.onclick = () => post('/spotify', {accion: b.dataset.sp}));
 
-$('btn-ajustes').onclick = () => post('/accion', {nombre:'ajustes'});
+$('btn-ajustes').onclick = () => abrirAjustes();
 $('btn-modo').onclick = () => post('/accion', {nombre:'iniciar_voz'});
 $('btn-detener').onclick = async () => {
   $('btn-detener').disabled = true;
@@ -1710,7 +1750,7 @@ $('btn-detener').onclick = async () => {
 $('btn-salir').onclick = () => { if(confirm('¿Cerrar ' + NOMBRE + '?')) post('/accion', {nombre:'salir'}); };
 
 $('ini-voz').onclick = () => { $('ini-aviso').textContent = 'Iniciando micrófono y reconocimiento…'; post('/accion', {nombre:'iniciar_voz'}); };
-$('ini-ajustes').onclick = () => post('/accion', {nombre:'ajustes'});
+$('ini-ajustes').onclick = () => abrirAjustes();
 
 /* Navigation Sidebar Clicks */
 $('nav-inicio').onclick = () => {

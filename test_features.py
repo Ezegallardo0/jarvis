@@ -608,6 +608,33 @@ class PermisosYVozTests(unittest.TestCase):
 
 
 class AdjuntosTests(unittest.TestCase):
+    def test_sondeo_alternativo_recupera_eventos_y_mantiene_el_hud_activo(self):
+        bus = ui.Bus()
+        bus.publish("estado", valor="escuchando", texto="evento-inicial")
+        servidor = ui.Servidor(bus, queue.Queue())
+        with mock.patch.object(config, "HUD_PUERTO", 18764):
+            servidor.iniciar()
+            try:
+                url = f"http://127.0.0.1:{servidor.puerto}/poll?t={servidor.token}&desde=0"
+                with urlopen(url, timeout=5) as respuesta:
+                    self.assertEqual(respuesta.status, 200)
+                    datos = json.loads(respuesta.read())
+
+                self.assertEqual(datos["eventos"][0]["texto"], "evento-inicial")
+                self.assertTrue(servidor.hud_activo())
+
+                bus.publish("estado", valor="hablando", texto="evento-siguiente")
+                siguiente = (
+                    f"http://127.0.0.1:{servidor.puerto}/poll"
+                    f"?t={servidor.token}&desde={datos['secuencia']}"
+                )
+                with urlopen(siguiente, timeout=5) as respuesta:
+                    recuperados = json.loads(respuesta.read())["eventos"]
+                self.assertEqual(recuperados[0]["texto"], "evento-siguiente")
+            finally:
+                servidor.httpd.shutdown()
+                servidor.httpd.server_close()
+
     def test_eventos_hud_usan_un_flujo_sse_persistente(self):
         bus = ui.Bus()
         servidor = ui.Servidor(bus, queue.Queue())

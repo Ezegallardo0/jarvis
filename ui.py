@@ -54,11 +54,15 @@ class Bus:
         self._lock = threading.Lock()
         self.ultimo = {}
         self.mensajes = deque(maxlen=40)
+        self._eventos = deque(maxlen=200)
+        self._secuencia = 0
         self._resp = queue.Queue()
 
     def publish(self, tipo, **datos):
-        ev = {"tipo": tipo, **datos}
         with self._lock:
+            self._secuencia += 1
+            ev = {"tipo": tipo, **datos, "_secuencia": self._secuencia}
+            self._eventos.append(ev)
             if tipo == "msg":
                 self.mensajes.append(ev)
             elif tipo in ("estado", "stats", "spotify", "info", "pantalla"):
@@ -67,11 +71,20 @@ class Bus:
         for q in subs:
             q.put(ev)
 
+    def eventos_desde(self, secuencia):
+        with self._lock:
+            return self._secuencia, [
+                ev.copy() for ev in self._eventos if ev["_secuencia"] > secuencia
+            ]
+
     def suscribir(self):
         q = queue.Queue()
         with self._lock:
             self._subs.append(q)
-            inicial = list(self.mensajes) + list(self.ultimo.values())
+            inicial = sorted(
+                list(self.mensajes) + list(self.ultimo.values()),
+                key=lambda ev: ev["_secuencia"],
+            )
         for ev in inicial:
             q.put(ev)
         return q
@@ -128,6 +141,20 @@ class Servidor:
         self.puerto = config.HUD_PUERTO
         self.token = secrets.token_urlsafe(16)
         self.httpd = None
+        self._actividad_hud = None
+        self._actividad_hud_lock = threading.Lock()
+
+    def _registrar_actividad_hud(self):
+        with self._actividad_hud_lock:
+            self._actividad_hud = time.monotonic()
+
+    def hud_activo(self, max_inactividad=12):
+        with self._actividad_hud_lock:
+            ultima_actividad = self._actividad_hud
+        return (
+            ultima_actividad is not None
+            and time.monotonic() - ultima_actividad <= max_inactividad
+        )
 
     @property
     def url(self):
@@ -220,6 +247,20 @@ class Servidor:
                     except Exception as error:
                         cuerpo = json.dumps({"error": str(error)}).encode("utf-8")
                         return self._enviar(500, "application/json; charset=utf-8", cuerpo)
+                    return self._enviar(200, "application/json; charset=utf-8", cuerpo)
+                if ruta == "/poll":
+                    try:
+                        desde = int((parse_qs(urlparse(self.path).query).get("desde") or ["0"])[0])
+                        if desde < 0:
+                            raise ValueError
+                    except (TypeError, ValueError):
+                        return self._enviar(400, "application/json; charset=utf-8", b'{"error":"Cursor invalido"}')
+                    secuencia, eventos = srv.bus.eventos_desde(desde)
+                    srv._registrar_actividad_hud()
+                    cuerpo = json.dumps(
+                        {"secuencia": secuencia, "eventos": eventos},
+                        ensure_ascii=False,
+                    ).encode("utf-8")
                     return self._enviar(200, "application/json; charset=utf-8", cuerpo)
                 if ruta == "/screen.jpg":
                     from tools import permiso_control_pc
