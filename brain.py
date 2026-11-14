@@ -9,10 +9,12 @@ import json
 import os
 import re
 import sys
+import time
 import unicodedata
 
 import ai_providers
 import config
+import core_engine
 import tools
 
 PROMPT = """Sos {nombre}, un asistente personal que corre en la PC Windows de tu usuario y conversa en vivo.
@@ -292,6 +294,8 @@ class Cerebro:
         self.proveedor_alternativo = None
         self.clave_alternativa = None
         self.historial = []
+        self.ia_estado = "sin_verificar"
+        self.ia_error = ""
         self.configurar(
             provider or config.PROVEEDOR_IA,
             api_key,
@@ -308,6 +312,8 @@ class Cerebro:
     ):
         proveedor = (provider or "").lower()
         modelo = config.MODELO if proveedor == "ollama" else ai_providers.obtener_modelo(proveedor)
+        if self.proveedor != proveedor or self.api_key != api_key:
+            self.ia_estado = "sin_verificar"
         if self.proveedor is not None and self.proveedor != proveedor:
             self._normalizar_historial_cambio_proveedor()
         if proveedor == "ollama":
@@ -318,16 +324,20 @@ class Cerebro:
             ):
                 try:
                     import ollama
+                    self.cliente = ollama.Client(host=config.OLLAMA_HOST)
+                    self.ollama_host = config.OLLAMA_HOST
                 except ModuleNotFoundError as error:
                     if error.name != "ollama":
                         raise
-                    raise RuntimeError(
+                    self.cliente = None
+                    self.ia_estado = "error"
+                    self.ia_error = (
                         "Falta Ollama. Cerrá Jarvis y ejecutá "
                         f'"{sys.executable}" -m pip install -r requirements.txt.'
-                    ) from error
-                self.cliente = ollama.Client(host=config.OLLAMA_HOST)
-                self.ollama_host = config.OLLAMA_HOST
+                    )
+                    print(f"[core] {self.ia_error}")
         else:
+            error_credencial = ""
             if not api_key:
                 variable = ai_providers.PROVEEDORES[proveedor].variable_entorno
                 api_key = os.environ.get(variable, "")
@@ -338,27 +348,42 @@ class Cerebro:
                         from keyring.backends.Windows import WinVaultKeyring
                         keyring.set_keyring(WinVaultKeyring())
                     api_key = keyring.get_password("Jarvis", proveedor) or ""
-                except Exception:
-                    pass
+                except Exception as error:
+                    error_credencial = f"No pude leer la credencial de {proveedor}: {error}"
             if not api_key:
                 nombre = ai_providers.PROVEEDORES[proveedor].nombre
-                raise ValueError(f"Falta la API key de {nombre}. Ingresala desde Configuración.")
-            if self.proveedor != proveedor or self.api_key != api_key or self.cliente is None:
+                self.cliente = None
+                self.ia_estado = "error"
+                self.ia_error = error_credencial or (
+                    f"Falta la API key de {nombre}. Ingresala desde Configuración."
+                )
+                print(f"[core] {self.ia_error}")
+            elif self.proveedor != proveedor or self.api_key != api_key or self.cliente is None:
                 try:
                     self.cliente = ai_providers.crear_cliente(proveedor, api_key)
                 except ModuleNotFoundError as error:
                     if error.name != "openai":
                         raise
-                    raise RuntimeError(
+                    self.cliente = None
+                    self.ia_estado = "error"
+                    self.ia_error = (
                         "Falta la dependencia del proveedor cloud. Cerrá Jarvis y ejecutá "
                         f'"{sys.executable}" -m pip install -r requirements.txt; '
                         "después volvé a abrir run.vbs."
-                    ) from error
+                    )
+                    print(f"[core] {self.ia_error}")
+                except Exception as error:
+                    self.cliente = None
+                    self.ia_estado = "error"
+                    self.ia_error = f"No pude preparar {proveedor}: {error}"
+                    print(f"[core] {self.ia_error}")
         self.proveedor = proveedor
         self.api_key = api_key
         self.modelo = modelo
         self.proveedor_alternativo = proveedor_alternativo or None
         self.clave_alternativa = clave_alternativa or None
+        if self.cliente is not None and self.ia_estado == "error":
+            self.ia_error = ""
 
     def _normalizar_historial_cambio_proveedor(self):
         historial = []
@@ -372,18 +397,31 @@ class Cerebro:
 
     def verificar(self):
         """Devuelve None si todo está bien, o un mensaje de error útil."""
+        if getattr(self, "cliente", None) is None:
+            return self.ia_error or "El proveedor de IA no está disponible."
         if self.proveedor != "ollama":
             return None
         try:
             modelos = [m.model for m in self.cliente.list().models]
-        except Exception:
-            return "No pude conectar con Ollama. ¿Está instalado y corriendo? (https://ollama.com)"
+        except Exception as error:
+            self.ia_estado = "error"
+            self.ia_error = (
+                "No pude conectar con Ollama. ¿Está instalado y corriendo? "
+                f"Detalle: {error}"
+            )
+            return self.ia_error
         if ":" in config.MODELO:
             presente = config.MODELO in modelos
         else:
             presente = any(m.split(":")[0] == config.MODELO for m in modelos)
         if not presente:
-            return f"Falta el modelo. Ejecutá en una terminal: ollama pull {config.MODELO}"
+            self.ia_estado = "error"
+            self.ia_error = (
+                f"Falta el modelo. Ejecutá en una terminal: ollama pull {config.MODELO}"
+            )
+            return self.ia_error
+        self.ia_estado = "conectado"
+        self.ia_error = ""
         return None
 
     def _sistema(self):
@@ -406,6 +444,17 @@ class Cerebro:
         respuesta_apertura = _abrir_aplicacion_pedida(texto)
         if respuesta_apertura is not None:
             return _registrar_accion_directa(self, texto, respuesta_apertura)
+        resultado_local = core_engine.procesar_comando_local(texto)
+        if resultado_local is not None:
+            return _registrar_accion_directa(
+                self, texto, resultado_local.respuesta
+            )
+        if getattr(self, "cliente", None) is None:
+            self.ia_estado = "error"
+            return (
+                "El proveedor de IA no está disponible. El Core local sigue activo "
+                "para los comandos locales reconocidos."
+            )
         if self.proveedor != "ollama":
             return self._responder_api(texto)
         self.historial.append({"role": "user", "content": texto})
@@ -421,6 +470,7 @@ class Cerebro:
                     tools=[] if _es_saludo_sencillo(texto) else tools.esquemas(),
                 )
             except Exception as error:
+                self.ia_estado = "error"
                 if not herramientas_ejecutadas and self._activar_fallback():
                     nombre = ai_providers.PROVEEDORES[self.proveedor].nombre
                     try:
@@ -432,6 +482,7 @@ class Cerebro:
                         ) from error
                     return f"Ollama no respondió; usé {nombre}. {respuesta}"
                 raise
+            self.ia_estado = "conectado"
             msg = resp.message
             entrada = {"role": "assistant", "content": msg.content or ""}
             if msg.tool_calls:
@@ -466,6 +517,7 @@ class Cerebro:
         self._recortar()
         herramientas_ejecutadas = False
         fallback_usado = False
+        reintentos_transitorios = 0
         error_proveedor_principal = None
         for _ in range(6):
             if tools.detencion_solicitada():
@@ -479,8 +531,26 @@ class Cerebro:
                 )
                 respuesta = self.cliente.chat.completions.create(**opciones)
             except Exception as error:
+                self.ia_estado = "error"
                 codigo = getattr(error, "status_code", None)
                 tipo = type(error).__name__.casefold()
+                transitorio = (
+                    codigo == 408
+                    or (isinstance(codigo, int) and codigo >= 500)
+                    or "connection" in tipo
+                    or "timeout" in tipo
+                )
+                if transitorio and reintentos_transitorios < 1:
+                    reintentos_transitorios += 1
+                    detalle = ai_providers.error_publico(
+                        self.proveedor, error, self.api_key
+                    )
+                    print(
+                        f"[ia:{self.proveedor}] {detalle} Reintentando una vez..."
+                    )
+                    self.ia_estado = "comprobando"
+                    time.sleep(1)
+                    continue
                 reintentable = (
                     codigo in {400, 401, 403, 404, 408, 409, 429}
                     or (isinstance(codigo, int) and codigo >= 500)
@@ -521,6 +591,7 @@ class Cerebro:
                         f"{detalle}"
                     )
                 raise RuntimeError(detalle) from error
+            self.ia_estado = "conectado"
             mensaje = respuesta.choices[0].message
             llamada = mensaje.model_dump(exclude_none=True)
             self.historial.append(llamada)
@@ -569,11 +640,33 @@ class Cerebro:
         proveedor = self.proveedor_alternativo
         if not proveedor or proveedor == self.proveedor:
             return False
+        anterior = (
+            self.proveedor,
+            self.api_key,
+            self.modelo,
+            self.cliente,
+            self.proveedor_alternativo,
+            self.clave_alternativa,
+            self.ia_estado,
+            self.ia_error,
+        )
         self.configurar(
             proveedor,
             self.clave_alternativa,
             proveedor_alternativo=None,
         )
+        if self.cliente is None:
+            (
+                self.proveedor,
+                self.api_key,
+                self.modelo,
+                self.cliente,
+                self.proveedor_alternativo,
+                self.clave_alternativa,
+                self.ia_estado,
+                self.ia_error,
+            ) = anterior
+            return False
         return True
 
 
@@ -644,6 +737,10 @@ class CerebroEnsemble:
     def _estrategia(self):
         return getattr(config, "ESTRATEGIA_ENSEMBLE", "mejor").lower()
 
+    @property
+    def ia_estado(self):
+        return self._cerebro_principal.ia_estado
+
     def verificar(self):
         return self._cerebro_principal.verificar()
 
@@ -671,6 +768,11 @@ class CerebroEnsemble:
         respuesta_apertura = _abrir_aplicacion_pedida(texto)
         if respuesta_apertura is not None:
             return _registrar_accion_directa(self, texto, respuesta_apertura)
+        resultado_local = core_engine.procesar_comando_local(texto)
+        if resultado_local is not None:
+            return _registrar_accion_directa(
+                self, texto, resultado_local.respuesta
+            )
 
         if _solicita_accion_pc(texto):
             return self._cerebro_principal.responder(texto)
@@ -981,20 +1083,11 @@ def crear_cerebro(obtener_clave_fn) -> "Cerebro | CerebroEnsemble":
     Returns:
         Cerebro o CerebroEnsemble listo para usar.
 
-    Raises:
-        ValueError: si no hay ninguna API key configurada.
     """
     activo, proveedores = ai_providers.ensemble_activo(obtener_clave_fn)
 
     if not proveedores:
-        # Verificar si hay al menos uno (para el error claro)
-        principal = config.PROVEEDOR_IA
-        if principal == "ollama":
-            return Cerebro(provider="ollama")
-        raise ValueError(
-            "Necesitás al menos una API key configurada para usar Jarvis. "
-            "Ingresala desde el HUD → Ajustes → IA."
-        )
+        return Cerebro(provider=config.PROVEEDOR_IA)
 
     principal = config.PROVEEDOR_IA if config.PROVEEDOR_IA in proveedores else proveedores[0]
 

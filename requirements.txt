@@ -5,6 +5,7 @@ numpy
 pyttsx3
 psutil
 pillow
+pypdf>=5,<7
 openai
 ddgs
 httpx

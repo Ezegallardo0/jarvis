@@ -1,9 +1,12 @@
 """Pruebas de permisos, voz de respaldo y recepción de adjuntos."""
 import json
+import io
 import queue
+import threading
 import tempfile
 import time
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 from urllib.error import HTTPError
@@ -12,9 +15,537 @@ from urllib.request import Request, urlopen
 import ai_providers
 import config
 import brain
+import launcher
+import connections_catalog
+import core_engine
+import file_intelligence
 import tools
 import ui
 import voice
+
+
+class CatalogoConexionesTests(unittest.TestCase):
+    def test_distingue_configuracion_de_conexion_verificada(self):
+        catalogo = connections_catalog.catalogo_conexiones(
+            spotify_client_id="spotify-client",
+            github_token_guardado=True,
+        )
+        estados = {item["id"]: item["estado"] for item in catalogo}
+
+        self.assertEqual(estados["spotify"], "configurado")
+        self.assertEqual(estados["github"], "configurado")
+        self.assertEqual(estados["google"], "pendiente")
+        self.assertEqual(estados["whatsapp"], "limitado")
+        self.assertNotIn("conectado", estados.values())
+
+    def test_clima_no_requiere_api_key_y_refleja_ubicacion(self):
+        catalogo = connections_catalog.catalogo_conexiones(ubicacion="Buenos Aires")
+        clima = next(item for item in catalogo if item["id"] == "clima")
+
+        self.assertEqual(clima["estado"], "disponible")
+        self.assertIn("ubicación configurada", clima["estado_texto"])
+
+
+class MotorLocalTests(unittest.TestCase):
+    def test_comando_local_abre_aplicacion_sin_proveedor_de_ia(self):
+        with (
+            mock.patch.object(tools, "resolver_aplicacion", return_value="Spotify"),
+            mock.patch.object(tools, "ejecutar", return_value="Abriendo Spotify.") as ejecutar,
+        ):
+            resultado = core_engine.procesar_comando_local("JARVIS, abrime Spotify")
+
+        self.assertEqual(resultado.intencion, "OPEN_APPLICATION")
+        self.assertEqual(resultado.respuesta, "Abriendo Spotify.")
+        ejecutar.assert_called_once_with(
+            "abrir_aplicacion",
+            {"nombre": "Spotify"},
+        )
+
+    def test_comando_local_consulta_ram_y_volumen(self):
+        with mock.patch.object(tools, "ejecutar", return_value="dato local") as ejecutar:
+            ram = core_engine.procesar_comando_local(
+                "¿Cuánta memoria RAM estoy utilizando?"
+            )
+            volumen = core_engine.procesar_comando_local("Subime el volumen")
+
+        self.assertEqual(ram.intencion, "GET_SYSTEM_INFO")
+        self.assertEqual(volumen.intencion, "CONTROL_VOLUME")
+        self.assertEqual(ejecutar.call_args_list[0].args, ("info_sistema", {}))
+        self.assertEqual(
+            ejecutar.call_args_list[1].args,
+            ("control_volumen", {"accion": "subir"}),
+        )
+
+    def test_comando_compuesto_no_se_ejecuta_localmente(self):
+        with mock.patch.object(tools, "ejecutar") as ejecutar:
+            resultado = core_engine.procesar_comando_local(
+                "Abrime Spotify y abrí Chrome"
+            )
+
+        self.assertIsNone(resultado)
+        ejecutar.assert_not_called()
+
+    def test_cerebro_sin_api_key_resuelve_comando_local(self):
+        def configurar_sin_cliente(cerebro, proveedor, api_key=None, *_args, **_):
+            cerebro.proveedor = proveedor
+            cerebro.api_key = api_key
+            cerebro.modelo = "test"
+            cerebro.cliente = None
+            cerebro.ia_estado = "error"
+            cerebro.ia_error = "Falta la API key."
+
+        with (
+            mock.patch.object(ai_providers, "ensemble_activo", return_value=(False, [])),
+            mock.patch.object(brain.Cerebro, "configurar", configurar_sin_cliente),
+            mock.patch.object(tools, "detencion_solicitada", return_value=False),
+            mock.patch.object(
+                core_engine,
+                "procesar_comando_local",
+                return_value=core_engine.ResultadoLocal("GET_LOCAL_TIME", "Son las 12."),
+            ),
+        ):
+            cerebro = brain.crear_cerebro(lambda _proveedor: "")
+            respuesta = cerebro.responder("que hora es")
+
+        self.assertIsNone(cerebro.cliente)
+        self.assertEqual(respuesta, "Son las 12.")
+
+    def test_accion_sensible_pide_confirmacion_individual(self):
+        herramienta = dict(tools.HERRAMIENTAS["eliminar_elemento"])
+        herramienta["fn"] = mock.Mock(return_value="eliminado")
+        with (
+            mock.patch.dict(tools.HERRAMIENTAS, {"eliminar_elemento": herramienta}),
+            mock.patch.object(tools, "permiso_control_pc", return_value=True),
+            mock.patch.object(tools, "registrar_accion"),
+            mock.patch.object(tools, "CONFIRMAR", return_value=False) as confirmar,
+        ):
+            resultado = tools.ejecutar(
+                "eliminar_elemento",
+                {"ruta": "C:/Users/test/archivo.txt"},
+            )
+
+        self.assertIn("no se recibió confirmación", resultado)
+        herramienta["fn"].assert_not_called()
+        confirmar.assert_called_once()
+
+    def test_confirmacion_individual_puede_preguntarse_aunque_haya_permiso_global(self):
+        lanzador = launcher.Lanzador.__new__(launcher.Lanzador)
+        lanzador.bus = mock.Mock()
+        lanzador.bus.hay_hud.return_value = True
+        lanzador.bus.preguntar.return_value = True
+
+        self.assertTrue(lanzador._confirmar("¿Confirmás?"))
+        lanzador.bus.preguntar.assert_called_once_with("¿Confirmás?", timeout=60)
+
+    def test_herramienta_rechaza_parametro_de_tipo_invalido(self):
+        tools.reiniciar_detencion()
+        herramienta = dict(tools.HERRAMIENTAS["control_volumen"])
+        herramienta["fn"] = mock.Mock(return_value="ejecutado")
+        with (
+            mock.patch.dict(tools.HERRAMIENTAS, {"control_volumen": herramienta}),
+            mock.patch.object(tools, "registrar_accion"),
+        ):
+            resultado = tools.ejecutar("control_volumen", {"accion": ["subir"]})
+
+        self.assertIn("debe ser de tipo string", resultado)
+        herramienta["fn"].assert_not_called()
+
+    def test_panel_motor_refleja_ia_caida_y_core_disponible(self):
+        lanzador = launcher.Lanzador.__new__(launcher.Lanzador)
+        lanzador.ia_proveedor_activo = "gemini"
+        lanzador.ia_estado = "error"
+        lanzador.ia_error = "Falta la API key."
+        lanzador.asistente_activo = True
+        lanzador.ultima_latencia_ms = 25
+        with (
+            mock.patch.object(config, "PROVEEDOR_IA", "gemini"),
+            mock.patch.object(config, "PROVEEDOR_IA_ALTERNATIVO", "openai"),
+            mock.patch.object(lanzador, "_clave_para_core", return_value=""),
+            mock.patch.object(
+                tools,
+                "resumen_motor",
+                return_value={
+                    "herramientas": ["hora_actual"],
+                    "acciones_recientes": [],
+                    "errores_recientes": [],
+                    "error_registro": "",
+                },
+            ),
+        ):
+            estado = lanzador._estado_motor()
+
+        self.assertEqual(estado["core"], "activo")
+        self.assertEqual(estado["modo"], "offline")
+        self.assertEqual(estado["ia_principal_estado"], "error")
+        self.assertEqual(estado["ia_secundaria_estado"], "sin_credencial")
+        self.assertEqual(estado["herramientas"], ["hora_actual"])
+
+
+class FileIntelligenceTests(unittest.TestCase):
+    @staticmethod
+    def zip_bytes(miembros):
+        archivo = io.BytesIO()
+        with zipfile.ZipFile(archivo, "w", zipfile.ZIP_DEFLATED) as paquete:
+            for nombre, contenido in miembros.items():
+                paquete.writestr(nombre, contenido)
+        return archivo.getvalue()
+
+    def test_extrae_texto_y_fragmenta_sin_ejecutarlo(self):
+        contenido = ("línea útil\n" * 800).encode("utf-8")
+
+        resultado = file_intelligence.extraer_archivo("notas.txt", contenido)
+
+        self.assertIn("línea útil", resultado.texto)
+        self.assertGreater(len(resultado.fragmentos), 1)
+        self.assertLessEqual(len(resultado.texto), file_intelligence.MAX_TEXT_CHARS)
+
+    def test_docx_requiere_paquete_real_y_extrae_parrafos(self):
+        documento = self.zip_bytes({
+            "[Content_Types].xml": (
+                '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>'
+            ),
+            "word/document.xml": (
+                '<document xmlns:w="urn:test"><body><p><r><t>Informe seguro</t></r></p></body></document>'
+            ),
+        })
+
+        resultado = file_intelligence.extraer_archivo("informe.docx", documento)
+
+        self.assertIn("Informe seguro", resultado.texto)
+
+    def test_xlsx_extrae_celdas_inline_de_las_hojas(self):
+        libro = self.zip_bytes({
+            "[Content_Types].xml": (
+                '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>'
+            ),
+            "xl/workbook.xml": (
+                '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+                '<sheets><sheet name="Ventas" sheetId="1" r:id="rId1"/></sheets></workbook>'
+            ),
+            "xl/_rels/workbook.xml.rels": (
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>'
+            ),
+            "xl/worksheets/sheet1.xml": (
+                '<worksheet><sheetData><row r="1">'
+                '<c r="A1" t="inlineStr"><is><t>Producto</t></is></c>'
+                '<c r="B1"><v>42</v></c>'
+                '</row></sheetData></worksheet>'
+            ),
+        })
+
+        resultado = file_intelligence.extraer_archivo("ventas.xlsx", libro)
+
+        self.assertIn("Hoja Ventas", resultado.texto)
+        self.assertIn("A1=Producto", resultado.texto)
+        self.assertIn("B1=42", resultado.texto)
+
+    def test_rechaza_firma_falsa_legacy_y_zip_path_traversal(self):
+        with self.assertRaises(file_intelligence.ArchivoInvalido):
+            file_intelligence.extraer_archivo("falso.pdf", b"texto")
+        with self.assertRaises(file_intelligence.FormatoNoCompatible):
+            file_intelligence.extraer_archivo("antiguo.doc", b"contenido")
+        peligroso = self.zip_bytes({"../fuera.py": "no ejecutar"})
+        with self.assertRaises(file_intelligence.ArchivoInvalido):
+            file_intelligence.extraer_archivo("proyecto.zip", peligroso)
+
+    def test_valida_json_y_formato_real_de_imagen(self):
+        with self.assertRaises(file_intelligence.ArchivoInvalido):
+            file_intelligence.extraer_archivo("datos.json", b"{mal json}")
+
+        imagen = io.BytesIO()
+        from PIL import Image
+
+        Image.new("RGB", (4, 3)).save(imagen, format="JPEG")
+        with self.assertRaises(file_intelligence.ArchivoInvalido):
+            file_intelligence.extraer_archivo("falsa.png", imagen.getvalue())
+
+    def test_analisis_de_imagen_usa_vision_local_y_no_el_proveedor_de_chat(self):
+        imagen = io.BytesIO()
+        from PIL import Image
+
+        Image.new("RGB", (4, 3)).save(imagen, format="PNG")
+        ollama_local = mock.Mock()
+        ollama_local.Client.return_value.chat.return_value.message.content = "Una figura azul."
+        with mock.patch.dict("sys.modules", {"ollama": ollama_local}):
+            resultado = file_intelligence.analizar_imagen(
+                imagen.getvalue(),
+                "¿Qué color aparece?",
+            )
+
+        self.assertEqual(resultado, "Una figura azul.")
+        ollama_local.Client.assert_called_once_with(host=config.OLLAMA_HOST)
+        solicitud = ollama_local.Client.return_value.chat.call_args.kwargs
+        self.assertEqual(solicitud["model"], config.MODELO_VISION)
+        self.assertEqual(solicitud["messages"][0]["images"], [imagen.getvalue()])
+
+    def test_pdf_valido_se_procesa_con_el_motor_local(self):
+        from pypdf import PdfWriter
+
+        salida = io.BytesIO()
+        escritor = PdfWriter()
+        escritor.add_blank_page(width=100, height=100)
+        escritor.write(salida)
+
+        resultado = file_intelligence.extraer_archivo("pagina.pdf", salida.getvalue())
+
+        self.assertEqual(resultado.metadatos["paginas"], 1)
+        self.assertTrue(resultado.advertencias)
+
+
+class CicloDeConexionTests(unittest.TestCase):
+    def test_iniciar_no_requiere_clave_de_ia_para_activar_el_core(self):
+        lanzador = launcher.Lanzador.__new__(launcher.Lanzador)
+        lanzador.asistente_activo = False
+        lanzador.bus = mock.Mock()
+        lanzador._publicar_info = mock.Mock()
+
+        with (
+            mock.patch.object(tools, "permiso_control_pc", return_value=True),
+            mock.patch.object(lanzador, "_clave_para_core", return_value=""),
+            mock.patch.object(config, "PROVEEDOR_IA", "gemini"),
+            mock.patch("launcher.threading.Thread") as hilo,
+        ):
+            iniciado = lanzador.iniciar()
+
+        self.assertTrue(iniciado)
+        self.assertTrue(lanzador.asistente_activo)
+        hilo.assert_called_once()
+        self.assertEqual(hilo.call_args.kwargs["args"], ("gemini", ""))
+        hilo.return_value.start.assert_called_once()
+
+    def test_pedido_local_no_lee_claves_ni_invoca_al_proveedor(self):
+        lanzador = self.crear_lanzador()
+        lanzador.pedidos.put(("consulta local", "texto"))
+        lanzador._iniciar_escucha = mock.Mock()
+        lanzador._hablar = mock.Mock(return_value=None)
+        cerebro = mock.Mock()
+        cerebro.verificar.return_value = None
+        cerebro.ia_estado = "sin_verificar"
+        cerebro.proveedor = "gemini"
+
+        def resolver_local(_pedido):
+            lanzador.cerrando.set()
+            return core_engine.ResultadoLocal("GET_LOCAL_TIME", "Son las 12.")
+
+        with (
+            mock.patch("brain.crear_cerebro", return_value=cerebro),
+            mock.patch.object(lanzador, "_clave_para_core", side_effect=AssertionError),
+            mock.patch.object(core_engine, "procesar_comando_local", side_effect=resolver_local),
+            mock.patch.object(voice, "Oido", return_value=mock.Mock()),
+            mock.patch.object(voice, "cambiar_modo_silencio", return_value=None),
+            mock.patch.object(tools, "NOTIFICAR"),
+            mock.patch.object(tools, "CONFIRMAR"),
+        ):
+            lanzador._iniciar_asistente("gemini", "")
+
+        cerebro.configurar.assert_not_called()
+        cerebro.responder.assert_not_called()
+        self.assertTrue(
+            any(
+                llamada.args[1] == "Son las 12."
+                for llamada in lanzador._agregar_mensaje.call_args_list
+            )
+        )
+
+    def test_texto_y_voz_comparten_el_mismo_cerebro_y_contexto(self):
+        lanzador = self.crear_lanzador()
+        lanzador.pedidos.put(("consulta desde texto", "texto"))
+        lanzador.pedidos.put(("continuación por voz", "voz"))
+        lanzador._iniciar_escucha = mock.Mock()
+        lanzador._hablar = mock.Mock(return_value=None)
+        cerebro = mock.Mock()
+        cerebro.verificar.return_value = None
+        cerebro.ia_estado = "conectado"
+        cerebro.proveedor = "gemini"
+        historial = []
+
+        def responder(texto):
+            historial.append(texto)
+            if len(historial) == 2:
+                lanzador.cerrando.set()
+            return f"Respuesta con {len(historial)} turno(s)."
+
+        cerebro.responder.side_effect = responder
+        with (
+            mock.patch("brain.crear_cerebro", return_value=cerebro),
+            mock.patch.object(lanzador, "_clave_para_core", return_value="clave"),
+            mock.patch.object(core_engine, "procesar_comando_local", return_value=None),
+            mock.patch.object(voice, "Oido", return_value=mock.Mock()),
+            mock.patch.object(voice, "cambiar_modo_silencio", return_value=None),
+            mock.patch.object(tools, "NOTIFICAR"),
+            mock.patch.object(tools, "CONFIRMAR"),
+        ):
+            lanzador._iniciar_asistente("gemini", "clave")
+
+        self.assertEqual(historial, ["consulta desde texto", "continuación por voz"])
+        self.assertEqual(
+            cerebro.responder.call_args_list,
+            [mock.call("consulta desde texto"), mock.call("continuación por voz")],
+        )
+        self.assertEqual(cerebro.configurar.call_count, 2)
+
+    def test_estado_ia_sigue_el_resultado_real_y_se_recupera(self):
+        cliente = mock.Mock()
+        cliente.chat.completions.create.side_effect = [
+            ConnectionError("red desconectada"),
+            ConnectionError("red desconectada"),
+            mock.Mock(
+                choices=[
+                    mock.Mock(
+                        message=mock.Mock(
+                            content="respuesta",
+                            tool_calls=None,
+                            model_dump=mock.Mock(
+                                return_value={
+                                    "role": "assistant",
+                                    "content": "respuesta",
+                                }
+                            ),
+                        )
+                    )
+                ]
+            ),
+        ]
+
+        with (
+            mock.patch.object(ai_providers, "crear_cliente", return_value=cliente),
+            mock.patch.object(ai_providers, "crear_opciones_solicitud", return_value={}),
+            mock.patch.object(tools, "detencion_solicitada", return_value=False),
+            mock.patch("brain.time.sleep") as esperar,
+        ):
+            cerebro = brain.Cerebro(provider="gemini", api_key="clave-prueba")
+            cerebro._sistema = mock.Mock(return_value={"role": "system", "content": "test"})
+
+            with self.assertRaises(RuntimeError):
+                cerebro._responder_api("Hola")
+            self.assertEqual(cerebro.ia_estado, "error")
+            self.assertEqual(cliente.chat.completions.create.call_count, 2)
+            esperar.assert_called_once_with(1)
+
+            self.assertEqual(cerebro._responder_api("Hola"), "respuesta")
+
+        self.assertEqual(cerebro.ia_estado, "conectado")
+
+    def test_fallback_sin_cliente_no_reemplaza_el_proveedor_principal(self):
+        cerebro = object.__new__(brain.Cerebro)
+        cerebro.proveedor = "gemini"
+        cerebro.api_key = "clave-principal"
+        cerebro.modelo = "modelo-principal"
+        cerebro.cliente = mock.Mock()
+        cerebro.proveedor_alternativo = "openai"
+        cerebro.clave_alternativa = None
+        cerebro.ia_estado = "error"
+        cerebro.ia_error = "Error del proveedor principal."
+
+        def configurar_sin_cliente(*_args, **_kwargs):
+            cerebro.cliente = None
+
+        with mock.patch.object(cerebro, "configurar", side_effect=configurar_sin_cliente):
+            activado = cerebro._activar_fallback()
+
+        self.assertFalse(activado)
+        self.assertEqual(cerebro.proveedor, "gemini")
+        self.assertEqual(cerebro.ia_error, "Error del proveedor principal.")
+        self.assertIsNotNone(cerebro.cliente)
+
+    def crear_lanzador(self):
+        lanzador = launcher.Lanzador.__new__(launcher.Lanzador)
+        lanzador.cerrando = threading.Event()
+        lanzador.modo = "voz"
+        lanzador.asistente_activo = True
+        lanzador.oido = None
+        lanzador._modo_lock = threading.Lock()
+        lanzador._escucha_hilo = threading.current_thread()
+        lanzador._respuesta_lista = threading.Event()
+        lanzador._respuesta_lista.set()
+        lanzador.pedidos = queue.Queue()
+        lanzador._pedidos_lock = threading.Lock()
+        lanzador.bus = mock.Mock()
+        lanzador._publicar_info = mock.Mock()
+        lanzador._agregar_mensaje = mock.Mock()
+        lanzador._estado = mock.Mock()
+        return lanzador
+
+    def test_microfono_se_reintenta_sin_desactivar_el_asistente(self):
+        lanzador = self.crear_lanzador()
+        oido_recuperado = mock.Mock()
+        oido_inicial = mock.Mock()
+        oido_inicial.escuchar_continuo.side_effect = OSError("dispositivo reiniciado")
+        oido_recuperado.escuchar_continuo.side_effect = (
+            lambda: lanzador.cerrando.set()
+        )
+        lanzador.oido = oido_inicial
+
+        with mock.patch.object(voice, "Oido", return_value=oido_recuperado) as crear_oido:
+            lanzador._escuchar(oido_inicial)
+
+        crear_oido.assert_called_once_with(dispositivo=config.MICROFONO or None)
+        self.assertIs(lanzador.oido, oido_recuperado)
+        self.assertTrue(lanzador.asistente_activo)
+        self.assertEqual(lanzador.modo, "voz")
+        self.assertTrue(
+            any(
+                "automáticamente" in llamada.args[1]
+                for llamada in lanzador._agregar_mensaje.call_args_list
+            )
+        )
+        self.assertTrue(
+            any(
+                "Micrófono reconectado" in llamada.args[0]
+                for llamada in lanzador._estado.call_args_list
+            )
+        )
+
+    def test_fallo_inicial_del_microfono_mantiene_jarvis_activo_y_reintenta(self):
+        lanzador = self.crear_lanzador()
+        lanzador.cerrando.set()
+        lanzador._iniciar_escucha = mock.Mock()
+        cerebro = mock.Mock()
+        cerebro.verificar.return_value = None
+
+        with (
+            mock.patch("brain.crear_cerebro", return_value=cerebro),
+            mock.patch.object(
+                voice, "Oido", side_effect=OSError("entrada no disponible")
+            ),
+            mock.patch.object(tools, "NOTIFICAR"),
+            mock.patch.object(tools, "CONFIRMAR"),
+        ):
+            lanzador._iniciar_asistente("gemini", "clave-prueba")
+
+        self.assertTrue(lanzador.asistente_activo)
+        self.assertEqual(lanzador.modo, "voz")
+        self.assertIsNone(lanzador.oido)
+        lanzador._iniciar_escucha.assert_called_once_with(None)
+        self.assertTrue(
+            any(
+                "Reintentando la conexión" in llamada.args[0]
+                for llamada in lanzador._estado.call_args_list
+            )
+        )
+
+    def test_fallo_de_ia_al_iniciar_no_desactiva_el_core_local(self):
+        lanzador = self.crear_lanzador()
+        lanzador.cerrando.set()
+        lanzador._iniciar_escucha = mock.Mock()
+        cerebro = mock.Mock()
+        cerebro.verificar.return_value = "Falta la API key."
+
+        with (
+            mock.patch("brain.crear_cerebro", return_value=cerebro),
+            mock.patch.object(
+                voice, "Oido", side_effect=OSError("entrada no disponible")
+            ),
+            mock.patch.object(tools, "NOTIFICAR"),
+            mock.patch.object(tools, "CONFIRMAR"),
+        ):
+            lanzador._iniciar_asistente("gemini", "clave-prueba")
+
+        self.assertTrue(lanzador.asistente_activo)
+        self.assertEqual(lanzador.ia_estado, "error")
+        self.assertEqual(lanzador.ia_error, "Falta la API key.")
+        lanzador._iniciar_escucha.assert_called_once_with(None)
 
 
 class PermisosYVozTests(unittest.TestCase):
@@ -175,6 +706,7 @@ class PermisosYVozTests(unittest.TestCase):
     def test_accion_directa_deja_contexto_para_el_siguiente_pedido(self):
         cerebro = object.__new__(brain.Cerebro)
         cerebro.proveedor = "openai"
+        cerebro.cliente = mock.Mock()
         with (
             mock.patch.object(tools, "detencion_solicitada", return_value=False),
             mock.patch.object(tools, "ejecutar", return_value="Abriendo Chrome."),
@@ -238,6 +770,7 @@ class PermisosYVozTests(unittest.TestCase):
     def test_pedido_compuesto_de_apertura_y_tarea_se_delega_al_modelo(self):
         cerebro = object.__new__(brain.Cerebro)
         cerebro.proveedor = "openai"
+        cerebro.cliente = mock.Mock()
         cerebro._responder_api = mock.Mock(return_value="Listo.")
         pedido = "Abrí Chrome y buscá información sobre cómo organizar archivos"
         with (
@@ -694,7 +1227,7 @@ class AdjuntosTests(unittest.TestCase):
                 servidor.httpd.shutdown()
                 servidor.httpd.server_close()
 
-    def test_interfaz_rechaza_ordenes_de_texto(self):
+    def test_interfaz_encola_mensajes_de_texto(self):
         entradas = queue.Queue()
         servidor = ui.Servidor(ui.Bus(), entradas)
         with mock.patch.object(config, "HUD_PUERTO", 18760):
@@ -710,12 +1243,35 @@ class AdjuntosTests(unittest.TestCase):
                     },
                     method="POST",
                 )
-                with self.assertRaises(HTTPError) as error:
-                    urlopen(solicitud, timeout=5)
+                with urlopen(solicitud, timeout=5) as respuesta:
+                    self.assertEqual(respuesta.status, 200)
+                    self.assertTrue(json.loads(respuesta.read())["ok"])
+                self.assertEqual(entradas.get_nowait(), "Hola")
+            finally:
+                servidor.httpd.shutdown()
+                servidor.httpd.server_close()
 
-                self.assertEqual(error.exception.code, 405)
-                self.assertTrue(entradas.empty())
-                error.exception.close()
+    def test_interfaz_rechaza_mensaje_vacio_o_demasiado_largo(self):
+        servidor = ui.Servidor(ui.Bus(), queue.Queue())
+        with mock.patch.object(config, "HUD_PUERTO", 18767):
+            servidor.iniciar()
+            try:
+                url = f"http://127.0.0.1:{servidor.puerto}/say?t={servidor.token}"
+                for datos, codigo in (({"texto": " "}, 400), ({"texto": "a" * 10001}, 413)):
+                    solicitud = Request(
+                        url,
+                        data=json.dumps(datos).encode("utf-8"),
+                        headers={
+                            "Content-Type": "application/json",
+                            "X-Token": servidor.token,
+                        },
+                        method="POST",
+                    )
+                    with self.subTest(codigo=codigo):
+                        with self.assertRaises(HTTPError) as error:
+                            urlopen(solicitud, timeout=5)
+                        self.assertEqual(error.exception.code, codigo)
+                        error.exception.close()
             finally:
                 servidor.httpd.shutdown()
                 servidor.httpd.server_close()
@@ -797,6 +1353,80 @@ class AdjuntosTests(unittest.TestCase):
                 finally:
                     servidor.httpd.shutdown()
                     servidor.httpd.server_close()
+
+    def test_upload_multiple_adjunta_archivos_en_un_solo_pedido(self):
+        entradas = queue.Queue()
+        servidor = ui.Servidor(ui.Bus(), entradas)
+        with tempfile.TemporaryDirectory() as temporal:
+            with (
+                mock.patch.object(config, "CARPETA_DATOS", Path(temporal)),
+                mock.patch.object(config, "HUD_PUERTO", 18768),
+            ):
+                servidor.iniciar()
+                try:
+                    url = f"http://127.0.0.1:{servidor.puerto}/upload?t={servidor.token}"
+                    cuerpo = json.dumps(
+                        {
+                            "pregunta": "Comparalos",
+                            "archivos": [
+                                {"nombre": "uno.md", "contenido": "primero"},
+                                {"nombre": "dos.csv", "contenido": "segundo"},
+                            ],
+                        }
+                    ).encode("utf-8")
+                    solicitud = Request(
+                        url,
+                        data=cuerpo,
+                        headers={
+                            "Content-Type": "application/json",
+                            "X-Token": servidor.token,
+                        },
+                        method="POST",
+                    )
+                    with urlopen(solicitud, timeout=5) as respuesta:
+                        datos = json.loads(respuesta.read())
+
+                    self.assertTrue(datos["ok"])
+                    self.assertEqual(len(datos["archivos"]), 2)
+                    pedido = entradas.get_nowait()
+                    self.assertIn("Comparalos", pedido)
+                    self.assertIn("primero", pedido)
+                    self.assertIn("segundo", pedido)
+                    self.assertEqual(len(list((Path(temporal) / "adjuntos").iterdir())), 2)
+                finally:
+                    servidor.httpd.shutdown()
+                    servidor.httpd.server_close()
+
+    def test_upload_rechaza_contenido_binario_falsamente_etiquetado_como_texto(self):
+        servidor = ui.Servidor(ui.Bus(), queue.Queue())
+        with mock.patch.object(config, "HUD_PUERTO", 18769):
+            servidor.iniciar()
+            try:
+                url = f"http://127.0.0.1:{servidor.puerto}/upload?t={servidor.token}"
+                cuerpo = json.dumps(
+                    {
+                        "archivos": [
+                            {"nombre": "notas.txt", "contenido": "texto\u0000binario"}
+                        ]
+                    }
+                ).encode("utf-8")
+                solicitud = Request(
+                    url,
+                    data=cuerpo,
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Token": servidor.token,
+                    },
+                    method="POST",
+                )
+                with self.assertRaises(HTTPError) as error:
+                    urlopen(solicitud, timeout=5)
+
+                self.assertEqual(error.exception.code, 415)
+                error.exception.close()
+            finally:
+                servidor.httpd.shutdown()
+                servidor.httpd.server_close()
 
     def test_upload_rechaza_archivos_no_textuales(self):
         servidor = ui.Servidor(ui.Bus(), queue.Queue())

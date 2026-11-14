@@ -34,6 +34,7 @@ from tkinter import messagebox, simpledialog, ttk
 
 import config
 import ai_providers
+import connections_catalog
 import preferencias_usuario
 import sounddevice as sd
 import ui
@@ -80,6 +81,11 @@ class Lanzador:
         self._hud_vigilando = False
         self._hud_lanzado_en = None
         self.modo = None
+        self.ia_estado = "sin_verificar"
+        self.ia_error = ""
+        self.ia_proveedor_activo = config.PROVEEDOR_IA
+        self.vision_error = ""
+        self.ultima_latencia_ms = None
         self.vision_descargando = False
         self.asistente_activo = False
         self.oido = None
@@ -1227,6 +1233,16 @@ class Lanzador:
         guardada = cls._almacen_claves().get_password("Jarvis", proveedor)
         return guardada or cls._clave_entorno(proveedor)
 
+    def _clave_para_core(self, proveedor):
+        try:
+            return self._clave_guardada_o_entorno(proveedor)
+        except Exception as error:
+            mensaje = f"No pude leer la credencial de {proveedor} en Windows: {error}"
+            print(f"[credenciales] {mensaje}")
+            if proveedor == config.PROVEEDOR_IA:
+                self.ia_error = mensaje
+            return self._clave_entorno(proveedor)
+
     @classmethod
     def _clave_local_guardada(cls, proveedor):
         return bool(cls._almacen_claves().get_password("Jarvis", proveedor))
@@ -1700,7 +1716,7 @@ class Lanzador:
             estado = f"Falló la prueba de salida: {error}"
         self.raiz.after(0, self.estado.set, estado)
 
-    def iniciar(self):
+    def iniciar(self, modo="voz"):
         if self.asistente_activo:
             return True
         import tools
@@ -1732,42 +1748,20 @@ class Lanzador:
             )
             return False
         proveedor = config.PROVEEDOR_IA
-        try:
-            api_key = self._clave_guardada_o_entorno(proveedor)
-            elevenlabs_api_key = self._clave_guardada_o_entorno("elevenlabs")
-            cartesia_api_key = self._clave_guardada_o_entorno("cartesia")
-        except Exception as error:
-            self.bus.publish("msg", rol="jarvis", texto=f"No pude leer las credenciales guardadas: {error}")
-            self.bus.publish("estado", valor="desconectado", texto="Revisá las credenciales desde Ajustes.")
-            return False
-        if proveedor != "ollama" and not api_key:
-            # En modo ensemble puede que haya otra key aunque no la del proveedor principal
-            otras_claves = any(
-                self._clave_guardada_o_entorno(p)
-                for p in ai_providers.PROVEEDORES
-                if p != proveedor
-            )
-            if not otras_claves:
-                self.bus.publish("msg", rol="jarvis", texto=(
-                    "Necesitas al menos una API key para iniciar Jarvis. "
-                    "Ingresá la clave de Gemini, OpenAI, Groq, Cloudflare o Cursor desde Ajustes."
-                ))
-                self.bus.publish("ajustes")
-                return False
-        proveedor_tts = config.PROVEEDOR_TTS
-        if proveedor_tts == "elevenlabs" and not (
-            elevenlabs_api_key or os.environ.get("ELEVENLABS_API_KEY")
-        ):
-            self.bus.publish("msg", rol="jarvis", texto="Falta la API key de ElevenLabs. Guardala desde Ajustes.")
-            self.bus.publish("ajustes")
-            return False
-        self.modo = "voz"
+        api_key = self._clave_para_core(proveedor)
+        elevenlabs_api_key = self._clave_para_core("elevenlabs")
+        cartesia_api_key = self._clave_para_core("cartesia")
+        self.modo = modo
         self.elevenlabs_api_key = elevenlabs_api_key
         self.cartesia_api_key = cartesia_api_key
         config.USAR_VOZ = True
         self.asistente_activo = True
         proveedor_nombre = proveedor.capitalize()
-        self.bus.publish("estado", valor="pensando", texto=f"Conectando con {proveedor_nombre}…")
+        self.bus.publish(
+            "estado",
+            valor="pensando",
+            texto=f"Iniciando el Core local y comprobando {proveedor_nombre}…",
+        )
         self._publicar_info()
         threading.Thread(
             target=self._iniciar_asistente,
@@ -1856,13 +1850,9 @@ class Lanzador:
             self.pedidos.put((texto, origen))
 
     def enviar(self):
-        self._estado_visible("Hablale a Jarvis; el control por teclado está desactivado.")
+        self._estado_visible("Escribí tu mensaje en el chat del HUD.")
 
     def _confirmar(self, texto):
-        import tools
-
-        if tools.permiso_control_pc() is True:
-            return True
         if self.bus.hay_hud():
             return self.bus.preguntar(texto, timeout=60)
         resultado = threading.Event()
@@ -1880,72 +1870,115 @@ class Lanzador:
         return respuesta["ok"]
 
     def _iniciar_asistente(self, proveedor, api_key):
-        from brain import Cerebro, CerebroEnsemble, crear_cerebro
+        from brain import Cerebro, crear_cerebro
 
         import tools
-        import visionTools
-
-        _ = visionTools
         tools.NOTIFICAR = self._notificar
         tools.CONFIRMAR = self._confirmar
         try:
+            import visionTools
+        except Exception as error:
+            self.vision_error = str(error)
+            print(f"[vision] Herramientas visuales no disponibles: {error}")
+        else:
+            _ = visionTools
+        try:
             if proveedor == "ollama":
-                from brain import Cerebro as _C
-                cerebro = _C(provider="ollama")
+                cerebro = Cerebro(provider="ollama")
             else:
                 # Usar ensemble si hay 2+ keys configuradas (y modo no es "off")
-                cerebro = crear_cerebro(self._clave_guardada_o_entorno)
+                try:
+                    cerebro = crear_cerebro(self._clave_para_core)
+                except Exception as error:
+                    print(f"[ia:{proveedor}] No pude preparar el ensemble: {error}")
+                    cerebro = Cerebro(provider=proveedor, api_key=api_key)
         except Exception as error:
-            self._agregar_mensaje(config.NOMBRE, f"No pude iniciar el modelo: {error}")
-            self._estado("Revisá el proveedor y la API key y volvé a iniciar.")
-            self.asistente_activo = False
-            self.modo = None
-            return
-        error = cerebro.verificar()
-        if error:
-            self._agregar_mensaje(config.NOMBRE, error)
-            self._estado("No se pudo iniciar. Corregí el error y volvé a abrir Jarvis.")
-            self.asistente_activo = False
-            return
-
-        oido = None
-        self._estado("Iniciando micrófono y reconocimiento de voz...")
+            self.ia_estado = "error"
+            self.ia_error = f"No pude preparar {proveedor}: {error}"
+            print(f"[ia:{proveedor}] {self.ia_error}")
+            try:
+                cerebro = Cerebro(provider="ollama")
+            except Exception as error_local:
+                self.ia_error += f" El Core local no pudo inicializarse: {error_local}"
+                self._agregar_mensaje(config.NOMBRE, self.ia_error)
+                self._estado("No se pudo iniciar el Core local.")
+                self.asistente_activo = False
+                return
         try:
-            oido = voice.Oido(dispositivo=config.MICROFONO or None)
+            error = cerebro.verificar()
         except Exception as error:
-            self.oido = None
-            self.modo = None
-            config.USAR_VOZ = True
-            self.asistente_activo = False
+            error = f"No pude comprobar el proveedor {proveedor}: {error}"
+            print(f"[ia:{proveedor}] {error}")
+        if error:
+            self.ia_estado = "error"
+            self.ia_error = error
+            self._publicar_info()
+            self._agregar_mensaje(config.NOMBRE, error)
             self._agregar_mensaje(
                 config.NOMBRE,
-                f"No pude iniciar el micrófono: {error}. Revisá la entrada en Ajustes "
-                "y volvé a iniciar por voz.",
+                "El Core local sigue disponible para comandos reconocidos aunque la IA no responda.",
             )
-            self._estado("Micrófono no disponible. Corregí la entrada y reintentá.")
-            return
-        self.oido = oido
+        else:
+            self.ia_estado = getattr(cerebro, "ia_estado", "sin_verificar")
+            self.ia_error = ""
+        self.ia_proveedor_activo = (
+            getattr(cerebro, "proveedor", None)
+            or getattr(cerebro, "proveedor_principal", None)
+            or proveedor
+        )
 
-        self._agregar_mensaje(config.NOMBRE, "En línea. Escribime abajo.")
-        self._publicar_info()
-        self._estado(
-            "Micrófono activo. Hablá normalmente; Jarvis te escucha."
-        )
-        saludo = (
-            (
-                f"Hola, {config.NOMBRE_USUARIO}. Soy {config.NOMBRE}. "
-                if config.NOMBRE_USUARIO
-                else f"Hola, soy {config.NOMBRE}. "
-            )
-            + "Ya estoy en línea y te escucho. "
-            "¿Qué necesitás?"
-        )
-        self._agregar_mensaje(config.NOMBRE, saludo)
-        error_voz = self._hablar(saludo)
-        if error_voz:
-            self._estado(error_voz)
-        if oido:
-            self._iniciar_escucha(oido)
+        if self.modo == "texto":
+            self.oido = None
+            self._agregar_mensaje(config.NOMBRE, "Modo texto activo. Escribime en el chat.")
+            self._publicar_info()
+            self._estado("Modo texto activo. Escribí un mensaje cuando quieras.")
+        else:
+            oido = None
+            self._estado("Iniciando micrófono y reconocimiento de voz...")
+            try:
+                oido = voice.Oido(dispositivo=config.MICROFONO or None)
+            except Exception as error:
+                self.oido = None
+                self._agregar_mensaje(
+                    config.NOMBRE,
+                    f"No pude iniciar el micrófono: {error}. Voy a reintentar la conexión "
+                    "automáticamente; revisá la entrada en Ajustes si el problema continúa.",
+                )
+                print(f"[audio] No se pudo iniciar el micrófono: {error}")
+                self._estado("Micrófono no disponible. Reintentando la conexión...")
+                self._publicar_info()
+                self._iniciar_escucha(None)
+            else:
+                self.oido = oido
+            if self.ia_estado == "error":
+                self._agregar_mensaje(
+                    config.NOMBRE,
+                    "Core local activo. La IA no está disponible; puedo atender los comandos locales reconocidos.",
+                )
+            else:
+                self._agregar_mensaje(config.NOMBRE, "En línea. Escribime o hablame.")
+            self._publicar_info()
+            if oido is not None:
+                self._estado(
+                    "Micrófono activo. Hablá normalmente; también podés escribir."
+                )
+                saludo = (
+                    f"Hola, {config.NOMBRE_USUARIO}. Soy {config.NOMBRE}. "
+                    if config.NOMBRE_USUARIO
+                    else f"Hola, soy {config.NOMBRE}. "
+                )
+                if self.ia_estado == "error":
+                    saludo += (
+                        "El Core local está activo, pero la IA no está disponible. "
+                        "Puedo atender comandos locales reconocidos. ¿Qué necesitás?"
+                    )
+                else:
+                    saludo += "Ya estoy en línea y te escucho. ¿Qué necesitás?"
+                self._agregar_mensaje(config.NOMBRE, saludo)
+                error_voz = self._hablar(saludo)
+                if error_voz:
+                    self._estado(error_voz)
+                self._iniciar_escucha(oido)
 
         while not self.cerrando.is_set() and self.asistente_activo:
             with self._pedidos_lock:
@@ -1960,8 +1993,11 @@ class Lanzador:
                 time.sleep(0.2)
                 continue
             self.bus.publish("detencion", activa=False, pendientes=0)
-            if origen == "voz":
-                self._agregar_mensaje("Tú (voz)", pedido)
+            if origen in ("voz", "texto"):
+                self._agregar_mensaje(
+                    "Tú (voz)" if origen == "voz" else "Tú (texto)",
+                    pedido,
+                )
             respuesta_modo = voice.cambiar_modo_silencio(pedido)
             if respuesta_modo:
                 self._agregar_mensaje(config.NOMBRE, respuesta_modo)
@@ -1979,39 +2015,66 @@ class Lanzador:
                 self.bus.publish("detencion", activa=False, pendientes=0)
                 continue
             self._estado("Procesando...")
+            inicio_pedido = time.perf_counter()
             try:
                 try:
-                    proveedor_actual = config.PROVEEDOR_IA
-                    proveedor_alternativo = config.PROVEEDOR_IA_ALTERNATIVO or None
-                    clave_actual = self._clave_guardada_o_entorno(proveedor_actual)
-                    clave_alternativa = (
-                        self._clave_guardada_o_entorno(proveedor_alternativo)
-                        if proveedor_alternativo
-                        else None
-                    )
-                    # Si cambió el proveedor o las claves, reconfigurar el cerebro.
-                    # CerebroEnsemble también expone .configurar() para el proveedor principal.
-                    cerebro.configurar(
-                        proveedor_actual,
-                        clave_actual,
-                        proveedor_alternativo,
-                        clave_alternativa,
-                    )
-                    respuesta = cerebro.responder(pedido)
+                    import core_engine
+
+                    resultado_local = core_engine.procesar_comando_local(pedido)
+                    if resultado_local is not None:
+                        respuesta = resultado_local.respuesta
+                    else:
+                        proveedor_actual = config.PROVEEDOR_IA
+                        proveedor_alternativo = config.PROVEEDOR_IA_ALTERNATIVO or None
+                        clave_actual = self._clave_para_core(proveedor_actual)
+                        clave_alternativa = (
+                            self._clave_para_core(proveedor_alternativo)
+                            if proveedor_alternativo
+                            else None
+                        )
+                        cerebro.configurar(
+                            proveedor_actual,
+                            clave_actual,
+                            proveedor_alternativo,
+                            clave_alternativa,
+                        )
+                        respuesta = cerebro.responder(pedido)
                 except Exception as error:
-                    respuesta = f"Tuve un problema: {error}"
+                    respuesta = f"Tuve un problema al procesar el pedido: {error}"
+                    print(f"[core] {respuesta}")
+                self.ia_proveedor_activo = (
+                    getattr(cerebro, "proveedor", None)
+                    or getattr(cerebro, "proveedor_principal", None)
+                    or self.ia_proveedor_activo
+                )
+                self.ultima_latencia_ms = round(
+                    (time.perf_counter() - inicio_pedido) * 1000
+                )
                 self._agregar_mensaje(config.NOMBRE, respuesta)
                 error_voz = None
-                if self.modo == "voz" and config.USAR_VOZ:
+                if self.modo == "voz" and origen == "voz" and config.USAR_VOZ:
                     error_voz = self._hablar(respuesta)
-                self._estado(
-                    error_voz
-                    or (
-                        "Escuchando; hablá cuando quieras."
-                        if self.modo == "voz"
-                        else "Listo."
+                if respuesta.startswith("Tuve un problema"):
+                    self.ia_estado = "error"
+                    self.ia_error = "El proveedor no respondió al último pedido."
+                    self._publicar_info()
+                    self._estado(
+                        f"El proveedor {config.PROVEEDOR_IA} no respondió; "
+                        "Jarvis sigue escuchando y volverá a intentarlo en el próximo pedido."
                     )
-                )
+                else:
+                    self.ia_estado = getattr(cerebro, "ia_estado", self.ia_estado)
+                    if self.ia_estado == "conectado":
+                        self.ia_error = ""
+                    self._publicar_info()
+                    self._estado(
+                        error_voz
+                        or (
+                            "Escuchando; hablá cuando quieras."
+                            if self.modo == "voz"
+                            else "Listo."
+                        )
+                    )
             finally:
                 with self._pedidos_lock:
                     self._pedido_en_curso = False
@@ -2073,10 +2136,34 @@ class Lanzador:
         self._escucha_hilo.start()
 
     def _escuchar(self, oido):
+        espera_reconexion = 1
         while not self.cerrando.is_set():
-            if self.modo != "voz" or self.oido is not oido:
+            if self.modo != "voz":
                 time.sleep(0.1)
                 continue
+            oido = self.oido
+            if oido is None:
+                try:
+                    oido = voice.Oido(dispositivo=config.MICROFONO or None)
+                except Exception as error:
+                    print(f"[audio] No se pudo reconectar el micrófono: {error}")
+                    self._estado(
+                        "Micrófono no disponible. Reintentando en "
+                        f"{espera_reconexion} s..."
+                    )
+                    if self.cerrando.wait(espera_reconexion):
+                        return
+                    espera_reconexion = min(espera_reconexion * 2, 30)
+                    continue
+                with self._modo_lock:
+                    if self.cerrando.is_set() or self.modo != "voz":
+                        oido.pausar_escucha.set()
+                        return
+                    self.oido = oido
+                print("[audio] Micrófono reconectado.")
+                self._publicar_info()
+                self._estado("Micrófono reconectado. Hablá normalmente; Jarvis te escucha.")
+                espera_reconexion = 1
             try:
                 pedido = oido.escuchar_continuo()
                 if (
@@ -2096,31 +2183,61 @@ class Lanzador:
                     and self.oido is oido
                 ):
                     pass
+                espera_reconexion = 1
             except Exception as error:
                 with self._modo_lock:
                     es_escucha_actual = self.oido is oido
                     if es_escucha_actual:
                         self.oido = None
-                    if es_escucha_actual and self.modo == "voz":
-                        self.modo = None
-                        self.asistente_activo = False
-                        config.USAR_VOZ = True
-                    if self._escucha_hilo is threading.current_thread():
-                        self._escucha_hilo = None
+                if not es_escucha_actual:
+                    continue
+                print(f"[audio] Se interrumpió la escucha: {error}")
                 self._publicar_info()
                 self._agregar_mensaje(
                     config.NOMBRE,
-                    f"Se interrumpió el micrófono: {error}. Revisá la entrada en "
-                    "Ajustes y volvé a iniciar por voz.",
+                    f"Se interrumpió el micrófono: {error}. Voy a reintentar la conexión "
+                    "automáticamente.",
                 )
-                self._estado("Micrófono interrumpido. Corregí la entrada y reintentá.")
-                return
+                self._estado(
+                    "Micrófono interrumpido. Reintentando en "
+                    f"{espera_reconexion} s..."
+                )
+                if self.cerrando.wait(espera_reconexion):
+                    return
+                espera_reconexion = min(espera_reconexion * 2, 30)
 
     def alternar_modo(self):
         if not self.asistente_activo:
-            return self.iniciar()
-        self._estado("Modo voz activo. Hablale a Jarvis cuando quieras.")
+            return self.iniciar("voz")
+        with self._modo_lock:
+            if self.modo == "voz":
+                self.modo = "texto"
+                if self.oido is not None:
+                    self.oido.pausar_escucha.set()
+                mensaje = "Modo texto activo. El micrófono está pausado."
+            else:
+                self.modo = "voz"
+                if self.oido is not None:
+                    self.oido.pausar_escucha.clear()
+                else:
+                    self._iniciar_escucha(None)
+                mensaje = "Modo voz activo. Hablá o escribí a Jarvis."
+        self._publicar_info()
+        self._estado(mensaje)
         return True
+
+    def desde_hud(self, texto):
+        texto = str(texto).strip()
+        if not texto:
+            return False
+        self._encolar_pedido(texto, "texto")
+        if not self.asistente_activo:
+            self.raiz.after(0, self._iniciar_texto_desde_hud)
+        return True
+
+    def _iniciar_texto_desde_hud(self):
+        if not self.asistente_activo:
+            self.iniciar("texto")
 
     def _activar_voz(self):
         try:
@@ -2266,7 +2383,18 @@ class Lanzador:
             "github_token_guardado": self._clave_local_guardada("github"),
             "github_token": self._clave_guardada_o_entorno("github"),
             "permiso_control_pc": tools.permiso_control_pc() is True,
+            "asistente_activo": bool(self.asistente_activo),
+            "ia_estado": self.ia_estado,
+            "ia_error": self.ia_error,
+            "motor": self._estado_motor(),
             "spotify_client_id": config.SPOTIFY_CLIENT_ID,
+            "integraciones": connections_catalog.catalogo_conexiones(
+                spotify_client_id=config.SPOTIFY_CLIENT_ID,
+                github_token_guardado=bool(
+                    self._clave_guardada_o_entorno("github")
+                ),
+                ubicacion=config.UBICACION,
+            ),
             "ubicacion": config.UBICACION,
             "vision_modelo": config.MODELO_VISION,
             "modelo_ollama": config.MODELO,
@@ -2372,6 +2500,18 @@ class Lanzador:
                     "estado": "conectado",
                     "tiempo_ms": tiempo_ms,
                 })
+        resultado_activo = next(
+            (r for r in resultados if r["proveedor"] == config.PROVEEDOR_IA),
+            None,
+        )
+        if resultado_activo:
+            if resultado_activo["estado"] == "conectado":
+                self.ia_estado = "conectado"
+                self.ia_error = ""
+            else:
+                self.ia_estado = "error"
+                self.ia_error = resultado_activo.get("error", "")
+            self._publicar_info()
         return {
             "comparacion": bool(comparar),
             "resultados": resultados,
@@ -2526,18 +2666,6 @@ class Lanzador:
             self._eliminar_clave("github")
         elif token_github:
             self._guardar_clave("github", token_github)
-
-        # Validar que haya al menos 1 API key si no es Ollama
-        if proveedor != "ollama":
-            claves_disponibles = [
-                p for p in ai_providers.PROVEEDORES
-                if self._clave_guardada_o_entorno(p)
-            ]
-            if not claves_disponibles:
-                raise ValueError(
-                    "Necesitás al menos una API key configurada para usar Jarvis. "
-                    "Ingresá una API key compatible desde la sección API Keys."
-                )
 
         requiere_reinicio = self.asistente_activo and any(
             nuevo != actual
@@ -2750,8 +2878,10 @@ class Lanzador:
         self.bus.publish(
             "info",
             nombre=config.NOMBRE,
-            modo="voz",
+            modo=self.modo or "texto",
             ia=nombres_ia.get(config.PROVEEDOR_IA, config.PROVEEDOR_IA),
+            ia_estado=self.ia_estado,
+            ia_error=self.ia_error,
             modelo=modelo,
             tts=nombres_tts.get(config.PROVEEDOR_TTS, config.PROVEEDOR_TTS),
             github=bool(config.GITHUB_TOKEN),
@@ -2759,7 +2889,56 @@ class Lanzador:
             vision=bool(config.COMPARTIENDO_PANTALLA),
             tema=config.TEMA_HUD,
             volumen_efectos=config.VOLUMEN_EFECTOS,
+            motor=self._estado_motor(),
         )
+
+    def _estado_motor(self):
+        import tools
+
+        principal = config.PROVEEDOR_IA
+        alternativo = config.PROVEEDOR_IA_ALTERNATIVO or ""
+        activo = self.ia_proveedor_activo
+        if activo == principal:
+            estado_principal = self.ia_estado
+        elif self.ia_estado == "conectado" and alternativo and activo == alternativo:
+            estado_principal = "fallback"
+        else:
+            estado_principal = "error" if self.ia_estado == "error" else "sin_verificar"
+
+        if not alternativo:
+            estado_alternativo = "sin_configurar"
+        elif activo == alternativo and self.ia_estado == "conectado":
+            estado_alternativo = "conectado"
+        elif activo == alternativo and self.ia_estado == "error":
+            estado_alternativo = "error"
+        elif alternativo and self._clave_para_core(alternativo):
+            estado_alternativo = "configurado_sin_probar"
+        else:
+            estado_alternativo = "sin_credencial" if alternativo else "sin_configurar"
+
+        if self.ia_estado == "error":
+            modo = "offline"
+        elif self.ia_estado == "conectado":
+            modo = "local" if activo == "ollama" else "online"
+        else:
+            modo = "sin_verificar"
+
+        resumen = tools.resumen_motor()
+        return {
+            "core": "activo" if self.asistente_activo else "disponible",
+            "ia_principal": principal,
+            "ia_principal_estado": estado_principal,
+            "ia_secundaria": alternativo,
+            "ia_secundaria_estado": estado_alternativo,
+            "proveedor_activo": activo or "",
+            "modo": modo,
+            "herramientas": resumen["herramientas"],
+            "acciones_recientes": resumen["acciones_recientes"],
+            "errores_recientes": resumen["errores_recientes"],
+            "error_registro": resumen["error_registro"],
+            "latencia_ms": self.ultima_latencia_ms,
+            "ia_error": self.ia_error,
+        }
 
     def _accion_hud(self, nombre):
         """Acciones que pide el HUD (corren en un hilo del servidor)."""

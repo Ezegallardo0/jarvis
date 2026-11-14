@@ -1,6 +1,8 @@
 """Herramientas que Jarvis puede usar sobre tu PC (Windows)."""
 import ctypes
 import datetime
+from collections import deque
+import inspect
 import json
 import math
 import os
@@ -96,6 +98,7 @@ def herramienta(
     parametros=None,
     requeridos=None,
     confirmar=False,
+    confirmar_siempre=False,
     requiere_pantalla=False,
     texto_confirmacion=None,
 ):
@@ -105,6 +108,7 @@ def herramienta(
         HERRAMIENTAS[fn.__name__] = {
             "fn": fn,
             "confirmar": confirmar,
+            "confirmar_siempre": confirmar_siempre,
             "texto_confirmacion": texto_confirmacion,
             "requiere_pantalla": requiere_pantalla,
             "schema": {
@@ -133,6 +137,41 @@ def esquemas():
     ]
 
 
+def _validar_argumentos_herramienta(herramienta, args):
+    if not isinstance(args, dict):
+        return "Los argumentos deben ser un objeto."
+    try:
+        inspect.signature(herramienta["fn"]).bind(**args)
+    except (TypeError, ValueError) as error:
+        return str(error)
+
+    propiedades = (
+        herramienta.get("schema", {})
+        .get("function", {})
+        .get("parameters", {})
+        .get("properties", {})
+    )
+    tipos = {
+        "string": lambda valor: isinstance(valor, str),
+        "integer": lambda valor: isinstance(valor, int) and not isinstance(valor, bool),
+        "number": lambda valor: isinstance(valor, (int, float)) and not isinstance(valor, bool),
+        "boolean": lambda valor: isinstance(valor, bool),
+        "array": lambda valor: isinstance(valor, list),
+        "object": lambda valor: isinstance(valor, dict),
+    }
+    for clave, valor in args.items():
+        especificacion = propiedades.get(clave)
+        if not isinstance(especificacion, dict):
+            continue
+        tipo = especificacion.get("type")
+        if tipo in tipos and not tipos[tipo](valor):
+            return f"«{clave}» debe ser de tipo {tipo}."
+        opciones = especificacion.get("enum")
+        if opciones is not None and valor not in opciones:
+            return f"«{clave}» no contiene un valor permitido."
+    return None
+
+
 def ejecutar(nombre, args):
     h = HERRAMIENTAS.get(nombre)
     if not h:
@@ -142,15 +181,43 @@ def ejecutar(nombre, args):
     if detencion_solicitada():
         return "Acción cancelada antes de empezar por solicitud del usuario."
     args = args or {}
-    if h["confirmar"] and permiso_control_pc() is not True:
+    if (h["confirmar"] or h.get("confirmar_siempre")) and permiso_control_pc() is not True:
         return (
             "No puedo ejecutar esa acción hasta que autorices el control del "
             "ordenador en el inicio o en Configuración."
         )
+    error_argumentos = _validar_argumentos_herramienta(h, args)
+    if error_argumentos:
+        try:
+            registrar_accion(nombre, "error")
+        except OSError as error:
+            return f"Argumentos inválidos para {nombre}: {error_argumentos} No pude registrar el error: {error}."
+        return f"Argumentos inválidos para {nombre}: {error_argumentos}"
     try:
         registrar_accion(nombre, "iniciada")
     except OSError as error:
         return f"No ejecuté {nombre}: no pude guardar el registro de acciones ({error})."
+    if h.get("confirmar_siempre"):
+        try:
+            texto = h.get("texto_confirmacion")
+            texto = texto(**args) if callable(texto) else texto
+            texto = texto or f"¿Confirmás ejecutar {nombre}?"
+            confirmado = CONFIRMAR(texto)
+        except Exception as error:
+            try:
+                registrar_accion(nombre, "error")
+            except OSError as error_registro:
+                return (
+                    f"No pude solicitar confirmación para {nombre}: {error}. "
+                    f"Además, no pude completar el registro ({error_registro})."
+                )
+            return f"No pude solicitar confirmación para {nombre}: {error}"
+        if not confirmado:
+            try:
+                registrar_accion(nombre, "cancelada")
+            except OSError as error:
+                return f"Acción cancelada; no pude completar el registro ({error})."
+            return "Acción cancelada: no se recibió confirmación."
     try:
         _verificar_detencion()
         _verificar_detencion()
@@ -247,6 +314,44 @@ def registrar_accion(nombre, estado):
     }
     with _REGISTRO_LOCK, ruta.open("a", encoding="utf-8") as archivo:
         archivo.write(json.dumps(entrada, ensure_ascii=False) + "\n")
+
+
+def resumen_motor(limite=8):
+    """Devuelve herramientas registradas y actividad reciente sin argumentos sensibles."""
+    limite = max(1, min(int(limite), 30))
+    ruta = config.CARPETA_DATOS / "registro_acciones.jsonl"
+    recientes = []
+    error_registro = ""
+    if ruta.is_symlink():
+        error_registro = "El archivo de registro no puede ser un enlace simbólico."
+    elif ruta.exists():
+        try:
+            with ruta.open("r", encoding="utf-8") as archivo:
+                lineas = deque(archivo, maxlen=100)
+            for numero, linea in enumerate(reversed(lineas), start=1):
+                try:
+                    entrada = json.loads(linea)
+                except json.JSONDecodeError as error:
+                    error_registro = f"El registro tiene una línea inválida: {error}"
+                    break
+                recientes.append({
+                    "fecha": entrada.get("fecha", ""),
+                    "herramienta": entrada.get("herramienta", ""),
+                    "estado": entrada.get("estado", ""),
+                })
+                if len(recientes) >= limite:
+                    break
+        except OSError as error:
+            error_registro = f"No pude leer el registro de acciones: {error}"
+    return {
+        "estado": "disponible" if HERRAMIENTAS else "sin_herramientas",
+        "herramientas": sorted(HERRAMIENTAS),
+        "acciones_recientes": recientes,
+        "errores_recientes": [
+            entrada for entrada in recientes if entrada["estado"] == "error"
+        ],
+        "error_registro": error_registro,
+    }
 
 
 def _cargar_api_windows():
@@ -652,6 +757,17 @@ def resolver_aplicacion(nombre):
         buscado, list(instaladas), n=1, cutoff=0.58
     )
     return instaladas[coincidencia[0]][0] if coincidencia else None
+
+
+@herramienta(
+    "Lista los nombres de aplicaciones detectadas en el menú Inicio y en el registro de Windows."
+)
+def listar_aplicaciones_instaladas():
+    nombres = {nombre for nombre, _ in _aplicaciones_instaladas().values()}
+    nombres.update(config.APPS)
+    if not nombres:
+        return "No encontré aplicaciones instaladas en las fuentes disponibles."
+    return "\n".join(sorted(nombres, key=str.casefold))
 
 
 @herramienta(
@@ -1414,10 +1530,28 @@ def listar_archivos(carpeta):
 
 
 @herramienta(
+    "Abre una carpeta existente dentro de las rutas permitidas para el usuario.",
+    {"ruta": {"type": "string", "description": "Ruta de la carpeta"}},
+    ["ruta"],
+    confirmar=True,
+    texto_confirmacion=lambda ruta: f"Voy a abrir la carpeta «{ruta}». ¿Confirmás?",
+)
+def abrir_carpeta(ruta):
+    carpeta = _ruta_usuario(ruta)
+    if not carpeta.is_dir():
+        raise ValueError(f"No existe una carpeta en «{carpeta}».")
+    if os.name != "nt":
+        raise OSError("Abrir carpetas está disponible solo en Windows.")
+    os.startfile(str(carpeta))
+    return f"Abrí la carpeta «{carpeta.name}»."
+
+
+@herramienta(
     "Lee el contenido de un archivo de texto del usuario (máx. 4000 caracteres) después de confirmar que se comparte con el modelo de IA configurado.",
     {"ruta": {"type": "string", "description": "Ruta del archivo"}},
     ["ruta"],
     confirmar=True,
+    confirmar_siempre=True,
     texto_confirmacion=lambda ruta: (
         f"Jarvis leerá «{ruta}» y enviará su contenido al proveedor o proveedores de IA configurados. "
         "¿Autorizás?"
@@ -1437,6 +1571,7 @@ def leer_archivo(ruta):
     },
     ["consulta"],
     confirmar=True,
+    confirmar_siempre=True,
     texto_confirmacion=lambda consulta, carpeta="": (
         f"Voy a buscar el nombre «{consulta}» en "
         f"«{carpeta or Path.home()}». ¿Confirmás?"
@@ -1489,6 +1624,7 @@ def buscar_archivos(consulta, carpeta=""):
     {"ruta": {"type": "string", "description": "Ruta de la carpeta nueva"}},
     ["ruta"],
     confirmar=True,
+    confirmar_siempre=True,
     texto_confirmacion=lambda ruta: f"Voy a crear la carpeta «{ruta}». ¿Confirmás?",
 )
 def crear_carpeta(ruta):
@@ -1508,6 +1644,7 @@ def crear_carpeta(ruta):
     },
     ["ruta", "contenido"],
     confirmar=True,
+    confirmar_siempre=True,
     texto_confirmacion=lambda ruta, **_: (
         f"Voy a crear el archivo «{ruta}» dentro de las carpetas permitidas. ¿Confirmás?"
     ),
@@ -1533,6 +1670,7 @@ def crear_archivo(ruta, contenido):
     },
     ["ruta", "contenido"],
     confirmar=True,
+    confirmar_siempre=True,
     texto_confirmacion=lambda ruta, **_: _confirmar_cambio(
         "reemplazar el contenido de", ruta
     ),
@@ -1572,6 +1710,7 @@ def editar_archivo(ruta, contenido):
     },
     ["ruta", "nombre_nuevo"],
     confirmar=True,
+    confirmar_siempre=True,
     texto_confirmacion=lambda ruta, nombre_nuevo: _confirmar_cambio(
         "renombrar", ruta, nombre_nuevo
     ),
@@ -1604,6 +1743,7 @@ def renombrar_elemento(ruta, nombre_nuevo):
     },
     ["ruta", "carpeta_destino"],
     confirmar=True,
+    confirmar_siempre=True,
     texto_confirmacion=lambda ruta, carpeta_destino: _confirmar_cambio(
         "mover", ruta, carpeta_destino
     ),
@@ -1630,6 +1770,7 @@ def mover_elemento(ruta, carpeta_destino):
     {"ruta": {"type": "string", "description": "Ruta exacta del archivo o carpeta"}},
     ["ruta"],
     confirmar=True,
+    confirmar_siempre=True,
     texto_confirmacion=lambda ruta: _confirmar_eliminacion(ruta),
 )
 def eliminar_elemento(ruta):
@@ -1917,6 +2058,7 @@ def _confirmacion_envio_correo(destinatarios, asunto, cuerpo):
     },
     ["destinatarios", "asunto", "cuerpo"],
     confirmar=True,
+    confirmar_siempre=True,
     texto_confirmacion=lambda destinatarios, asunto, **_: (
         f"Voy a preparar en tu aplicación de correo un borrador para {destinatarios}, "
         f"con el asunto «{asunto}». ¿Confirmás?"
@@ -1968,6 +2110,7 @@ def redactar_correo(destinatarios, asunto, cuerpo):
     },
     ["destinatarios", "asunto", "cuerpo"],
     confirmar=True,
+    confirmar_siempre=True,
     texto_confirmacion=_confirmacion_envio_correo,
 )
 def enviar_correo(destinatarios, asunto, cuerpo):
@@ -2033,6 +2176,7 @@ def crear_alerta(hora, mensaje):
     {"dato": {"type": "string", "description": "El dato a recordar"}},
     ["dato"],
     confirmar=True,
+    confirmar_siempre=True,
     texto_confirmacion="Voy a guardar este dato en la memoria local de Jarvis. ¿Confirmás?",
 )
 def guardar_en_memoria(dato):
@@ -2060,6 +2204,7 @@ def bloquear_pantalla():
     },
     ["comando"],
     confirmar=True,
+    confirmar_siempre=True,
     texto_confirmacion=_confirmacion_comando,
 )
 def ejecutar_comando(comando):
