@@ -36,8 +36,56 @@ def normalizar(texto):
     return re.sub(r"[^\w\s]", " ", texto)
 
 
-def _calcular_umbral_voz(nivel_ruido):
-    return max(0.00008, nivel_ruido * 1.1)
+def separar_fragmentos(texto, limite=160, final=False):
+    """Separa texto ya generado en unidades breves aptas para hablar progresivamente."""
+    fragmentos = []
+    restante = texto
+    while restante:
+        corte = next(
+            (
+                indice + 1
+                for indice, caracter in enumerate(restante)
+                if caracter in ".!?…"
+                and (indice + 1 == len(restante) or restante[indice + 1].isspace())
+            ),
+            None,
+        )
+        if corte is None and len(restante) > limite:
+            corte = restante.rfind(" ", 0, limite + 1)
+            if corte <= 0:
+                corte = limite
+        if corte is None:
+            break
+        fragmento = restante[:corte].strip()
+        if fragmento:
+            fragmentos.append(fragmento)
+        restante = restante[corte:].lstrip()
+    if final and restante.strip():
+        fragmentos.append(restante.strip())
+        restante = ""
+    return fragmentos, restante
+
+
+def limpiar_texto_voz(texto):
+    """Quita formato y omite bloques de código al preparar texto para TTS."""
+    texto = re.sub(r"```.*?```", " código omitido ", texto, flags=re.DOTALL)
+    texto = re.sub(r"`([^`]*)`", r"\1", texto)
+    texto = re.sub(r"!\[([^\]]*)\]\([^)]+\)", r"\1", texto)
+    texto = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", texto)
+    texto = re.sub(r"^\s{0,3}#{1,6}\s*", "", texto, flags=re.MULTILINE)
+    texto = re.sub(r"^\s*[-*+]\s+", "", texto, flags=re.MULTILINE)
+    texto = re.sub(r"[*_~|]", " ", texto)
+    return re.sub(r"\s+", " ", texto).strip()
+
+
+def _calcular_umbral_voz(nivel_ruido, sensibilidad=None):
+    sensibilidad = (
+        config.MICROFONO_SENSIBILIDAD
+        if sensibilidad is None
+        else sensibilidad
+    )
+    factor = max(0.35, min(1.5, 1.7 - sensibilidad / 100))
+    return max(0.00008, nivel_ruido * factor)
 
 
 def cambiar_modo_silencio(texto):
@@ -542,6 +590,7 @@ class Oido:
 
         self.np, self.sd = np, sd
         self.pausar_escucha = threading.Event()
+        self.microfono_silenciado = threading.Event()
         self.bloqueo_audio = threading.Lock()
         self.dispositivo = self._elegir_microfono(dispositivo)
         info = self.sd.query_devices(self.dispositivo)
@@ -730,7 +779,9 @@ class Oido:
             )
         ruido = float(self.np.sqrt(self.np.mean(audio**2)))
         self.ruido_ambiente = ruido
-        self.umbral = _calcular_umbral_voz(ruido)
+        self.umbral = _calcular_umbral_voz(
+            ruido, config.MICROFONO_SENSIBILIDAD
+        )
         print(
             f"Nivel ambiente: {ruido:.5f}; umbral de voz: {self.umbral:.5f} "
             "(sensibilidad aumentada)"
@@ -767,7 +818,7 @@ class Oido:
         np = self.np
         bloque = max(1, int(self.frecuencia * 0.1))
         pre, buf = [], []
-        hablando, silencio = False, 0
+        hablando, silencio, actividad = False, 0, 0
         inicio = time.time()
         with self.sd.InputStream(
             samplerate=self.frecuencia,
@@ -785,18 +836,29 @@ class Oido:
                     self.ruido_ambiente = (
                         self.ruido_ambiente * 0.99 + nivel * 0.01
                     )
-                    self.umbral = _calcular_umbral_voz(self.ruido_ambiente)
+                    self.umbral = _calcular_umbral_voz(
+                        self.ruido_ambiente, config.MICROFONO_SENSIBILIDAD
+                    )
                 if nivel >= self.umbral:
                     if not hablando:
+                        actividad += 1
+                        pre = (pre + [datos])[-3:]
+                        if actividad < 2:
+                            if espera_max and time.time() - inicio > espera_max:
+                                return None
+                            continue
                         buf = list(pre)
-                    hablando, silencio = True, 0
-                    buf.append(datos)
+                        hablando = True
+                    else:
+                        buf.append(datos)
+                    silencio = 0
                 elif hablando:
                     buf.append(datos)
                     silencio += 1
-                    if silencio >= 6:  # ~0,6 s de silencio = fin de frase
+                    if silencio >= 8:  # 0,8 s de silencio = fin de frase
                         break
                 else: 
+                    actividad = 0
                     pre = (pre + [datos])[-3:]
                     if espera_max and time.time() - inicio > espera_max:
                         return None
@@ -846,6 +908,7 @@ class Oido:
         silencio = 0
         hablando = False
         bloques_frase = 0
+        microfono_silenciado = False
         sd.play(
             audio,
             samplerate=samplerate,
@@ -864,6 +927,9 @@ class Oido:
                     salida = sd.get_stream()
                     reproduciendo = salida is not None and salida.active
                     if not reproduciendo and not hablando:
+                        break
+                    if self.microfono_silenciado.is_set():
+                        microfono_silenciado = True
                         break
                     datos, _ = stream.read(bloque)
                     nivel = float(np.sqrt(np.mean(datos**2)))
@@ -887,6 +953,9 @@ class Oido:
             sd.stop()
             raise
 
+        if microfono_silenciado:
+            sd.wait()
+            return None
         if not hablando:
             return None
         audio_usuario = np.concatenate(frase).flatten()

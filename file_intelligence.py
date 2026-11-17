@@ -30,6 +30,14 @@ IMAGE_FORMATS = {
     ".png": "PNG",
     ".webp": "WEBP",
 }
+SUPPORTED_EXTENSIONS = (
+    TEXT_EXTENSIONS
+    | set(IMAGE_FORMATS)
+    | {
+        ".docx", ".odp", ".ods", ".odt", ".pdf", ".pptx", ".rtf", ".svg",
+        ".xlsx", ".zip",
+    }
+)
 UNSUPPORTED_LEGACY = {
     ".doc": "DOC binario antiguo: guardalo como DOCX o PDF.",
     ".xls": "XLS binario antiguo: guardalo como XLSX o CSV.",
@@ -76,6 +84,41 @@ def _chunks(texto, tamano=CHUNK_CHARS, solapamiento=CHUNK_OVERLAP):
             break
         inicio = max(inicio + 1, fin - solapamiento)
     return tuple(resultado)
+
+
+def seleccionar_fragmentos(resultado, consulta, limite_caracteres=4000):
+    """Selecciona fragmentos acotados, priorizando términos de la consulta."""
+    if limite_caracteres <= 0 or not resultado.fragmentos:
+        return ()
+    terminos = set(re.findall(r"[\w-]{3,}", consulta.casefold()))
+    puntuados = []
+    for indice, fragmento in enumerate(resultado.fragmentos):
+        minusculas = fragmento.casefold()
+        puntuacion = sum(minusculas.count(termino) for termino in terminos)
+        puntuados.append((puntuacion, indice, fragmento))
+    hay_coincidencias = bool(
+        terminos and any(puntuacion for puntuacion, _, _ in puntuados)
+    )
+    if hay_coincidencias:
+        puntuados.sort(key=lambda item: (-item[0], item[1]))
+    elif len(puntuados) > 1:
+        puntuados = [puntuados[0], puntuados[-1]] + puntuados[1:-1]
+
+    elegidos = []
+    usados = 0
+    for puntuacion, indice, fragmento in puntuados:
+        if hay_coincidencias and puntuacion == 0:
+            break
+        restante = limite_caracteres - usados
+        if restante <= 0:
+            break
+        if len(fragmento) > restante:
+            if not elegidos:
+                elegidos.append((indice, fragmento[:restante]))
+            break
+        elegidos.append((indice, fragmento))
+        usados += len(fragmento)
+    return tuple(texto for _, texto in sorted(elegidos))
 
 
 def _texto_xml(datos, nombre_miembro):

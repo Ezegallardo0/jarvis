@@ -19,6 +19,9 @@ MODELO = "qwen2.5:7b"
 PROVEEDOR_IA = os.environ.get("JARVIS_AI_PROVIDER", "gemini").lower()
 MODELO_GEMINI = "gemini-1.5-flash"
 MODELO_OPENAI = "gpt-4o-mini"
+LIVE_VOICE_PROVIDER = os.environ.get("JARVIS_LIVE_PROVIDER", "gemini").lower()
+LIVE_GEMINI_VOICE = os.environ.get("JARVIS_LIVE_GEMINI_VOICE", "Kore")
+LIVE_OPENAI_VOICE = os.environ.get("JARVIS_LIVE_OPENAI_VOICE", "marin")
 MODELO_CURSOR = "grok-3-mini"
 MODELO_GROQ_API = "llama-3.1-8b-instant"
 MODELO_CLOUDFLARE = "@cf/zai-org/glm-4.7-flash"
@@ -68,6 +71,7 @@ WHISPER_MODELO = "small"   # tiny / base / small / medium (más grande = más pr
 IDIOMA = "es"
 VENTANA_CONVERSACION_SEG = 6   # tras responder, escucha seguimiento sin decir "Jarvis"
 MICROFONO = ""             # vacío = predeterminado; también acepta parte del nombre o índice
+MICROFONO_SENSIBILIDAD = 60
 AUDIO_SALIDA = None        # None = salida predeterminada de Windows; también acepta índice
 UBICACION = ""             # Ciudad/región aproximada, configurada por el usuario
 GITHUB_TOKEN = ""          # Se carga desde el Administrador de credenciales de Windows

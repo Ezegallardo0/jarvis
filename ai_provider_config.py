@@ -11,6 +11,7 @@ class Proveedor:
     atributo_modelo: str
     base_url: str | None = None
     limite_tokens: str = "max_completion_tokens"
+    streaming_texto: bool = True
 
 
 PROVEEDORES = {
@@ -38,6 +39,7 @@ PROVEEDORES = {
         "CLOUDFLARE_API_KEY",
         "MODELO_CLOUDFLARE",
         limite_tokens="max_tokens",
+        streaming_texto=False,
     ),
     "cursor": Proveedor(
         "Cursor",
@@ -54,3 +56,9 @@ def obtener_modelo(proveedor):
     if especificacion is None:
         raise ValueError(f"Proveedor de IA no válido: {proveedor}")
     return getattr(config, especificacion.atributo_modelo)
+
+
+def soporta_streaming_texto(proveedor):
+    """Indica si el adaptador implementa streaming de texto para este proveedor."""
+    especificacion = PROVEEDORES.get(proveedor)
+    return bool(especificacion and especificacion.streaming_texto)

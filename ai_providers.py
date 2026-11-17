@@ -1,7 +1,12 @@
 """Punto de entrada para configurar y usar proveedores de chat."""
 import config
 from ai_provider_cloudflare import CloudflareClient, _CloudflareCompletions
-from ai_provider_config import PROVEEDORES, Proveedor, obtener_modelo
+from ai_provider_config import (
+    PROVEEDORES,
+    Proveedor,
+    obtener_modelo,
+    soporta_streaming_texto,
+)
 from ai_provider_ensemble import ensemble_activo, proveedores_configurados
 from ai_provider_errors import formatear_error_publico
 

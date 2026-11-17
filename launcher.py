@@ -62,6 +62,10 @@ class _EntradasHud:
     def put(self, texto):
         self.app.desde_hud(texto)
 
+    def put_mensaje(self, texto, solicitud_id):
+        if not self.app.desde_hud(texto, solicitud_id=solicitud_id):
+            raise RuntimeError("El asistente no aceptó el mensaje.")
+
 
 class Lanzador:
     def __init__(self, raiz):
@@ -74,6 +78,9 @@ class Lanzador:
         self._pedido_en_curso = False
         self._respuesta_lista = threading.Event()
         self._respuesta_lista.set()
+        self.live_activo = False
+        self.live_silenciado = False
+        self._live_cancelar_generacion = threading.Event()
         self.bus = ui.Bus()
         self.hud_servidor = None
         self._hud_visto = False
@@ -92,6 +99,14 @@ class Lanzador:
         self._modo_lock = threading.Lock()
         self._voz_iniciando = False
         self._escucha_hilo = None
+        self.cerebro = None
+        self._cerebro_ready = threading.Event()
+        self._cerebro_lock = threading.RLock()
+        self._live_manager = None
+        self._live_thread = None
+        self._live_previous_mode = "texto"
+        self._live_state = "idle"
+        self._live_providers = []
         (
             config.MICROFONO,
             config.AUDIO_SALIDA,
@@ -119,6 +134,7 @@ class Lanzador:
             config.MODELO_CLOUDFLARE,
             config.CLOUDFLARE_ACCOUNT_ID,
             config.CARTESIA_VOICE_ID,
+            config.MICROFONO_SENSIBILIDAD,
         ) = self._leer_seleccion()
         try:
             config.GITHUB_TOKEN = self._clave_guardada_o_entorno("github")
@@ -1380,6 +1396,7 @@ class Lanzador:
                 config.MODELO_CLOUDFLARE,
                 config.CLOUDFLARE_ACCOUNT_ID,
                 config.CARTESIA_VOICE_ID,
+                config.MICROFONO_SENSIBILIDAD,
             )
         except (OSError, ValueError) as error:
             messagebox.showerror("Configuración de audio", f"No pude leer la selección guardada:\n{error}")
@@ -1477,6 +1494,9 @@ class Lanzador:
             _modelo("modelo_cloudflare", config.MODELO_CLOUDFLARE),
             str(datos.get("cloudflare_account_id", config.CLOUDFLARE_ACCOUNT_ID))[:100],
             str(datos.get("cartesia_voice_id", config.CARTESIA_VOICE_ID))[:200],
+            Lanzador._leer_preferencia_entera(
+                datos, "microfono_sensibilidad", config.MICROFONO_SENSIBILIDAD, 0, 100
+            ),
         )
 
     def _guardar(self):
@@ -1507,6 +1527,7 @@ class Lanzador:
                     "tts_version": 2,
                     "elevenlabs_voice_id": voice_id,
                     "cartesia_voice_id": cartesia_voice_id,
+                    "microfono_sensibilidad": config.MICROFONO_SENSIBILIDAD,
                     "ubicacion": ubicacion,
                     "spotify_client_id": spotify_client_id,
                     "vision_modelo": config.MODELO_VISION,
@@ -1822,32 +1843,49 @@ class Lanzador:
         canvas.create_oval(48, 48, 56, 56, fill="#E8FCFF", outline="")
         self.raiz.after(70, self._animar_nucleo)
 
-    def _agregar_mensaje(self, quien, texto):
+    def _agregar_mensaje(self, quien, texto, solicitud_id=None, error=False):
         self.bus.publish(
             "msg",
             rol="jarvis" if quien == config.NOMBRE else "usuario",
             texto=texto,
             voz="voz" in quien.lower(),
+            solicitud_id=solicitud_id,
+            error=error,
         )
 
-    def _estado(self, texto):
+    def _estado(self, texto, solicitud_id=None):
         bajo = texto.lower()
-        if "procesando" in bajo:
+        if "error" in bajo or "no pude" in bajo or "no respondió" in bajo:
+            valor = "error"
+        elif "procesando" in bajo:
             valor = "pensando"
+        elif "respondiendo" in bajo or "recibiendo respuesta" in bajo:
+            valor = "respondiendo"
         elif "escuch" in bajo:
             valor = "escuchando"
         else:
             valor = "espera"
-        self.bus.publish("estado", valor=valor, texto=texto)
+        self.bus.publish(
+            "estado", valor=valor, texto=texto, solicitud_id=solicitud_id
+        )
 
-    def _encolar_pedido(self, texto, origen):
+    def _encolar_pedido(
+        self, texto, origen, contexto_archivos=None, solicitud_id=None
+    ):
         import tools
 
         with self._pedidos_lock:
             if not self._pedido_en_curso:
                 tools.reiniciar_detencion()
             self._respuesta_lista.clear()
-            self.pedidos.put((texto, origen))
+            if solicitud_id is not None:
+                self.pedidos.put(
+                    (texto, origen, contexto_archivos, solicitud_id)
+                )
+            elif contexto_archivos is not None:
+                self.pedidos.put((texto, origen, contexto_archivos))
+            else:
+                self.pedidos.put((texto, origen))
 
     def enviar(self):
         self._estado_visible("Escribí tu mensaje en el chat del HUD.")
@@ -1872,6 +1910,10 @@ class Lanzador:
     def _iniciar_asistente(self, proveedor, api_key):
         from brain import Cerebro, crear_cerebro
 
+        if not hasattr(self, "_cerebro_ready"):
+            self._cerebro_ready = threading.Event()
+        if not hasattr(self, "_cerebro_lock"):
+            self._cerebro_lock = threading.RLock()
         import tools
         tools.NOTIFICAR = self._notificar
         tools.CONFIRMAR = self._confirmar
@@ -1926,6 +1968,8 @@ class Lanzador:
             or getattr(cerebro, "proveedor_principal", None)
             or proveedor
         )
+        self.cerebro = cerebro
+        self._cerebro_ready.set()
 
         if self.modo == "texto":
             self.oido = None
@@ -1979,13 +2023,22 @@ class Lanzador:
                 if error_voz:
                     self._estado(error_voz)
                 self._iniciar_escucha(oido)
+                if getattr(self, "live_activo", False):
+                    self._publicar_live("listening")
 
         while not self.cerrando.is_set() and self.asistente_activo:
             with self._pedidos_lock:
                 try:
-                    pedido, origen = self.pedidos.get_nowait()
+                    solicitud = self.pedidos.get_nowait()
+                    pedido, origen = solicitud[:2]
+                    contexto_archivos = (
+                        solicitud[2] if len(solicitud) > 2 else None
+                    )
+                    solicitud_id = solicitud[3] if len(solicitud) > 3 else None
                 except queue.Empty:
                     pedido = origen = None
+                    contexto_archivos = None
+                    solicitud_id = None
                 else:
                     self._pedido_en_curso = True
                     tools.reiniciar_detencion()
@@ -1997,6 +2050,7 @@ class Lanzador:
                 self._agregar_mensaje(
                     "Tú (voz)" if origen == "voz" else "Tú (texto)",
                     pedido,
+                    solicitud_id=solicitud_id,
                 )
             respuesta_modo = voice.cambiar_modo_silencio(pedido)
             if respuesta_modo:
@@ -2014,34 +2068,128 @@ class Lanzador:
                         self._respuesta_lista.set()
                 self.bus.publish("detencion", activa=False, pendientes=0)
                 continue
-            self._estado("Procesando...")
+            self._estado("Procesando tu mensaje...", solicitud_id=solicitud_id)
             inicio_pedido = time.perf_counter()
+            error_respuesta = False
+            respuesta_local = False
+            voz_stream_activa = False
             try:
                 try:
-                    import core_engine
-
-                    resultado_local = core_engine.procesar_comando_local(pedido)
-                    if resultado_local is not None:
-                        respuesta = resultado_local.respuesta
-                    else:
+                    if contexto_archivos is not None:
+                        responder_archivos = getattr(
+                            cerebro, "responder_sobre_archivos", None
+                        )
+                        if not callable(responder_archivos):
+                            raise RuntimeError(
+                                "El motor de conversación no admite análisis de adjuntos."
+                            )
                         proveedor_actual = config.PROVEEDOR_IA
-                        proveedor_alternativo = config.PROVEEDOR_IA_ALTERNATIVO or None
+                        proveedor_alternativo = (
+                            config.PROVEEDOR_IA_ALTERNATIVO or None
+                        )
                         clave_actual = self._clave_para_core(proveedor_actual)
                         clave_alternativa = (
                             self._clave_para_core(proveedor_alternativo)
                             if proveedor_alternativo
                             else None
                         )
-                        cerebro.configurar(
+                        self._configurar_cerebro(
+                            cerebro,
                             proveedor_actual,
                             clave_actual,
                             proveedor_alternativo,
                             clave_alternativa,
                         )
-                        respuesta = cerebro.responder(pedido)
+                        proveedor_solicitud = (
+                            getattr(cerebro, "proveedor", None)
+                            or getattr(cerebro, "proveedor_principal", None)
+                            or proveedor_actual
+                        )
+                        modelo_solicitud = getattr(cerebro, "modelo", None) or (
+                            config.MODELO
+                            if proveedor_solicitud == "ollama"
+                            else ai_providers.obtener_modelo(proveedor_solicitud)
+                        )
+                        print(
+                            f"[chat] Procesando {solicitud_id or 'adjunto'} con "
+                            f"proveedor={proveedor_solicitud}, modelo={modelo_solicitud}."
+                        )
+                        respuesta = responder_archivos(
+                            pedido, contexto_archivos
+                        )
+                    else:
+                        import core_engine
+
+                        resultado_local = core_engine.procesar_comando_local(pedido)
+                        if resultado_local is not None:
+                            respuesta_local = True
+                            respuesta = resultado_local.respuesta
+                            print(
+                                f"[chat] Solicitud {solicitud_id or origen} "
+                                f"resuelta localmente ({resultado_local.intencion})."
+                            )
+                        else:
+                            proveedor_actual = config.PROVEEDOR_IA
+                            proveedor_alternativo = config.PROVEEDOR_IA_ALTERNATIVO or None
+                            clave_actual = self._clave_para_core(proveedor_actual)
+                            clave_alternativa = (
+                                self._clave_para_core(proveedor_alternativo)
+                                if proveedor_alternativo
+                                else None
+                            )
+                            self._configurar_cerebro(
+                                cerebro,
+                                proveedor_actual,
+                                clave_actual,
+                                proveedor_alternativo,
+                                clave_alternativa,
+                            )
+                            proveedor_solicitud = (
+                                getattr(cerebro, "proveedor", None)
+                                or getattr(cerebro, "proveedor_principal", None)
+                                or proveedor_actual
+                            )
+                            modelo_solicitud = getattr(cerebro, "modelo", None) or (
+                                config.MODELO
+                                if proveedor_solicitud == "ollama"
+                                else ai_providers.obtener_modelo(proveedor_solicitud)
+                            )
+                            print(
+                                f"[chat] Procesando {solicitud_id or origen} con "
+                                f"proveedor={proveedor_solicitud}, modelo={modelo_solicitud}."
+                            )
+                            if (
+                                origen == "voz"
+                                and getattr(self, "live_activo", False)
+                                and callable(getattr(cerebro, "responder_en_vivo", None))
+                            ):
+                                respuesta = self._responder_en_vivo(cerebro, pedido)
+                                voz_stream_activa = True
+                            else:
+                                respuesta = self._responder_cerebro(cerebro, pedido)
                 except Exception as error:
-                    respuesta = f"Tuve un problema al procesar el pedido: {error}"
-                    print(f"[core] {respuesta}")
+                    error_respuesta = True
+                    proveedor_error = (
+                        getattr(cerebro, "proveedor", None)
+                        or getattr(cerebro, "proveedor_principal", None)
+                        or config.PROVEEDOR_IA
+                    )
+                    clave_error = getattr(cerebro, "api_key", None)
+                    detalle_error = ai_providers.error_publico(
+                        proveedor_error,
+                        error,
+                        clave_error if isinstance(clave_error, str) else None,
+                    )
+                    respuesta = f"Tuve un problema al procesar el pedido: {detalle_error}"
+                    print(
+                        f"[chat] Error en solicitud {solicitud_id or origen}: "
+                        f"{detalle_error}"
+                    )
+                if (
+                    not respuesta_local
+                    and getattr(cerebro, "ia_estado", None) == "error"
+                ):
+                    error_respuesta = True
                 self.ia_proveedor_activo = (
                     getattr(cerebro, "proveedor", None)
                     or getattr(cerebro, "proveedor_principal", None)
@@ -2050,18 +2198,35 @@ class Lanzador:
                 self.ultima_latencia_ms = round(
                     (time.perf_counter() - inicio_pedido) * 1000
                 )
-                self._agregar_mensaje(config.NOMBRE, respuesta)
+                print(
+                    f"[chat] Respuesta recibida para {solicitud_id or origen} "
+                    f"({len(respuesta)} caracteres, {self.ultima_latencia_ms} ms)."
+                )
+                self._estado("Recibiendo respuesta...", solicitud_id=solicitud_id)
+                self._agregar_mensaje(
+                    config.NOMBRE,
+                    respuesta,
+                    solicitud_id=solicitud_id,
+                    error=error_respuesta,
+                )
                 error_voz = None
-                if self.modo == "voz" and origen == "voz" and config.USAR_VOZ:
+                if (
+                    self.modo == "voz"
+                    and origen == "voz"
+                    and config.USAR_VOZ
+                    and not voz_stream_activa
+                ):
                     error_voz = self._hablar(respuesta)
-                if respuesta.startswith("Tuve un problema"):
+                if error_respuesta:
                     self.ia_estado = "error"
                     self.ia_error = "El proveedor no respondió al último pedido."
                     self._publicar_info()
-                    self._estado(
-                        f"El proveedor {config.PROVEEDOR_IA} no respondió; "
-                        "Jarvis sigue escuchando y volverá a intentarlo en el próximo pedido."
+                    mensaje_error = (
+                        f"No pude completar el pedido con {config.PROVEEDOR_IA}. "
+                        "Revisá la respuesta de JARVIS y la configuración del proveedor."
                     )
+                    print(f"[chat] La solicitud {solicitud_id or origen} terminó con error.")
+                    self._estado(mensaje_error, solicitud_id=solicitud_id)
                 else:
                     self.ia_estado = getattr(cerebro, "ia_estado", self.ia_estado)
                     if self.ia_estado == "conectado":
@@ -2076,6 +2241,7 @@ class Lanzador:
                         )
                     )
             finally:
+                voz_stream_activa = False
                 with self._pedidos_lock:
                     self._pedido_en_curso = False
                     if self.pedidos.empty():
@@ -2089,10 +2255,99 @@ class Lanzador:
             if error:
                 self._estado(error)
 
-    def _hablar(self, texto):
+    def _responder_en_vivo(self, cerebro, pedido):
+        cola_voz = queue.Queue()
+        fin_cola = object()
+        interrumpido = threading.Event()
+        cancelar_salida = threading.Event()
+        error_voz = []
+        texto_pendiente = ""
+        respuesta_completa = []
+
+        def reproducir():
+            while True:
+                fragmento = cola_voz.get()
+                if fragmento is fin_cola:
+                    return
+                if (
+                    interrumpido.is_set()
+                    or cancelar_salida.is_set()
+                    or self._live_cancelar_generacion.is_set()
+                ):
+                    continue
+                limpio = voice.limpiar_texto_voz(fragmento)
+                if limpio:
+                    resultado = self._hablar(
+                        limpio,
+                        al_interrumpir=interrumpido.set,
+                    )
+                    if resultado:
+                        error_voz.append(resultado)
+                        cancelar_salida.set()
+                        return
+
+        hilo_voz = threading.Thread(target=reproducir, daemon=True)
+        hilo_voz.start()
+
+        def recibir_fragmento(fragmento):
+            nonlocal texto_pendiente
+            if (
+                self._live_cancelar_generacion.is_set()
+                or cancelar_salida.is_set()
+                or interrumpido.is_set()
+                or not getattr(self, "live_activo", False)
+            ):
+                return False
+            respuesta_completa.append(fragmento)
+            texto_pendiente += fragmento
+            self.bus.publish(
+                "live_text",
+                speaker="jarvis",
+                text=fragmento,
+                append=True,
+            )
+            listos, texto_pendiente = voice.separar_fragmentos(texto_pendiente)
+            for listo in listos:
+                cola_voz.put(listo)
+            return True
+
+        try:
+            respuesta = cerebro.responder_en_vivo(
+                pedido,
+                recibir_fragmento,
+            )
+            if (
+                getattr(self, "live_activo", False)
+                and not self._live_cancelar_generacion.is_set()
+                and not respuesta_completa
+            ):
+                listos, _ = voice.separar_fragmentos(respuesta, final=True)
+                for listo in listos:
+                    cola_voz.put(listo)
+            elif getattr(self, "live_activo", False) and not self._live_cancelar_generacion.is_set():
+                listos, texto_pendiente = voice.separar_fragmentos(
+                    texto_pendiente, final=True
+                )
+                for listo in listos:
+                    cola_voz.put(listo)
+        finally:
+            cola_voz.put(fin_cola)
+            hilo_voz.join()
+
+        if error_voz:
+            self._estado(error_voz[0])
+        if getattr(self, "live_activo", False):
+            self._publicar_live(
+                "interrupted" if interrumpido.is_set() else "listening"
+            )
+        return respuesta
+
+    def _hablar(self, texto, al_interrumpir=None):
         if config.VOZ_SILENCIADA:
             return None
         oido = getattr(self, "oido", None)
+        if getattr(self, "live_silenciado", False):
+            oido = None
         self.bus.publish("estado", valor="hablando", texto="Respondiendo…")
         if oido:
             oido.pausar_escucha.set()
@@ -2114,6 +2369,8 @@ class Lanzador:
                     cartesia_voice_id=config.CARTESIA_VOICE_ID,
                 )
             if isinstance(resultado, voice.InterrupcionVoz):
+                if al_interrumpir:
+                    al_interrumpir()
                 pedido = resultado.texto.strip()
                 if pedido and not self.cerrando.is_set():
                     self._agregar_mensaje("Tú (voz)", pedido)
@@ -2123,9 +2380,18 @@ class Lanzador:
                 return None
             return resultado
         finally:
-            if oido and self.modo == "voz" and config.USAR_VOZ:
+            if (
+                oido
+                and self.modo == "voz"
+                and config.USAR_VOZ
+                and not getattr(self, "live_silenciado", False)
+            ):
                 oido.pausar_escucha.clear()
             self.bus.publish("estado", valor="escuchando" if oido else "espera", texto="")
+            if getattr(self, "live_activo", False):
+                self._publicar_live(
+                    "muted" if getattr(self, "live_silenciado", False) else "listening"
+                )
 
     def _iniciar_escucha(self, oido):
         if self._escucha_hilo and self._escucha_hilo.is_alive():
@@ -2162,6 +2428,8 @@ class Lanzador:
                     self.oido = oido
                 print("[audio] Micrófono reconectado.")
                 self._publicar_info()
+                if getattr(self, "live_activo", False):
+                    self._publicar_live("listening")
                 self._estado("Micrófono reconectado. Hablá normalmente; Jarvis te escucha.")
                 espera_reconexion = 1
             try:
@@ -2193,6 +2461,8 @@ class Lanzador:
                     continue
                 print(f"[audio] Se interrumpió la escucha: {error}")
                 self._publicar_info()
+                if getattr(self, "live_activo", False):
+                    self._publicar_live("error")
                 self._agregar_mensaje(
                     config.NOMBRE,
                     f"Se interrumpió el micrófono: {error}. Voy a reintentar la conexión "
@@ -2226,11 +2496,343 @@ class Lanzador:
         self._estado(mensaje)
         return True
 
-    def desde_hud(self, texto):
+    def iniciar_live(self):
+        if getattr(self, "live_activo", False):
+            self._publicar_live(self._live_state)
+            return True
+        if not self.asistente_activo:
+            if not self.iniciar("texto"):
+                return False
+        self._live_previous_mode = self.modo or "texto"
+        with self._modo_lock:
+            self.modo = "texto"
+            oido = self.oido
+            if oido is not None:
+                oido.pausar_escucha.set()
+                oido.microfono_silenciado.set()
+                try:
+                    oido.sd.stop()
+                except Exception as error:
+                    print(f"[live] No pude pausar el micrófono anterior: {error}")
+        import tools
+        from live_voice import LIVE_MODELS, LiveVoiceManager
+
+        tools.NOTIFICAR = self._notificar
+        tools.CONFIRMAR = self._confirmar
+        selected_provider = config.LIVE_VOICE_PROVIDER
+        if selected_provider not in LIVE_MODELS:
+            selected_provider = "gemini"
+        try:
+            manager = LiveVoiceManager(
+                credential_resolver=self._clave_para_core,
+                tool_schemas=tools.esquemas,
+                tool_executor=self._ejecutar_herramienta_live,
+                on_event=self._evento_live,
+                preferred_provider=selected_provider,
+            )
+            available = manager.available_providers()
+        except Exception as error:
+            self._agregar_mensaje(
+                config.NOMBRE,
+                f"No pude preparar JARVIS LIVE: {error}",
+                error=True,
+            )
+            self._publicar_live("error")
+            return False
+        configured = [item["id"] for item in available if item["configured"]]
+        if not configured:
+            self._agregar_mensaje(
+                config.NOMBRE,
+                "JARVIS LIVE nativo necesita una clave de Gemini u OpenAI guardada "
+                "en el Administrador de credenciales. El micrófono no se activó.",
+                error=True,
+            )
+            self._publicar_live("error")
+            return False
+        if selected_provider not in configured:
+            selected_provider = configured[0]
+            config.LIVE_VOICE_PROVIDER = selected_provider
+            manager.select_provider(selected_provider)
+        self._live_manager = manager
+        self._live_providers = available
+        self.live_activo = True
+        self.live_silenciado = False
+        self._live_cancelar_generacion.clear()
+        self._live_state = "connecting"
+        self._publicar_live("connecting")
+        self._live_thread = threading.Thread(target=manager.run, daemon=True)
+        self._live_thread.start()
+        self._publicar_info()
+        return True
+
+    def silenciar_live(self):
+        if not self.live_activo:
+            return False
+        self.live_silenciado = not self.live_silenciado
+        if self._live_manager is not None:
+            self._live_manager.set_muted(self.live_silenciado)
+        self._live_state = "muted" if self.live_silenciado else "listening"
+        self._publicar_live(self._live_state)
+        return True
+
+    def finalizar_live(self):
+        if not self.live_activo:
+            self._publicar_live("idle")
+            return True
+        self.live_activo = False
+        self._live_cancelar_generacion.set()
+        self.live_silenciado = False
+        manager = self._live_manager
+        self._live_manager = None
+        if manager is not None:
+            manager.stop()
+        with self._modo_lock:
+            self.modo = self._live_previous_mode
+            oido = self.oido
+            if oido is not None and self.modo == "voz":
+                oido.microfono_silenciado.clear()
+                oido.pausar_escucha.clear()
+        if oido is not None and self.modo == "voz":
+            self._iniciar_escucha(oido)
+        self._live_state = "idle"
+        self._publicar_live("idle")
+        self._publicar_info()
+        self._estado(
+            "Modo voz activo." if self.modo == "voz"
+            else "Modo texto activo. El micrófono está pausado."
+        )
+        return True
+
+    def _publicar_live(self, estado):
+        from live_voice import LIVE_LABELS, LIVE_MODELS, LIVE_VOICES
+
+        proveedor = config.LIVE_VOICE_PROVIDER
+        self.bus.publish(
+            "live",
+            active=self.live_activo,
+            muted=self.live_silenciado,
+            state=estado,
+            provider=LIVE_LABELS.get(proveedor, proveedor),
+            provider_id=proveedor,
+            model=LIVE_MODELS.get(proveedor, ""),
+            mode="Speech-to-Speech nativo",
+            providers=self._live_providers,
+            voice=self._voz_live_actual(proveedor),
+            voices=list(LIVE_VOICES.get(proveedor, ())),
+        )
+
+    @staticmethod
+    def _voz_live_actual(proveedor):
+        return (
+            config.LIVE_GEMINI_VOICE
+            if proveedor == "gemini"
+            else config.LIVE_OPENAI_VOICE
+        )
+
+    def _evento_live(self, evento, **datos):
+        from live_voice import LIVE_VOICES
+
+        if evento == "state":
+            self._live_state = datos.get("state", "error")
+            self.bus.publish(
+                "live",
+                active=self.live_activo,
+                muted=self.live_silenciado,
+                state=self._live_state,
+                provider=datos.get("provider", config.LIVE_VOICE_PROVIDER),
+                provider_id=config.LIVE_VOICE_PROVIDER,
+                model=datos.get("model", ""),
+                mode="Speech-to-Speech nativo",
+                providers=self._live_providers,
+                voice=self._voz_live_actual(config.LIVE_VOICE_PROVIDER),
+                voices=list(LIVE_VOICES.get(config.LIVE_VOICE_PROVIDER, ())),
+                detail=datos.get("detail", ""),
+            )
+            if datos.get("detail"):
+                self._agregar_mensaje(
+                    config.NOMBRE, datos["detail"], error=True
+                )
+        elif evento == "provider_selected":
+            config.LIVE_VOICE_PROVIDER = datos["provider"]
+            self._live_state = "reconnecting"
+            self._publicar_live(self._live_state)
+        elif evento == "connected":
+            self._live_state = "listening"
+            self.bus.publish(
+                "live",
+                active=self.live_activo,
+                muted=self.live_silenciado,
+                state=self._live_state,
+                provider=datos.get("provider", config.LIVE_VOICE_PROVIDER),
+                provider_id=config.LIVE_VOICE_PROVIDER,
+                model=datos.get("model", ""),
+                mode="Speech-to-Speech nativo",
+                providers=self._live_providers,
+                voice=self._voz_live_actual(config.LIVE_VOICE_PROVIDER),
+                voices=list(LIVE_VOICES.get(config.LIVE_VOICE_PROVIDER, ())),
+            )
+        elif evento in ("speech_started", "interrupted"):
+            self._live_state = (
+                "interrupted" if self._live_state == "speaking" or evento == "interrupted"
+                else "listening"
+            )
+            self._publicar_live(self._live_state)
+        elif evento in ("turn_end_detected", "speech_ended", "thinking"):
+            self._live_state = "thinking"
+            self._publicar_live(self._live_state)
+        elif evento == "playback_started":
+            self._live_state = "speaking"
+            self._publicar_live(self._live_state)
+        elif evento in ("turn_complete", "playback_finished"):
+            self._live_state = "listening"
+            self._publicar_live(self._live_state)
+        elif evento == "transcript":
+            self.bus.publish(
+                "live_text",
+                speaker=(
+                    "usuario"
+                    if datos.get("speaker") == "user"
+                    else datos.get("speaker", "usuario")
+                ),
+                text=datos.get("text", ""),
+            )
+        elif evento == "user_final":
+            texto = datos.get("text", "").strip()
+            if texto:
+                self._agregar_mensaje("usuario", texto)
+        elif evento == "assistant_final":
+            texto = datos.get("text", "").strip()
+            if texto:
+                self._agregar_mensaje(config.NOMBRE, texto)
+        elif evento == "tool_error":
+            self._agregar_mensaje(
+                config.NOMBRE,
+                datos.get("detail", "Falló una herramienta de JARVIS LIVE."),
+                error=True,
+            )
+        elif evento == "metrics":
+            self.bus.publish("live_metrics", **datos)
+        elif evento == "audio_status":
+            self.bus.publish(
+                "live_metrics",
+                audio_status=datos.get("detail", ""),
+            )
+        elif evento == "reconnecting":
+            self._live_state = "reconnecting"
+            self._publicar_live(self._live_state)
+        elif evento == "audio_ready":
+            self._live_state = "listening"
+            self._publicar_live(self._live_state)
+        elif evento == "audio_close_error":
+            self._agregar_mensaje(
+                config.NOMBRE,
+                "No pude liberar un recurso de audio: "
+                f"{datos.get('detail', 'error desconocido')}",
+                error=True,
+            )
+        elif evento == "resume_handle":
+            return
+        else:
+            print(f"[live] Evento no reconocido: {evento}")
+
+    def _ejecutar_herramienta_live(self, nombre, argumentos):
+        if nombre == "__client_delegation__":
+            texto = str(argumentos.get("text", "")).strip()
+            if not texto:
+                return "No recibí una instrucción para el Core Engine."
+            cerebro = getattr(self, "cerebro", None)
+            listo = getattr(self, "_cerebro_ready", None)
+            if cerebro is None or listo is None or not listo.is_set():
+                return "El Core Engine todavía no está disponible."
+            import core_engine
+
+            local = core_engine.procesar_comando_local(texto)
+            if local is not None:
+                return local.respuesta
+            lock = getattr(self, "_cerebro_lock", None)
+            if lock is None:
+                lock = self._cerebro_lock = threading.RLock()
+            with lock:
+                return cerebro.responder(texto)
+        import tools
+
+        return tools.ejecutar(nombre, argumentos)
+
+    def _configurar_cerebro(self, cerebro, *argumentos):
+        with self._cerebro_lock:
+            return cerebro.configurar(*argumentos)
+
+    def _responder_cerebro(self, cerebro, texto):
+        with self._cerebro_lock:
+            return cerebro.responder(texto)
+
+    def _seleccionar_proveedor_live(self, proveedor):
+        manager = self._live_manager
+        try:
+            if manager is not None:
+                manager.select_provider(proveedor)
+                if (
+                    self.live_activo
+                    and (
+                        self._live_thread is None
+                        or not self._live_thread.is_alive()
+                    )
+                ):
+                    self._live_thread = threading.Thread(
+                        target=manager.run,
+                        daemon=True,
+                    )
+                    self._live_thread.start()
+            else:
+                from live_voice import LIVE_MODELS
+                if proveedor not in LIVE_MODELS:
+                    raise ValueError(f"Proveedor LIVE no válido: {proveedor}")
+                if not self._clave_para_core(proveedor):
+                    raise ValueError(f"No hay una clave guardada para {proveedor}.")
+                config.LIVE_VOICE_PROVIDER = proveedor
+                self._publicar_live("idle")
+        except Exception as error:
+            self._agregar_mensaje(
+                config.NOMBRE,
+                f"No pude cambiar el proveedor LIVE: {error}",
+                error=True,
+            )
+            return False
+        return True
+
+    def _seleccionar_voz_live(self, proveedor, voz):
+        from live_voice import LIVE_VOICES
+
+        if proveedor not in LIVE_VOICES or voz not in LIVE_VOICES[proveedor]:
+            return False
+        atributo = (
+            "LIVE_GEMINI_VOICE" if proveedor == "gemini" else "LIVE_OPENAI_VOICE"
+        )
+        if getattr(config, atributo) == voz:
+            return True
+        setattr(config, atributo, voz)
+        if self.live_activo and self._live_manager is not None:
+            self._live_state = "reconnecting"
+            self._publicar_live(self._live_state)
+            self._live_manager.restart_session()
+        else:
+            self._publicar_live("idle")
+        return True
+
+    def desde_hud(self, texto, solicitud_id=None):
         texto = str(texto).strip()
         if not texto:
             return False
-        self._encolar_pedido(texto, "texto")
+        self._encolar_pedido(texto, "texto", solicitud_id=solicitud_id)
+        if not self.asistente_activo:
+            self.raiz.after(0, self._iniciar_texto_desde_hud)
+        return True
+
+    def adjuntar_desde_hud(self, pregunta, contexto):
+        pregunta = str(pregunta).strip()
+        if not pregunta:
+            return False
+        self._encolar_pedido(pregunta, "texto", contexto_archivos=contexto)
         if not self.asistente_activo:
             self.raiz.after(0, self._iniciar_texto_desde_hud)
         return True
@@ -2267,6 +2869,8 @@ class Lanzador:
             oido.pausar_escucha.clear()
             self._iniciar_escucha(oido)
         self._publicar_info()
+        if self.live_activo:
+            self._publicar_live("listening")
         self._estado("Micrófono activo. Hablá normalmente; Jarvis te escucha.")
 
     # ------------------------------------------------------------------ HUD
@@ -2277,21 +2881,20 @@ class Lanzador:
             self.iniciar()
 
     def abrir_hud_inicial(self):
-        """Al abrir la app, inicia la sesión de voz y muestra el HUD."""
+        """Abre el HUD sin activar el micrófono hasta que el usuario lo solicite."""
         if not self._abrir_hud(inicial=True):
             messagebox.showerror(
                 config.NOMBRE,
                 "No se pudo abrir la interfaz HUD. Verificá que Microsoft Edge o Google Chrome esté instalado.",
             )
             return
-        self.iniciar()
+        self._estado_visible(
+            "Micrófono inactivo. Iniciá JARVIS LIVE para comenzar una conversación por voz."
+        )
 
     def _iniciar_desde_hud(self):
         if not self.iniciar():
             self._mostrar_ajustes_desde_hud()  # falta configurar algo: mostramos los ajustes
-
-    def desde_hud(self, texto):
-        self._estado_visible("Hablale a Jarvis; el control por teclado está desactivado.")
 
     def _configuracion_hud(self):
         import tools
@@ -2336,10 +2939,8 @@ class Lanzador:
 
         proveedor = config.PROVEEDOR_IA
         claves_mascaradas = {}
-        claves_api = {}
         for nombre in ai_providers.PROVEEDORES:
             clave = self._clave_guardada_o_entorno(nombre)
-            claves_api[nombre] = clave
             if clave:
                 claves_mascaradas[nombre] = f"••••••{clave[-4:]}"
         claves_guardadas = {
@@ -2353,13 +2954,13 @@ class Lanzador:
             "microfonos": microfonos,
             "salidas": salidas,
             "microfono": seleccionar_dispositivo(microfono_configurado, microfonos),
+            "microfono_sensibilidad": config.MICROFONO_SENSIBILIDAD,
             "salida": seleccionar_dispositivo(config.AUDIO_SALIDA, salidas),
             "proveedor": proveedor,
             "api_key_guardada": claves_guardadas.get(proveedor, False),
             "api_keys_guardadas": claves_guardadas,
             "api_key_mascarada": claves_mascaradas.get(proveedor, ""),
             "api_keys_mascaradas": claves_mascaradas,
-            "api_keys": claves_api,
             "proveedor_ia_alternativo": config.PROVEEDOR_IA_ALTERNATIVO,
             "clave_alternativa_guardada": bool(
                 claves_guardadas.get(config.PROVEEDOR_IA_ALTERNATIVO, False)
@@ -2368,20 +2969,12 @@ class Lanzador:
             "elevenlabs_key_guardada": bool(
                 self._clave_guardada_o_entorno("elevenlabs")
             ),
-            "elevenlabs_api_key": self._clave_guardada_o_entorno("elevenlabs"),
             "elevenlabs_voice_id": config.ELEVENLABS_VOICE_ID,
             "cartesia_key_guardada": bool(
                 self._clave_guardada_o_entorno("cartesia")
             ),
-            "cartesia_api_key": self._clave_guardada_o_entorno("cartesia"),
-            "cartesia_voice_id": config.CARTESIA_VOICE_ID,
-            "cartesia_key_guardada": bool(
-                self._clave_guardada_o_entorno("cartesia")
-            ),
-            "cartesia_api_key": self._clave_guardada_o_entorno("cartesia"),
             "cartesia_voice_id": config.CARTESIA_VOICE_ID,
             "github_token_guardado": self._clave_local_guardada("github"),
-            "github_token": self._clave_guardada_o_entorno("github"),
             "permiso_control_pc": tools.permiso_control_pc() is True,
             "asistente_activo": bool(self.asistente_activo),
             "ia_estado": self.ia_estado,
@@ -2619,6 +3212,13 @@ class Lanzador:
         velocidad_voz = self._validar_preferencia_entera(
             datos, "velocidad_voz", config.VELOCIDAD_VOZ, 70, 130
         )
+        microfono_sensibilidad = self._validar_preferencia_entera(
+            datos,
+            "microfono_sensibilidad",
+            config.MICROFONO_SENSIBILIDAD,
+            0,
+            100,
+        )
         volumen_efectos = self._validar_preferencia_entera(
             datos, "volumen_efectos", config.VOLUMEN_EFECTOS, 0, 100
         )
@@ -2698,6 +3298,7 @@ class Lanzador:
         config.IDIOMA = idioma
         config.VOLUMEN_VOZ = volumen_voz
         config.VELOCIDAD_VOZ = velocidad_voz
+        config.MICROFONO_SENSIBILIDAD = microfono_sensibilidad
         config.VOLUMEN_EFECTOS = volumen_efectos
         config.TEMA_HUD = tema_hud
         config.MODO_ENSEMBLE = modo_ensemble
@@ -2732,6 +3333,7 @@ class Lanzador:
                     "idioma": idioma,
                     "volumen_voz": volumen_voz,
                     "velocidad_voz": velocidad_voz,
+                    "microfono_sensibilidad": microfono_sensibilidad,
                     "volumen_efectos": volumen_efectos,
                     "tema_hud": tema_hud,
                     "modo_ensemble": modo_ensemble,
@@ -2879,6 +3481,8 @@ class Lanzador:
             "info",
             nombre=config.NOMBRE,
             modo=self.modo or "texto",
+            live_activo=getattr(self, "live_activo", False),
+            live_silenciado=getattr(self, "live_silenciado", False),
             ia=nombres_ia.get(config.PROVEEDOR_IA, config.PROVEEDOR_IA),
             ia_estado=self.ia_estado,
             ia_error=self.ia_error,
@@ -2932,6 +3536,8 @@ class Lanzador:
             "ia_secundaria_estado": estado_alternativo,
             "proveedor_activo": activo or "",
             "modo": modo,
+            "live_activo": getattr(self, "live_activo", False),
+            "live_silenciado": getattr(self, "live_silenciado", False),
             "herramientas": resumen["herramientas"],
             "acciones_recientes": resumen["acciones_recientes"],
             "errores_recientes": resumen["errores_recientes"],
@@ -2951,6 +3557,27 @@ class Lanzador:
             self.raiz.after(0, self.preparar_vision)
         elif nombre == "iniciar_voz":
             self.raiz.after(0, self._iniciar_desde_hud)
+        elif nombre == "live_start":
+            self.raiz.after(0, self.iniciar_live)
+        elif nombre == "live_mute":
+            self.raiz.after(0, self.silenciar_live)
+        elif nombre == "live_stop":
+            self.raiz.after(0, self.finalizar_live)
+        elif nombre == "live_select_gemini":
+            self.raiz.after(0, self._seleccionar_proveedor_live, "gemini")
+        elif nombre == "live_select_openai":
+            self.raiz.after(0, self._seleccionar_proveedor_live, "openai")
+        elif nombre.startswith("live_voice_"):
+            voces = {
+                "live_voice_gemini_kore": ("gemini", "Kore"),
+                "live_voice_gemini_puck": ("gemini", "Puck"),
+                "live_voice_gemini_aoede": ("gemini", "Aoede"),
+                "live_voice_openai_marin": ("openai", "marin"),
+                "live_voice_openai_cedar": ("openai", "cedar"),
+            }
+            seleccion = voces.get(nombre)
+            if seleccion:
+                self.raiz.after(0, self._seleccionar_voz_live, *seleccion)
         elif nombre == "alternar_modo":
             self.raiz.after(0, self.alternar_modo)
         elif nombre == "detener_automatizacion":
@@ -3022,6 +3649,7 @@ class Lanzador:
                 probar_github=self._probar_github_hud,
                 detectar_ubicacion=self._detectar_ubicacion_hud,
                 probar_ia=self._probar_ia_hud,
+                adjuntar_archivos=self.adjuntar_desde_hud,
             )
             try:
                 servidor.iniciar()
@@ -3100,6 +3728,11 @@ class Lanzador:
         self.raiz.after(2000, self._hud_vigilar)
 
     def cerrar(self):
+        manager = self._live_manager
+        self._live_manager = None
+        if manager is not None:
+            manager.stop()
+        self.live_activo = False
         with self._pedidos_lock:
             tools = sys.modules.get("tools")
             if tools is not None:

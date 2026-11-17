@@ -6,7 +6,8 @@ pyttsx3
 psutil
 pillow
 pypdf>=5,<7
-openai
+openai[realtime]
+google-genai
 ddgs
 httpx
 keyring
