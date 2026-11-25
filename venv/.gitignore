@@ -1,0 +1,11 @@
+# Ejecutables y archivos compilados
+*.exe
+*.pkg
+
+# Carpetas de compilación
+dist/
+build/
+
+# Archivos de Python
+__pycache__/
+*.pyc
