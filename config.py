@@ -15,7 +15,7 @@ PALABRAS_ACTIVACION = ["jarvis", "yarvis", "jarbis", "charvis", "jarvi"]
 # --- Cerebro (Ollama) ---
 OLLAMA_HOST = "http://localhost:11434"
 # Con poca RAM/sin GPU probá "qwen2.5:3b". Con buena GPU, "qwen2.5:14b".
-MODELO = "qwen2.5:7b"
+MODELO = "qwen2.5:3b"
 PROVEEDOR_IA = os.environ.get("JARVIS_AI_PROVIDER", "gemini").lower()
 MODELO_GEMINI = "gemini-1.5-flash"
 MODELO_OPENAI = "gpt-4o-mini"
@@ -34,7 +34,7 @@ PROVEEDOR_IA_ALTERNATIVO = ""
 MODO_ENSEMBLE = os.environ.get("JARVIS_ENSEMBLE", "auto").lower()
 # ESTRATEGIA_ENSEMBLE: "mejor" (elige la mejor respuesta), "rapido" (usa el primero en responder),
 # "verificar" (el principal responde, los otros verifican), "votar" (mayoría entre modelos)
-ESTRATEGIA_ENSEMBLE = os.environ.get("JARVIS_ENSEMBLE_ESTRATEGIA", "mejor").lower()
+ESTRATEGIA_ENSEMBLE = os.environ.get("JARVIS_ENSEMBLE_ESTRATEGIA", "rapido").lower()
 
 # Modelos sugeridos para el HUD. Podés editarlos: el acceso depende de cada cuenta/API.
 MODELOS_IA = {
@@ -67,9 +67,10 @@ CARTESIA_VOICE_ID = os.environ.get("CARTESIA_VOICE_ID", "").strip()
 VOLUMEN_VOZ = 100
 VELOCIDAD_VOZ = 100
 PIPER_MODELO_VOZ = "es_MX-claude-high"
-WHISPER_MODELO = "small"   # tiny / base / small / medium (más grande = más preciso y lento)
+WHISPER_MODELO = "base"   # tiny / base / small / medium (más grande = más preciso y lento)
 IDIOMA = "es"
 VENTANA_CONVERSACION_SEG = 6   # tras responder, escucha seguimiento sin decir "Jarvis"
+INICIO_AUTOMATICO = False
 MICROFONO = ""             # vacío = predeterminado; también acepta parte del nombre o índice
 MICROFONO_SENSIBILIDAD = 60
 AUDIO_SALIDA = None        # None = salida predeterminada de Windows; también acepta índice

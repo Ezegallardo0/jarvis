@@ -549,6 +549,75 @@ class CicloDeConexionTests(unittest.TestCase):
         lanzador._estado = mock.Mock()
         return lanzador
 
+    def test_palabra_de_activacion_despierta_y_entrega_el_pedido(self):
+        lanzador = self.crear_lanzador()
+        lanzador.modo = "espera"
+        lanzador.raiz = mock.Mock()
+        lanzador._mostrar_hud_al_despertar = mock.Mock()
+        lanzador.oido = mock.Mock()
+        lanzador.oido.esperar_activacion.return_value = "qué hora es"
+        lanzador.oido.escuchar_continuo.side_effect = lambda: (
+            lanzador.cerrando.set() or ""
+        )
+        def encolar(pedido, origen):
+            lanzador.pedidos.put((pedido, origen))
+            lanzador._respuesta_lista.set()
+
+        lanzador._encolar_pedido = mock.Mock(side_effect=encolar)
+
+        lanzador._escuchar(lanzador.oido)
+
+        self.assertEqual(lanzador.modo, "voz")
+        self.assertEqual(lanzador.pedidos.get_nowait()[:2], ("qué hora es", "voz"))
+        lanzador.raiz.after.assert_called_once_with(
+            0, lanzador._mostrar_hud_al_despertar
+        )
+
+    def test_desactivar_inicio_automatico_quita_el_acceso_directo(self):
+        with tempfile.TemporaryDirectory() as carpeta:
+            acceso = (
+                Path(carpeta)
+                / "Microsoft"
+                / "Windows"
+                / "Start Menu"
+                / "Programs"
+                / "Startup"
+                / "Jarvis.vbs"
+            )
+            acceso.parent.mkdir(parents=True)
+            acceso.touch()
+            with mock.patch.dict("os.environ", {"APPDATA": carpeta}):
+                launcher.Lanzador._actualizar_inicio_automatico(False)
+
+            self.assertFalse(acceso.exists())
+
+    def test_habilitar_inicio_automatico_crea_acceso_directo_en_modo_fondo(self):
+        with tempfile.TemporaryDirectory() as carpeta:
+            python = Path(carpeta) / "python.exe"
+            pythonw = Path(carpeta) / "pythonw.exe"
+            pythonw.touch()
+            appdata = Path(carpeta) / "appdata"
+            with (
+                mock.patch.dict("os.environ", {"APPDATA": str(appdata)}),
+                mock.patch.object(launcher.sys, "executable", str(python)),
+                mock.patch.object(launcher.sys, "frozen", False, create=True),
+            ):
+                launcher.Lanzador._actualizar_inicio_automatico(True)
+
+            acceso = (
+                appdata
+                / "Microsoft"
+                / "Windows"
+                / "Start Menu"
+                / "Programs"
+                / "Startup"
+                / "Jarvis.vbs"
+            )
+            contenido = acceso.read_text(encoding="utf-8")
+            self.assertIn(f'""{pythonw}""', contenido)
+            self.assertIn(f'""{Path(launcher.__file__).resolve()}""', contenido)
+            self.assertIn('--background", 0, False', contenido)
+
     def test_microfono_se_reintenta_sin_desactivar_el_asistente(self):
         lanzador = self.crear_lanzador()
         oido_recuperado = mock.Mock()
@@ -631,6 +700,26 @@ class CicloDeConexionTests(unittest.TestCase):
 
 
 class PermisosYVozTests(unittest.TestCase):
+    def test_perfil_rapido_migra_ajustes_anteriores_sin_cambiar_el_proveedor(self):
+        with tempfile.TemporaryDirectory() as carpeta:
+            ruta = Path(carpeta) / "dispositivos_audio.json"
+            ruta.write_text(
+                json.dumps({
+                    "proveedor": "cloudflare",
+                    "modelo_ollama": "qwen2.5:7b",
+                    "modelo_whisper": "small",
+                    "modo_ensemble": "auto",
+                    "estrategia_ensemble": "mejor",
+                }),
+                encoding="utf-8",
+            )
+            with mock.patch.object(config, "CARPETA_DATOS", Path(carpeta)):
+                seleccion = launcher.Lanzador._leer_seleccion()
+
+        self.assertEqual(seleccion[2], "cloudflare")
+        self.assertEqual(seleccion[8], "qwen2.5:3b")
+        self.assertEqual(seleccion[14], "base")
+        self.assertEqual(seleccion[21], "rapido")
     def test_umbral_de_voz_admite_habla_baja_sobre_ruido_ambiente(self):
         ruido_ambiente = 0.00816
         nivel_habla = 0.010399

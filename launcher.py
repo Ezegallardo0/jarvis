@@ -1,4 +1,5 @@
 """Controlador del HUD web y de los subsistemas de Jarvis."""
+import argparse
 import json
 import math
 import os
@@ -135,6 +136,7 @@ class Lanzador:
             config.CLOUDFLARE_ACCOUNT_ID,
             config.CARTESIA_VOICE_ID,
             config.MICROFONO_SENSIBILIDAD,
+            config.INICIO_AUTOMATICO,
         ) = self._leer_seleccion()
         try:
             config.GITHUB_TOKEN = self._clave_guardada_o_entorno("github")
@@ -1397,6 +1399,7 @@ class Lanzador:
                 config.CLOUDFLARE_ACCOUNT_ID,
                 config.CARTESIA_VOICE_ID,
                 config.MICROFONO_SENSIBILIDAD,
+                config.INICIO_AUTOMATICO,
             )
         except (OSError, ValueError) as error:
             messagebox.showerror("Configuración de audio", f"No pude leer la selección guardada:\n{error}")
@@ -1427,6 +1430,8 @@ class Lanzador:
                 config.MODELO_CLOUDFLARE,
                 config.CLOUDFLARE_ACCOUNT_ID,
                 config.CARTESIA_VOICE_ID,
+                config.MICROFONO_SENSIBILIDAD,
+                config.INICIO_AUTOMATICO,
             )
         modelos_rotos = {
             "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.6-flash",
@@ -1439,6 +1444,18 @@ class Lanzador:
         def _modelo(clave, predeterminado):
             valor = str(datos.get(clave, predeterminado) or predeterminado).strip()
             return predeterminado if valor in modelos_rotos else valor
+
+        modelo_ollama = datos.get("modelo_ollama", config.MODELO)
+        if modelo_ollama == "qwen2.5:7b":
+            modelo_ollama = config.MODELO
+        modelo_whisper = datos.get("modelo_whisper", config.WHISPER_MODELO)
+        if modelo_whisper == "small":
+            modelo_whisper = config.WHISPER_MODELO
+        estrategia_ensemble = datos.get(
+            "estrategia_ensemble", config.ESTRATEGIA_ENSEMBLE
+        )
+        if estrategia_ensemble == "mejor":
+            estrategia_ensemble = config.ESTRATEGIA_ENSEMBLE
 
         return (
             datos.get("microfono", config.MICROFONO),
@@ -1453,7 +1470,7 @@ class Lanzador:
             datos.get("ubicacion", config.UBICACION),
             datos.get("spotify_client_id", config.SPOTIFY_CLIENT_ID),
             datos.get("vision_modelo", config.MODELO_VISION),
-            datos.get("modelo_ollama", config.MODELO),
+            modelo_ollama,
             _modelo("modelo_gemini", config.MODELO_GEMINI),
             _modelo("modelo_openai", config.MODELO_OPENAI),
             _modelo("modelo_cursor", config.MODELO_CURSOR),
@@ -1464,7 +1481,7 @@ class Lanzador:
                 else ""
             ),
             datos.get("ollama_host", config.OLLAMA_HOST),
-            datos.get("modelo_whisper", config.WHISPER_MODELO),
+            modelo_whisper,
             datos.get("idioma", config.IDIOMA),
             Lanzador._leer_preferencia_entera(
                 datos, "volumen_voz", config.VOLUMEN_VOZ, 0, 100
@@ -1486,8 +1503,8 @@ class Lanzador:
                 else config.MODO_ENSEMBLE
             ),
             (
-                datos["estrategia_ensemble"]
-                if datos.get("estrategia_ensemble") in {"mejor", "rapido", "verificar", "votar"}
+                estrategia_ensemble
+                if estrategia_ensemble in {"mejor", "rapido", "verificar", "votar"}
                 else config.ESTRATEGIA_ENSEMBLE
             ),
             _modelo("modelo_groq_api", config.MODELO_GROQ_API),
@@ -1497,7 +1514,52 @@ class Lanzador:
             Lanzador._leer_preferencia_entera(
                 datos, "microfono_sensibilidad", config.MICROFONO_SENSIBILIDAD, 0, 100
             ),
+            (
+                datos.get("inicio_automatico")
+                if isinstance(datos.get("inicio_automatico"), bool)
+                else config.INICIO_AUTOMATICO
+            ),
         )
+
+    @staticmethod
+    def _actualizar_inicio_automatico(activar):
+        appdata = os.environ.get("APPDATA")
+        if not appdata:
+            raise RuntimeError("Windows no proporcionó la carpeta de inicio del usuario.")
+        carpeta = (
+            Path(appdata)
+            / "Microsoft"
+            / "Windows"
+            / "Start Menu"
+            / "Programs"
+            / "Startup"
+        )
+        acceso = carpeta / "Jarvis.vbs"
+        if not activar:
+            if acceso.exists():
+                acceso.unlink()
+            return
+
+        carpeta.mkdir(parents=True, exist_ok=True)
+        ejecutable = Path(sys.executable)
+        if getattr(sys, "frozen", False):
+            comando = f'"{ejecutable}" --background'
+        else:
+            ejecutable_sin_consola = ejecutable.with_name("pythonw.exe")
+            if ejecutable_sin_consola.is_file():
+                ejecutable = ejecutable_sin_consola
+            comando = f'"{ejecutable}" "{Path(__file__).resolve()}" --background'
+        carpeta_trabajo = str(Path(__file__).resolve().parent)
+        comando_vbs = comando.replace('"', '""')
+        carpeta_vbs = carpeta_trabajo.replace('"', '""')
+        contenido = (
+            "Option Explicit\r\n"
+            "Dim shell\r\n"
+            'Set shell = CreateObject("WScript.Shell")\r\n'
+            f'shell.CurrentDirectory = "{carpeta_vbs}"\r\n'
+            f'shell.Run "{comando_vbs}", 0, False\r\n'
+        )
+        acceso.write_text(contenido, encoding="utf-8")
 
     def _guardar(self):
         microfono_id = self.entradas[self.entrada_var.get()]
@@ -1946,11 +2008,13 @@ class Lanzador:
                 self._estado("No se pudo iniciar el Core local.")
                 self.asistente_activo = False
                 return
-        try:
-            error = cerebro.verificar()
-        except Exception as error:
-            error = f"No pude comprobar el proveedor {proveedor}: {error}"
-            print(f"[ia:{proveedor}] {error}")
+        error = None
+        if self.modo != "espera":
+            try:
+                error = cerebro.verificar()
+            except Exception as error:
+                error = f"No pude comprobar el proveedor {proveedor}: {error}"
+                print(f"[ia:{proveedor}] {error}")
         if error:
             self.ia_estado = "error"
             self.ia_error = error
@@ -1994,6 +2058,12 @@ class Lanzador:
                 self._iniciar_escucha(None)
             else:
                 self.oido = oido
+            if self.modo == "espera":
+                self._publicar_info()
+                self._estado("En segundo plano. Di “Jarvis” para activarme.")
+                if oido is not None:
+                    self._iniciar_escucha(oido)
+                return
             if self.ia_estado == "error":
                 self._agregar_mensaje(
                     config.NOMBRE,
@@ -2404,9 +2474,10 @@ class Lanzador:
     def _escuchar(self, oido):
         espera_reconexion = 1
         while not self.cerrando.is_set():
-            if self.modo != "voz":
+            if self.modo not in ("voz", "espera"):
                 time.sleep(0.1)
                 continue
+            modo_escucha = self.modo
             oido = self.oido
             if oido is None:
                 try:
@@ -2422,7 +2493,7 @@ class Lanzador:
                     espera_reconexion = min(espera_reconexion * 2, 30)
                     continue
                 with self._modo_lock:
-                    if self.cerrando.is_set() or self.modo != "voz":
+                    if self.cerrando.is_set() or self.modo not in ("voz", "espera"):
                         oido.pausar_escucha.set()
                         return
                     self.oido = oido
@@ -2433,15 +2504,35 @@ class Lanzador:
                 self._estado("Micrófono reconectado. Hablá normalmente; Jarvis te escucha.")
                 espera_reconexion = 1
             try:
-                pedido = oido.escuchar_continuo()
-                if (
-                    self.modo != "voz"
-                    or self.oido is not oido
-                    or self.cerrando.is_set()
-                ):
+                if modo_escucha == "espera":
+                    pedido = oido.esperar_activacion()
+                else:
+                    pedido = oido.escuchar_continuo()
+                if self.oido is not oido or self.cerrando.is_set():
+                    continue
+                if modo_escucha == "espera":
+                    with self._modo_lock:
+                        if self.modo != "espera":
+                            continue
+                        self.modo = "voz"
+                    self.raiz.after(0, self._mostrar_hud_al_despertar)
+                    self._publicar_info()
+                    if not pedido:
+                        self._hablar("Te escucho. ¿Qué necesitás?")
+                        continue
+                elif self.modo != "voz":
                     continue
                 if not pedido or self.cerrando.is_set():
                     continue
+                if voice.normalizar(pedido).strip() in {
+                    "cerrar jarvis",
+                    "apagar jarvis",
+                    "apagate jarvis",
+                    "terminar jarvis",
+                    "salir de jarvis",
+                }:
+                    self.raiz.after(0, self.cerrar)
+                    return
 
                 self._encolar_pedido(pedido, "voz")
                 while (
@@ -2896,6 +2987,16 @@ class Lanzador:
         if not self.iniciar():
             self._mostrar_ajustes_desde_hud()  # falta configurar algo: mostramos los ajustes
 
+    def iniciar_por_activacion(self):
+        if not self.iniciar("espera"):
+            self._estado_visible("No pude activar la escucha por palabra.")
+
+    def _mostrar_hud_al_despertar(self):
+        if self.bus.hay_hud():
+            return
+        if not self._abrir_hud(forzar=True):
+            self._estado("No pude abrir el HUD, pero sigo escuchando.")
+
     def _configuracion_hud(self):
         import tools
 
@@ -3006,7 +3107,8 @@ class Lanzador:
             "volumen_efectos": config.VOLUMEN_EFECTOS,
             "tema_hud": config.TEMA_HUD,
             "modo_ensemble": getattr(config, "MODO_ENSEMBLE", "auto"),
-            "estrategia_ensemble": getattr(config, "ESTRATEGIA_ENSEMBLE", "mejor"),
+            "estrategia_ensemble": getattr(config, "ESTRATEGIA_ENSEMBLE", "rapido"),
+            "inicio_automatico": config.INICIO_AUTOMATICO,
             "ensemble_proveedores_activos": [
                 p for p in ai_providers.PROVEEDORES
                 if self._clave_guardada_o_entorno(p)
@@ -3241,6 +3343,11 @@ class Lanzador:
         permiso_control_pc = datos.get("permiso_control_pc")
         if permiso_control_pc is not None and not isinstance(permiso_control_pc, bool):
             raise ValueError("El permiso de control no tiene un valor válido.")
+        inicio_automatico = datos.get(
+            "inicio_automatico", config.INICIO_AUTOMATICO
+        )
+        if not isinstance(inicio_automatico, bool):
+            raise ValueError("La opción de inicio automático debe ser verdadera o falsa.")
 
         if proveedor == "ollama" and (clave_ia or datos.get("borrar_api_key")):
             raise ValueError("Ollama es local y no admite una API key.")
@@ -3267,6 +3374,8 @@ class Lanzador:
         elif token_github:
             self._guardar_clave("github", token_github)
 
+        self._actualizar_inicio_automatico(inicio_automatico)
+
         requiere_reinicio = self.asistente_activo and any(
             nuevo != actual
             for nuevo, actual in (
@@ -3275,6 +3384,7 @@ class Lanzador:
                 (ollama_host, config.OLLAMA_HOST),
                 (modelo_whisper, config.WHISPER_MODELO),
                 (idioma, config.IDIOMA),
+                (inicio_automatico, config.INICIO_AUTOMATICO),
             )
         )
         config.MICROFONO = microfono_guardado
@@ -3303,6 +3413,7 @@ class Lanzador:
         config.TEMA_HUD = tema_hud
         config.MODO_ENSEMBLE = modo_ensemble
         config.ESTRATEGIA_ENSEMBLE = estrategia_ensemble
+        config.INICIO_AUTOMATICO = inicio_automatico
         config.GITHUB_TOKEN = self._clave_guardada_o_entorno("github")
         config.CARPETA_DATOS.mkdir(parents=True, exist_ok=True)
         ruta = config.CARPETA_DATOS / "dispositivos_audio.json"
@@ -3338,6 +3449,7 @@ class Lanzador:
                     "tema_hud": tema_hud,
                     "modo_ensemble": modo_ensemble,
                     "estrategia_ensemble": estrategia_ensemble,
+                    "inicio_automatico": inicio_automatico,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -3721,10 +3833,21 @@ class Lanzador:
             if self._hud_ausente is None:
                 self._hud_ausente = time.monotonic()
             elif time.monotonic() - self._hud_ausente > 20:
-                self._hud_visto = False
-                self._hud_ausente = None
-                self.cerrar()
-                return
+                if config.INICIO_AUTOMATICO:
+                    self._hud_visto = False
+                    self._hud_ausente = None
+                    self._hud_lanzado_en = None
+                    if self.live_activo:
+                        self.finalizar_live()
+                    with self._modo_lock:
+                        if self.asistente_activo:
+                            self.modo = "espera"
+                    self._publicar_info()
+                else:
+                    self._hud_visto = False
+                    self._hud_ausente = None
+                    self.cerrar()
+                    return
         self.raiz.after(2000, self._hud_vigilar)
 
     def cerrar(self):
@@ -3811,6 +3934,13 @@ def _solicitar_nombre_usuario(raiz):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Jarvis para Windows")
+    parser.add_argument(
+        "--background",
+        action="store_true",
+        help="inicia oculto y espera la palabra de activación si está habilitada",
+    )
+    args = parser.parse_args()
     raiz = tk.Tk()
     raiz.withdraw()  # no mostrar esta ventana: la interfaz principal es el HUD
     raiz.iconbitmap(str(Path(__file__).resolve().parent / "jarvis.ico"))
@@ -3826,7 +3956,12 @@ def main():
     config.NOMBRE_USUARIO = _solicitar_nombre_usuario(raiz)
     lanzador = Lanzador(raiz)
     lanzador._candado = candado  # se mantiene abierto mientras viva el programa
-    raiz.after(300, lanzador.abrir_hud_inicial)
+    if config.INICIO_AUTOMATICO:
+        if not args.background:
+            raiz.after(300, lanzador.abrir_hud_inicial)
+        raiz.after(500, lanzador.iniciar_por_activacion)
+    else:
+        raiz.after(300, lanzador.abrir_hud_inicial)
     raiz.mainloop()
 
 

@@ -1766,9 +1766,14 @@ button:focus-visible,a:focus-visible,[tabindex="0"]:focus-visible{
             <span class="summary-detail" id="cfg-general-voice-detail">La aplicación reintenta el micrófono si se interrumpe.</span>
           </article>
         </div>
-        <div class="cfg-notice">
-          <p>La configuración de inicio automático de Windows y las notificaciones persistentes todavía no está implementada. No se muestran interruptores que aparenten activarlas.</p>
-        </div>
+        <section class="cfg-section-block">
+          <h4>Activación por voz</h4>
+          <label class="check-row">
+            <input id="cfg-inicio-automatico" type="checkbox">
+            Iniciar con Windows y esperar “Jarvis” aunque el HUD esté cerrado
+          </label>
+          <p class="hint">Jarvis mantendrá un proceso y el micrófono activos en segundo plano. Di “Jarvis” para abrir el HUD y hablar; “cerrar Jarvis” termina el proceso. Desactiva esta opción para quitarlo del inicio de Windows.</p>
+        </section>
         <section class="cfg-section-block">
           <h4>Acceso rápido</h4>
           <div class="settings-actions">
@@ -1796,8 +1801,8 @@ button:focus-visible,a:focus-visible,[tabindex="0"]:focus-visible{
           <div>
             <label for="cfg-estrategia-ensemble">Estrategia de Cooperación</label>
             <select id="cfg-estrategia-ensemble">
-              <option value="mejor">Mejor respuesta · síntesis en paralelo (Recomendado)</option>
-              <option value="rapido">Más rápido · el primero que responda gana</option>
+              <option value="mejor">Mejor respuesta · síntesis en paralelo</option>
+              <option value="rapido">Más rápido · el primero que responda gana (recomendado)</option>
               <option value="verificar">Verificación cruzada · principal responde, otros corrigen</option>
               <option value="votar">Votación por consenso (requiere 3+ IAs)</option>
             </select>
@@ -1931,8 +1936,8 @@ button:focus-visible,a:focus-visible,[tabindex="0"]:focus-visible{
           <label for="cfg-modelo-whisper">Modelo de reconocimiento Whisper</label>
           <select id="cfg-modelo-whisper">
             <option value="tiny">tiny · rápido</option>
-            <option value="base">base</option>
-            <option value="small">small · recomendado</option>
+            <option value="base">base · recomendado (más rápido)</option>
+            <option value="small">small · más preciso</option>
             <option value="medium">medium · preciso</option>
             <option value="large-v3">large-v3</option>
           </select>
@@ -3219,7 +3224,8 @@ async function abrirAjustes(pagina='general'){
     $('cfg-modelo-cloudflare').value = d.modelo_cloudflare || '';
     $('cfg-cloudflare-account-id').value = d.cloudflare_account_id || '';
     $('cfg-modo-ensemble').value = d.modo_ensemble || 'auto';
-    $('cfg-estrategia-ensemble').value = d.estrategia_ensemble || 'mejor';
+    $('cfg-estrategia-ensemble').value = d.estrategia_ensemble || 'rapido';
+    $('cfg-inicio-automatico').checked = d.inicio_automatico === true;
 
     const activas = d.ensemble_proveedores_activos || [];
     $('cfg-ensemble-status').textContent = activas.length > 0
@@ -3338,6 +3344,7 @@ function configuracionFormulario(){
     modelo_cloudflare:$('cfg-modelo-cloudflare').value,
     modo_ensemble:$('cfg-modo-ensemble').value,
     estrategia_ensemble:$('cfg-estrategia-ensemble').value,
+    inicio_automatico:$('cfg-inicio-automatico').checked,
     proveedor_ia_alternativo:$('cfg-ai-fallback').value,
     modelo_whisper:$('cfg-modelo-whisper').value,
     idioma:$('cfg-idioma').value,
@@ -3370,7 +3377,7 @@ async function guardarAjustes(){
     ? 'Token de GitHub guardado.'
     : 'GitHub sin configurar.';
   $('settings-status').textContent = r.configuracion?.requiere_reinicio
-    ? 'Configuración guardada. Reiniciá Jarvis para aplicar cambios de hardware.'
+    ? 'Configuración guardada. Reiniciá Jarvis para aplicar el inicio automático y los cambios de audio.'
     : 'Configuración guardada con éxito.';
   return r;
 }
