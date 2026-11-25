@@ -101,6 +101,8 @@ def herramienta(
     confirmar_siempre=False,
     requiere_pantalla=False,
     texto_confirmacion=None,
+    skill_id=None,
+    permisos_skill=None,
 ):
     """Registra una función como herramienta que el modelo puede invocar."""
 
@@ -111,6 +113,8 @@ def herramienta(
             "confirmar_siempre": confirmar_siempre,
             "texto_confirmacion": texto_confirmacion,
             "requiere_pantalla": requiere_pantalla,
+            "skill_id": skill_id,
+            "permisos_skill": list(permisos_skill or []),
             "schema": {
                 "type": "function",
                 "function": {
@@ -129,11 +133,24 @@ def herramienta(
     return deco
 
 
+def _habilidad_activa(herramienta_info):
+    skill_id = herramienta_info.get("skill_id")
+    if not skill_id:
+        return True
+    try:
+        import skills_manager
+
+        return skills_manager.obtener_manager().esta_activa(skill_id)
+    except Exception:
+        return False
+
+
 def esquemas():
     return [
         h["schema"]
         for h in HERRAMIENTAS.values()
-        if not h["requiere_pantalla"] or config.COMPARTIENDO_PANTALLA
+        if (not h["requiere_pantalla"] or config.COMPARTIENDO_PANTALLA)
+        and _habilidad_activa(h)
     ]
 
 
@@ -176,6 +193,15 @@ def ejecutar(nombre, args):
     h = HERRAMIENTAS.get(nombre)
     if not h:
         return f"Herramienta desconocida: {nombre}"
+    skill_id = h.get("skill_id")
+    if skill_id:
+        import skills_manager
+
+        mgr = skills_manager.obtener_manager()
+        ok_skill, motivo_skill = mgr.verificar_permisos(skill_id, h.get("permisos_skill"))
+        if not ok_skill:
+            mgr.registrar_evento(skill_id, nombre, "blocked", motivo_skill)
+            return motivo_skill
     if h["requiere_pantalla"] and not config.COMPARTIENDO_PANTALLA:
         return "El acceso a la pantalla está desactivado. Pedile al usuario que lo habilite en Jarvis."
     if detencion_solicitada():
@@ -244,6 +270,13 @@ def ejecutar(nombre, args):
             f"{resultado} La acción terminó, pero no pude completar su registro "
             f"({error})."
         )
+    if skill_id:
+        try:
+            import skills_manager
+
+            skills_manager.obtener_manager().registrar_evento(skill_id, nombre, "ok", "ejecutada")
+        except Exception:
+            pass
     return resultado
 
 
@@ -619,11 +652,30 @@ def _guardar_docx(ruta, titulo, contenido):
 _MEM = config.CARPETA_DATOS / "memoria.json"
 
 
-def cargar_memoria():
+def _store_memoria():
+    import memory_system
+
+    return memory_system.obtener_store()
+
+
+def cargar_memoria(consulta=""):
     try:
-        return json.loads(_MEM.read_text(encoding="utf-8"))
+        store = _store_memoria()
+        recuerdos = store.recuperar_para_conversacion(consulta=consulta)
+        return [
+            (
+                f"[{r['categoria']}]"
+                + (f" ({r['proyecto']})" if r["proyecto"] else "")
+                + (f" {r['titulo']}:" if r["titulo"] else "")
+                + f" {r['contenido']}"
+            )
+            for r in recuerdos
+        ]
     except Exception:
-        return []
+        try:
+            return json.loads(_MEM.read_text(encoding="utf-8"))
+        except Exception:
+            return []
 
 
 # ---------------------------------------------------------------- herramientas
@@ -2131,7 +2183,7 @@ def enviar_correo(destinatarios, asunto, cuerpo):
 
 
 @herramienta(
-    "Pone un recordatorio que avisará en voz alta dentro de N minutos. Jarvis debe permanecer abierto.",
+    "Pone un recordatorio persistente que avisará dentro de N minutos aunque Jarvis se cierre si el servicio está activo.",
     {
         "minutos": {"type": "number", "description": "Minutos hasta el aviso"},
         "mensaje": {"type": "string", "description": "Qué recordar"},
@@ -2142,6 +2194,19 @@ def poner_recordatorio(minutos, mensaje):
     minutos = float(minutos)
     if not math.isfinite(minutos) or minutos <= 0:
         raise ValueError("El tiempo del recordatorio debe ser mayor que cero.")
+    objetivo = datetime.datetime.now().astimezone() + datetime.timedelta(minutes=minutos)
+    try:
+        import automation_service
+
+        automation_service.obtener_store().crear_tarea(
+            title=f"Recordatorio: {mensaje}",
+            schedule_at=objetivo,
+            task_type="reminder",
+            action_type="notify",
+            payload={"mensaje": mensaje},
+        )
+    except Exception:
+        pass
     t = threading.Timer(minutos * 60, lambda: NOTIFICAR(f"Recordatorio: {mensaje}"))
     t.daemon = True
     t.start()
@@ -2149,7 +2214,7 @@ def poner_recordatorio(minutos, mensaje):
 
 
 @herramienta(
-    "Programa una alerta para la próxima vez que ocurra la hora indicada (formato 24 h HH:MM). Jarvis debe permanecer abierto.",
+    "Programa una alerta persistente para la próxima vez que ocurra la hora indicada (formato 24 h HH:MM).",
     {
         "hora": {"type": "string", "description": "Hora local, por ejemplo 18:30"},
         "mensaje": {"type": "string", "description": "Qué debe avisar"},
@@ -2157,12 +2222,24 @@ def poner_recordatorio(minutos, mensaje):
     ["hora", "mensaje"],
 )
 def crear_alerta(hora, mensaje):
-    ahora = datetime.datetime.now()
+    ahora = datetime.datetime.now().astimezone()
     objetivo = datetime.datetime.strptime(hora, "%H:%M").replace(
-        year=ahora.year, month=ahora.month, day=ahora.day
+        year=ahora.year, month=ahora.month, day=ahora.day, tzinfo=ahora.tzinfo
     )
     if objetivo <= ahora:
         objetivo += datetime.timedelta(days=1)
+    try:
+        import automation_service
+
+        automation_service.obtener_store().crear_tarea(
+            title=f"Alerta: {mensaje}",
+            schedule_at=objetivo,
+            task_type="alert",
+            action_type="notify",
+            payload={"mensaje": mensaje},
+        )
+    except Exception:
+        pass
     segundos = (objetivo - ahora).total_seconds()
     t = threading.Timer(segundos, lambda: NOTIFICAR(f"Alerta: {mensaje}"))
     t.daemon = True
@@ -2172,19 +2249,287 @@ def crear_alerta(hora, mensaje):
 
 
 @herramienta(
-    "Guarda un dato sobre el usuario en la memoria permanente (gustos, nombres, preferencias).",
-    {"dato": {"type": "string", "description": "El dato a recordar"}},
+    "Crea una automatización persistente (única o recurrente) en el servicio de Windows.",
+    {
+        "titulo": {"type": "string", "description": "Título de la automatización"},
+        "fecha_hora_iso": {"type": "string", "description": "Fecha y hora ISO-8601"},
+        "mensaje": {"type": "string", "description": "Mensaje o instrucción a ejecutar"},
+        "intervalo_minutos": {"type": "integer", "description": "0 para única vez, o minutos para recurrencia"},
+    },
+    ["titulo", "fecha_hora_iso"],
+)
+def crear_automatizacion(titulo, fecha_hora_iso, mensaje="", intervalo_minutos=0):
+    import automation_service
+
+    intervalo_seg = max(0, int(intervalo_minutos or 0)) * 60
+    tipo = "recurring" if intervalo_seg > 0 else "scheduled"
+    tarea = automation_service.obtener_store().crear_tarea(
+        title=titulo,
+        schedule_at=fecha_hora_iso,
+        task_type=tipo,
+        action_type="notify",
+        payload={"mensaje": mensaje or titulo},
+        interval_seconds=intervalo_seg,
+    )
+    return f"Automatización creada: {tarea['title']} (ID: {tarea['id']}, próxima: {tarea['schedule_at']})."
+
+
+@herramienta("Lista las automatizaciones y recordatorios persistentes registrados.")
+def listar_automatizaciones():
+    import automation_service
+
+    tareas = automation_service.obtener_store().listar_tareas(limite=30)
+    if not tareas:
+        return "No hay automatizaciones programadas."
+    return "\n".join(
+        f"[{t['id']}] {t['title']} | estado={t['status']} | próxima={t['schedule_at']} | ejecuciones={t['run_count']}"
+        for t in tareas
+    )
+
+
+@herramienta(
+    "Pausa o reanuda una automatización persistente por su ID.",
+    {
+        "task_id": {"type": "string", "description": "ID de la automatización"},
+        "pausar": {"type": "boolean", "description": "True para pausar, False para reanudar"},
+    },
+    ["task_id", "pausar"],
+)
+def pausar_automatizacion(task_id, pausar=True):
+    import automation_service
+
+    store = automation_service.obtener_store()
+    res = store.pausar_tarea(task_id) if pausar else store.reanudar_tarea(task_id)
+    if not res:
+        return f"No encontré la automatización {task_id}."
+    return f"Automatización {task_id} ahora está en estado: {res['status']}."
+
+
+@herramienta(
+    "Elimina una automatización persistente por su ID.",
+    {"task_id": {"type": "string", "description": "ID de la automatización"}},
+    ["task_id"],
+    confirmar=True,
+    confirmar_siempre=True,
+    texto_confirmacion=lambda task_id="", **_: f"Voy a eliminar la automatización {task_id}. ¿Confirmás?",
+)
+def eliminar_automatizacion(task_id):
+    import automation_service
+
+    if not automation_service.obtener_store().eliminar_tarea(task_id):
+        return f"No encontré la automatización {task_id}."
+    return f"Automatización {task_id} eliminada."
+
+
+@herramienta(
+    "Guarda un dato estructurado sobre el usuario en la memoria permanente (perfil, preferencias, proyectos, tareas, conversaciones, contexto_temporal).",
+    {
+        "dato": {"type": "string", "description": "El contenido o dato a recordar"},
+        "categoria": {
+            "type": "string",
+            "enum": ["perfil", "preferencias", "proyectos", "tareas", "conversaciones", "contexto_temporal"],
+            "description": "Categoría del recuerdo (por defecto: perfil)",
+        },
+        "titulo": {"type": "string", "description": "Título breve opcional"},
+        "proyecto": {"type": "string", "description": "Nombre del proyecto relacionado, si aplica"},
+        "reemplazar_contradiccion": {
+            "type": "boolean",
+            "description": "Si es True, reemplaza un recuerdo contradictorio existente",
+        },
+    },
     ["dato"],
     confirmar=True,
     confirmar_siempre=True,
-    texto_confirmacion="Voy a guardar este dato en la memoria local de Jarvis. ¿Confirmás?",
+    texto_confirmacion=lambda dato="", categoria="perfil", **_: (
+        f"Voy a guardar en tu memoria ({categoria}): «{dato[:120]}». ¿Confirmás?"
+    ),
 )
-def guardar_en_memoria(dato):
+def guardar_en_memoria(
+    dato,
+    categoria="perfil",
+    titulo="",
+    proyecto="",
+    reemplazar_contradiccion=False,
+):
     config.CARPETA_DATOS.mkdir(parents=True, exist_ok=True)
-    datos = cargar_memoria()
-    datos.append(dato)
-    _MEM.write_text(json.dumps(datos, ensure_ascii=False, indent=2), encoding="utf-8")
-    return "Anotado."
+    resultado = _store_memoria().agregar(
+        contenido=dato,
+        categoria=categoria,
+        titulo=titulo,
+        proyecto=proyecto,
+        reemplazar_contradiccion=bool(reemplazar_contradiccion),
+    )
+    return resultado["mensaje"]
+
+
+@herramienta(
+    "Consulta recuerdos guardados en la memoria estructurada por palabras clave, categoría o proyecto.",
+    {
+        "consulta": {"type": "string", "description": "Palabras clave a buscar"},
+        "categoria": {
+            "type": "string",
+            "enum": ["", "perfil", "preferencias", "proyectos", "tareas", "conversaciones", "contexto_temporal"],
+            "description": "Filtrar por categoría",
+        },
+        "proyecto": {"type": "string", "description": "Filtrar por nombre de proyecto"},
+        "limite": {"type": "integer", "description": "Máximo de resultados (1 a 30)"},
+    },
+)
+def consultar_memoria(consulta="", categoria="", proyecto="", limite=10):
+    store = _store_memoria()
+    lim = max(1, min(int(limite or 10), 30))
+    items = store.buscar(
+        consulta=consulta or "",
+        categoria=categoria or None,
+        proyecto=proyecto or None,
+        limite=lim,
+    )
+    if not items:
+        return "No encontré recuerdos que coincidan con esa búsqueda."
+    lineas = []
+    for r in items:
+        meta = ""
+        if r["metadata"]:
+            partes = [f"{k}={v}" for k, v in r["metadata"].items() if v]
+            if partes:
+                meta = f" ({', '.join(partes)})"
+        proy = f" [proyecto: {r['proyecto']}]" if r["proyecto"] else ""
+        tit = f" {r['titulo']}:" if r["titulo"] else ""
+        lineas.append(f"#{r['id']} [{r['categoria']}]{proy}{tit} {r['contenido']}{meta}")
+    return "\n".join(lineas)
+
+
+@herramienta(
+    "Actualiza un recuerdo existente en la memoria por su ID.",
+    {
+        "id_recuerdo": {"type": "integer", "description": "ID numérico del recuerdo"},
+        "contenido": {"type": "string", "description": "Nuevo contenido"},
+        "titulo": {"type": "string", "description": "Nuevo título"},
+        "proyecto": {"type": "string", "description": "Proyecto asociado"},
+        "estado": {"type": "string", "description": "Estado actualizado (ej. pendiente, en_progreso, completada)"},
+        "prioridad": {"type": "string", "description": "Prioridad (baja, media, alta, urgente)"},
+        "fecha_limite": {"type": "string", "description": "Fecha límite (YYYY-MM-DD)"},
+    },
+    ["id_recuerdo"],
+    confirmar=True,
+    confirmar_siempre=True,
+    texto_confirmacion=lambda id_recuerdo=0, **_: f"Voy a actualizar el recuerdo #{id_recuerdo}. ¿Confirmás?",
+)
+def actualizar_memoria(
+    id_recuerdo,
+    contenido=None,
+    titulo=None,
+    proyecto=None,
+    estado="",
+    prioridad="",
+    fecha_limite="",
+):
+    meta = {}
+    if estado:
+        meta["estado"] = estado
+    if prioridad:
+        meta["prioridad"] = prioridad
+    if fecha_limite:
+        meta["fecha_limite"] = fecha_limite
+    actualizado = _store_memoria().actualizar(
+        int(id_recuerdo),
+        contenido=contenido,
+        titulo=titulo,
+        proyecto=proyecto,
+        metadata=meta or None,
+    )
+    if not actualizado:
+        return f"No encontré ningún recuerdo con ID #{id_recuerdo}."
+    return f"Recuerdo #{actualizado['id']} actualizado."
+
+
+@herramienta(
+    "Elimina un recuerdo de la memoria permanente por su ID.",
+    {"id_recuerdo": {"type": "integer", "description": "ID numérico del recuerdo a eliminar"}},
+    ["id_recuerdo"],
+    confirmar=True,
+    confirmar_siempre=True,
+    texto_confirmacion=lambda id_recuerdo=0, **_: f"Voy a eliminar permanentemente el recuerdo #{id_recuerdo}. ¿Confirmás?",
+)
+def eliminar_memoria(id_recuerdo):
+    eliminado = _store_memoria().eliminar(int(id_recuerdo))
+    if not eliminado:
+        return f"No encontré ningún recuerdo con ID #{id_recuerdo}."
+    return f"Recuerdo #{int(id_recuerdo)} eliminado."
+
+
+@herramienta(
+    "Guarda o registra un proyecto en la memoria estructurada de JARVIS.",
+    {
+        "nombre": {"type": "string", "description": "Nombre del proyecto"},
+        "descripcion": {"type": "string", "description": "Descripción del proyecto"},
+        "tecnologias": {"type": "string", "description": "Tecnologías utilizadas"},
+        "estado": {"type": "string", "description": "Estado actual (ej. activo, pausado, completado)"},
+        "objetivos": {"type": "string", "description": "Objetivos principales"},
+        "tareas_pendientes": {"type": "string", "description": "Tareas pendientes resumidas"},
+    },
+    ["nombre", "descripcion"],
+    confirmar=True,
+    confirmar_siempre=True,
+    texto_confirmacion=lambda nombre="", **_: f"Voy a guardar el proyecto «{nombre}» en memoria. ¿Confirmás?",
+)
+def guardar_proyecto_memoria(
+    nombre,
+    descripcion,
+    tecnologias="",
+    estado="activo",
+    objetivos="",
+    tareas_pendientes="",
+):
+    resultado = _store_memoria().agregar(
+        contenido=descripcion,
+        categoria="proyectos",
+        titulo=nombre,
+        proyecto=nombre,
+        metadata={
+            "tecnologias": tecnologias,
+            "estado": estado,
+            "objetivos": objetivos,
+            "tareas_pendientes": tareas_pendientes,
+        },
+        reemplazar_contradiccion=True,
+    )
+    return resultado["mensaje"]
+
+
+@herramienta(
+    "Guarda una tarea en la memoria estructurada con prioridad, fecha límite y proyecto.",
+    {
+        "titulo": {"type": "string", "description": "Título de la tarea"},
+        "descripcion": {"type": "string", "description": "Detalle de la tarea"},
+        "prioridad": {"type": "string", "enum": ["baja", "media", "alta", "urgente"], "description": "Prioridad"},
+        "fecha_limite": {"type": "string", "description": "Fecha límite opcional (YYYY-MM-DD)"},
+        "proyecto": {"type": "string", "description": "Proyecto relacionado opcional"},
+    },
+    ["titulo"],
+    confirmar=True,
+    confirmar_siempre=True,
+    texto_confirmacion=lambda titulo="", **_: f"Voy a guardar la tarea «{titulo}» en memoria. ¿Confirmás?",
+)
+def guardar_tarea_memoria(
+    titulo,
+    descripcion="",
+    prioridad="media",
+    fecha_limite="",
+    proyecto="",
+):
+    resultado = _store_memoria().agregar(
+        contenido=descripcion or titulo,
+        categoria="tareas",
+        titulo=titulo,
+        proyecto=proyecto,
+        metadata={
+            "prioridad": prioridad,
+            "fecha_limite": fecha_limite,
+            "estado": "pendiente",
+        },
+    )
+    return resultado["mensaje"]
 
 
 @herramienta("Bloquea la sesión de Windows.", confirmar=True)
@@ -2228,3 +2573,299 @@ def ejecutar_comando(comando):
     )
     salida = (r.stdout + r.stderr).strip()
     return salida[:2000] or f"(sin salida, código {r.returncode})"
+
+
+def cargar_habilidades():
+    """Carga y registra todas las habilidades modulares desde skills/."""
+    import skills_manager
+
+    return skills_manager.obtener_manager().descubrir_y_cargar(
+        registrar_herramienta=herramienta
+    )
+
+
+# ---------------------------------------------------------------- Google Workspace
+def _google():
+    import google_integration
+
+    return google_integration
+
+
+@herramienta(
+    "Consulta eventos próximos o de una fecha específica (YYYY-MM-DD) en Google Calendar.",
+    {
+        "dias": {"type": "integer", "description": "Días hacia adelante si no se indica fecha (default 7)"},
+        "fecha": {"type": "string", "description": "Fecha exacta opcional YYYY-MM-DD"},
+        "maximo": {"type": "integer", "description": "Cantidad máxima de eventos (default 10)"},
+    },
+)
+def google_calendar_listar_eventos(dias=7, fecha="", maximo=10):
+    eventos = _google().listar_eventos(dias=dias, fecha=fecha or None, maximo=maximo)
+    if not eventos:
+        return "No hay eventos en ese rango."
+    return "\n".join(
+        f"[{e['id']}] {e['titulo']} | {e['inicio']} -> {e['fin']}"
+        + (f" ({e['ubicacion']})" if e["ubicacion"] else "")
+        for e in eventos
+    )
+
+
+@herramienta(
+    "Crea un evento en Google Calendar.",
+    {
+        "titulo": {"type": "string", "description": "Título del evento"},
+        "inicio_iso": {"type": "string", "description": "Fecha/hora inicio ISO-8601"},
+        "fin_iso": {"type": "string", "description": "Fecha/hora fin ISO-8601"},
+        "descripcion": {"type": "string", "description": "Descripción opcional"},
+        "ubicacion": {"type": "string", "description": "Ubicación opcional"},
+    },
+    ["titulo", "inicio_iso", "fin_iso"],
+    confirmar=True,
+    confirmar_siempre=True,
+    texto_confirmacion=lambda titulo="", inicio_iso="", **_: (
+        f"Voy a crear el evento «{titulo}» ({inicio_iso}) en Google Calendar. ¿Confirmás?"
+    ),
+)
+def google_calendar_crear_evento(titulo, inicio_iso, fin_iso, descripcion="", ubicacion=""):
+    ev = _google().crear_evento(titulo, inicio_iso, fin_iso, descripcion=descripcion, ubicacion=ubicacion)
+    return f"Evento creado: {ev.get('summary', titulo)} (ID: {ev.get('id', '')})."
+
+
+@herramienta(
+    "Modifica un evento existente en Google Calendar.",
+    {
+        "evento_id": {"type": "string", "description": "ID del evento"},
+        "titulo": {"type": "string", "description": "Nuevo título opcional"},
+        "inicio_iso": {"type": "string", "description": "Nuevo inicio ISO-8601 opcional"},
+        "fin_iso": {"type": "string", "description": "Nuevo fin ISO-8601 opcional"},
+        "descripcion": {"type": "string", "description": "Nueva descripción opcional"},
+    },
+    ["evento_id"],
+    confirmar=True,
+    confirmar_siempre=True,
+    texto_confirmacion=lambda evento_id="", **_: f"Voy a modificar el evento {evento_id}. ¿Confirmás?",
+)
+def google_calendar_modificar_evento(evento_id, titulo=None, inicio_iso=None, fin_iso=None, descripcion=None):
+    ev = _google().modificar_evento(evento_id, titulo=titulo, inicio_iso=inicio_iso, fin_iso=fin_iso, descripcion=descripcion)
+    return f"Evento {ev.get('id', evento_id)} actualizado."
+
+
+@herramienta(
+    "Elimina un evento de Google Calendar (requiere confirmación explícita).",
+    {"evento_id": {"type": "string", "description": "ID del evento a eliminar"}},
+    ["evento_id"],
+    confirmar=True,
+    confirmar_siempre=True,
+    texto_confirmacion=lambda evento_id="", **_: f"Voy a eliminar el evento {evento_id} de Google Calendar. ¿Confirmás?",
+)
+def google_calendar_eliminar_evento(evento_id):
+    _google().eliminar_evento(evento_id)
+    return f"Evento {evento_id} eliminado."
+
+
+@herramienta(
+    "Consulta disponibilidad (franjas ocupadas) en Google Calendar entre dos fechas ISO-8601.",
+    {
+        "inicio_iso": {"type": "string", "description": "Inicio ISO-8601"},
+        "fin_iso": {"type": "string", "description": "Fin ISO-8601"},
+    },
+    ["inicio_iso", "fin_iso"],
+)
+def google_calendar_disponibilidad(inicio_iso, fin_iso):
+    ocupado = _google().consultar_disponibilidad(inicio_iso, fin_iso)
+    if not ocupado:
+        return "Tenés el calendario completamente libre en ese horario."
+    return "Franjas ocupadas:\n" + "\n".join(f"- {b.get('start')} a {b.get('end')}" for b in ocupado)
+
+
+@herramienta(
+    "Agrega un recordatorio al evento de Google Calendar.",
+    {
+        "evento_id": {"type": "string", "description": "ID del evento"},
+        "minutos_antes": {"type": "integer", "description": "Minutos antes del evento (default 15)"},
+    },
+    ["evento_id"],
+)
+def google_calendar_recordatorio(evento_id, minutos_antes=15):
+    _google().crear_recordatorio_evento(evento_id, minutos_antes=minutos_antes)
+    return f"Recordatorio configurado {minutos_antes} minutos antes para el evento {evento_id}."
+
+
+@herramienta(
+    "Consulta o busca correos en Gmail.",
+    {
+        "maximo": {"type": "integer", "description": "Cantidad máxima de correos (default 10)"},
+        "consulta": {"type": "string", "description": "Filtro estilo Gmail (remitente, asunto, palabra clave)"},
+    },
+)
+def gmail_listar_correos(maximo=10, consulta=""):
+    correos = _google().listar_correos(maximo=maximo, consulta=consulta)
+    if not correos:
+        return "No encontré correos con ese criterio."
+    return "\n".join(
+        f"[{c['id']}] {'[NO LEÍDO] ' if c['no_leido'] else ''}{c['de']} — {c['asunto']} ({c['fecha']})"
+        for c in correos
+    )
+
+
+@herramienta(
+    "Lee el contenido completo de un correo de Gmail por su ID.",
+    {"mensaje_id": {"type": "string", "description": "ID del mensaje de Gmail"}},
+    ["mensaje_id"],
+)
+def gmail_leer_correo(mensaje_id):
+    c = _google().leer_correo(mensaje_id)
+    return f"De: {c['de']}\nAsunto: {c['asunto']}\nFecha: {c['fecha']}\n\n{c['cuerpo']}"
+
+
+@herramienta(
+    "Crea un borrador de correo o respuesta en Gmail.",
+    {
+        "para": {"type": "string", "description": "Destinatario"},
+        "asunto": {"type": "string", "description": "Asunto"},
+        "cuerpo": {"type": "string", "description": "Cuerpo del mensaje"},
+        "thread_id": {"type": "string", "description": "ID del hilo si es respuesta"},
+    },
+    ["para", "asunto", "cuerpo"],
+)
+def gmail_crear_borrador(para, asunto, cuerpo, thread_id=""):
+    borrador = _google().crear_borrador(para, asunto, cuerpo, thread_id=thread_id)
+    return f"Borrador creado en Gmail (ID: {borrador.get('id', '')})."
+
+
+@herramienta(
+    "Envía un correo electrónico mediante Gmail únicamente tras confirmación explícita.",
+    {
+        "para": {"type": "string", "description": "Destinatario"},
+        "asunto": {"type": "string", "description": "Asunto"},
+        "cuerpo": {"type": "string", "description": "Cuerpo del mensaje"},
+        "thread_id": {"type": "string", "description": "ID del hilo si es respuesta"},
+    },
+    ["para", "asunto", "cuerpo"],
+    confirmar=True,
+    confirmar_siempre=True,
+    texto_confirmacion=lambda para="", asunto="", **_: (
+        f"Voy a enviar un correo por Gmail a {para} con asunto «{asunto}». ¿Confirmás?"
+    ),
+)
+def gmail_enviar_correo(para, asunto, cuerpo, thread_id=""):
+    res = _google().enviar_correo(para, asunto, cuerpo, thread_id=thread_id)
+    return f"Correo enviado por Gmail (ID: {res.get('id', '')})."
+
+
+@herramienta(
+    "Marca un correo de Gmail como leído o no leído.",
+    {
+        "mensaje_id": {"type": "string", "description": "ID del mensaje"},
+        "leido": {"type": "boolean", "description": "True para leído, False para no leído"},
+    },
+    ["mensaje_id", "leido"],
+)
+def gmail_marcar_leido(mensaje_id, leido=True):
+    _google().marcar_correo_leido(mensaje_id, leido=bool(leido))
+    return f"Correo {mensaje_id} marcado como {'leído' if leido else 'no leído'}."
+
+
+@herramienta(
+    "Lista o busca archivos y carpetas en Google Drive.",
+    {
+        "consulta": {"type": "string", "description": "Texto a buscar en el nombre"},
+        "carpeta_id": {"type": "string", "description": "ID de carpeta padre opcional"},
+        "maximo": {"type": "integer", "description": "Máximo de resultados"},
+    },
+)
+def drive_listar_archivos(consulta="", carpeta_id="", maximo=20):
+    archivos = _google().listar_archivos_drive(consulta=consulta, carpeta_id=carpeta_id, maximo=maximo)
+    if not archivos:
+        return "No encontré archivos en Google Drive."
+    return "\n".join(f"[{a['id']}] {a['name']} ({a.get('mimeType', '')})" for a in archivos)
+
+
+@herramienta(
+    "Consulta los metadatos de un archivo en Google Drive.",
+    {"archivo_id": {"type": "string", "description": "ID del archivo"}},
+    ["archivo_id"],
+)
+def drive_metadatos(archivo_id):
+    return json.dumps(_google().obtener_metadatos_drive(archivo_id), ensure_ascii=False, indent=2)
+
+
+@herramienta(
+    "Lee el contenido de un documento compatible de Google Drive (Docs, Sheets o texto).",
+    {"archivo_id": {"type": "string", "description": "ID del archivo"}},
+    ["archivo_id"],
+)
+def drive_leer_documento(archivo_id):
+    return _google().leer_documento_drive(archivo_id)
+
+
+@herramienta(
+    "Descarga un archivo de Google Drive a una ruta local permitida.",
+    {
+        "archivo_id": {"type": "string", "description": "ID del archivo en Drive"},
+        "destino_local": {"type": "string", "description": "Ruta local de destino"},
+    },
+    ["archivo_id", "destino_local"],
+    confirmar=True,
+)
+def drive_descargar_archivo(archivo_id, destino_local):
+    seguro = _ruta_segura(destino_local)
+    guardado = _google().descargar_archivo_drive(archivo_id, seguro)
+    return f"Archivo descargado en {guardado}."
+
+
+@herramienta(
+    "Sube un archivo local permitido a Google Drive.",
+    {
+        "ruta_local": {"type": "string", "description": "Ruta del archivo local"},
+        "carpeta_id": {"type": "string", "description": "ID de carpeta destino opcional"},
+        "nombre_remoto": {"type": "string", "description": "Nombre opcional en Drive"},
+    },
+    ["ruta_local"],
+    confirmar=True,
+    confirmar_siempre=True,
+    texto_confirmacion=lambda ruta_local="", **_: f"Voy a subir «{ruta_local}» a Google Drive. ¿Confirmás?",
+)
+def drive_subir_archivo(ruta_local, carpeta_id="", nombre_remoto=""):
+    seguro = _ruta_segura(ruta_local)
+    res = _google().subir_archivo_drive(seguro, carpeta_id=carpeta_id, nombre_remoto=nombre_remoto)
+    return f"Archivo subido a Drive: {res.get('name', '')} (ID: {res.get('id', '')})."
+
+
+@herramienta(
+    "Crea una carpeta en Google Drive.",
+    {
+        "nombre": {"type": "string", "description": "Nombre de la carpeta"},
+        "padre_id": {"type": "string", "description": "ID de carpeta padre opcional"},
+    },
+    ["nombre"],
+    confirmar=True,
+)
+def drive_crear_carpeta(nombre, padre_id=""):
+    res = _google().crear_carpeta_drive(nombre, padre_id=padre_id)
+    return f"Carpeta creada en Drive: {res.get('name', nombre)} (ID: {res.get('id', '')})."
+
+
+@herramienta(
+    "Mueve o renombra un archivo en Google Drive.",
+    {
+        "archivo_id": {"type": "string", "description": "ID del archivo"},
+        "nuevo_nombre": {"type": "string", "description": "Nuevo nombre opcional"},
+        "nueva_carpeta_id": {"type": "string", "description": "ID de nueva carpeta opcional"},
+    },
+    ["archivo_id"],
+    confirmar=True,
+    confirmar_siempre=True,
+    texto_confirmacion=lambda archivo_id="", **_: f"Voy a reorganizar/renombrar el archivo {archivo_id} en Drive. ¿Confirmás?",
+)
+def drive_organizar_archivo(archivo_id, nuevo_nombre="", nueva_carpeta_id=""):
+    res = _google().organizar_archivo_drive(
+        archivo_id, nuevo_nombre=nuevo_nombre, nueva_carpeta_id=nueva_carpeta_id
+    )
+    return f"Archivo actualizado en Drive: {res.get('name', archivo_id)}."
+
+
+try:
+    cargar_habilidades()
+except Exception:
+    pass

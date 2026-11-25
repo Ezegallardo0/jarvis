@@ -95,7 +95,8 @@ SPOTIFY_CLIENT_ID = os.environ.get("SPOTIFY_CLIENT_ID", "")
 SPOTIFY_REDIRECT_URI = "http://127.0.0.1:8888/callback"
 
 # --- Datos y seguridad ---
-CARPETA_DATOS = Path.home() / ".jarvis"
+CARPETA_DATOS = Path(os.environ.get("JARVIS_DATA_DIR", str(Path.home() / ".jarvis"))).expanduser()
+CARPETA_MODELOS = Path(os.environ.get("JARVIS_MODELS_DIR", str(CARPETA_DATOS / "models"))).expanduser()
 # Solo podrá buscar, leer y modificar archivos dentro de estas carpetas.
 CARPETAS_PERMITIDAS = [Path.home()]
 

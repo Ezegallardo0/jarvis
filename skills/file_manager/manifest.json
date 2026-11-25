@@ -1,0 +1,14 @@
+{
+  "id": "file_manager",
+  "name": "Gestor Seguro de Archivos",
+  "version": "1.0.0",
+  "description": "Inspección y resumen de carpetas dentro de las rutas autorizadas.",
+  "author": "JARVIS Core",
+  "enabled_by_default": true,
+  "permissions": ["filesystem_read"],
+  "dependencies": [],
+  "tools": ["skill_resumen_carpeta"],
+  "default_config": {
+    "allowed_paths": []
+  }
+}

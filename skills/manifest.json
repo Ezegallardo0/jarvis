@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "skills_directory": "skills",
+  "custom_directory": "skills/custom_skills",
+  "builtin_skills": [
+    "github",
+    "spotify",
+    "weather",
+    "file_manager"
+  ],
+  "security_policy": {
+    "require_confirmation_for_custom_skills": true,
+    "enforce_manifest_permissions": true,
+    "block_disabled_skill_tools": true
+  }
+}

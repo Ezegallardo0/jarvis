@@ -5,7 +5,12 @@ def catalogo_conexiones(
     spotify_client_id="",
     github_token_guardado=False,
     ubicacion="",
+    google_estado=None,
 ):
+    google_estado = google_estado or {}
+    google_conectado = bool(google_estado.get("connected"))
+    google_cliente = bool(google_estado.get("client_configured"))
+    google_email = google_estado.get("email", "")
     return [
         {
             "id": "spotify",
@@ -53,11 +58,19 @@ def catalogo_conexiones(
             "id": "google",
             "nombre": "Google Workspace",
             "icono": "G",
-            "estado": "pendiente",
-            "estado_texto": "Pendiente de implementar OAuth oficial",
-            "descripcion": "Calendar, Gmail y Tasks no están conectados todavía.",
-            "detalle": "Gmail actualmente solo se abre en el navegador; no se lee ni modifica la bandeja.",
-            "accion": "",
+            "estado": "conectado" if google_conectado else ("configurado" if google_cliente else "pendiente"),
+            "estado_texto": (
+                f"Conectado como {google_email or 'cuenta de Google'}"
+                if google_conectado
+                else (
+                    "Client ID configurado; falta autorizar con OAuth"
+                    if google_cliente
+                    else "Pendiente de configurar Client ID y autorizar OAuth 2.0"
+                )
+            ),
+            "descripcion": "Integración con Google Calendar, Gmail y Google Drive mediante OAuth 2.0 PKCE.",
+            "detalle": "Los tokens se guardan en el Administrador de credenciales de Windows.",
+            "accion": "google",
         },
         {
             "id": "whatsapp",
@@ -73,11 +86,15 @@ def catalogo_conexiones(
             "id": "drive",
             "nombre": "Google Drive",
             "icono": "D",
-            "estado": "pendiente",
-            "estado_texto": "Pendiente de implementar OAuth",
-            "descripcion": "No hay acceso API configurado en esta versión.",
-            "detalle": "Se mostrará como conectado solo después de implementar y probar OAuth.",
-            "accion": "",
+            "estado": "conectado" if google_conectado else "pendiente",
+            "estado_texto": (
+                f"Conectado mediante Google Workspace ({google_email or 'OAuth activo'})"
+                if google_conectado
+                else "Se habilita al conectar Google Workspace con OAuth 2.0"
+            ),
+            "descripcion": "Listado, búsqueda, lectura, descarga, subida y organización de archivos.",
+            "detalle": "Usa el mismo flujo OAuth 2.0 PKCE seguro de Google Workspace.",
+            "accion": "google",
         },
         {
             "id": "youtube",

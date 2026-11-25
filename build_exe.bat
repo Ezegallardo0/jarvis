@@ -9,7 +9,7 @@ if not exist "venv\Scripts\python.exe" (
     exit /b 1
 )
 
-"venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean --onefile --windowed --name Jarvis --icon jarvis.ico --add-data "jarvis.ico;." --add-data "hud;hud" --collect-data faster_whisper launcher.py
+"venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean --onefile --windowed --name Jarvis --icon jarvis.ico --add-data "jarvis.ico;." --add-data "hud;hud" --add-data "skills;skills" --collect-data faster_whisper launcher.py
 if errorlevel 1 (
     echo ERROR: No se pudo crear dist\Jarvis.exe.
     exit /b 1

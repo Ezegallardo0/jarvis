@@ -1,0 +1,14 @@
+{
+  "id": "github",
+  "name": "GitHub Explorer",
+  "version": "1.0.0",
+  "description": "Consulta repositorios, issues y estado de usuario en GitHub mediante la API oficial.",
+  "author": "JARVIS Core",
+  "enabled_by_default": true,
+  "permissions": ["network"],
+  "dependencies": ["httpx"],
+  "tools": ["skill_github_resumen_repo"],
+  "default_config": {
+    "timeout_segundos": 10
+  }
+}

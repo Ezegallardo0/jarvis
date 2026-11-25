@@ -3088,6 +3088,7 @@ class Lanzador:
                     self._clave_guardada_o_entorno("github")
                 ),
                 ubicacion=config.UBICACION,
+                google_estado=__import__("google_integration").estado_conexion(),
             ),
             "ubicacion": config.UBICACION,
             "vision_modelo": config.MODELO_VISION,
@@ -3940,7 +3941,17 @@ def main():
         action="store_true",
         help="inicia oculto y espera la palabra de activación si está habilitada",
     )
+    parser.add_argument(
+        "--automation-service",
+        action="store_true",
+        help="ejecuta el servicio independiente de automatizaciones persistentes",
+    )
     args = parser.parse_args()
+    if args.automation_service:
+        import automation_service
+
+        automation_service.ejecutar_servicio()
+        return
     raiz = tk.Tk()
     raiz.withdraw()  # no mostrar esta ventana: la interfaz principal es el HUD
     raiz.iconbitmap(str(Path(__file__).resolve().parent / "jarvis.ico"))

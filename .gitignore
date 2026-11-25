@@ -1,0 +1,60 @@
+# Entornos virtuales
+venv/
+.venv/
+env/
+ENV/
+
+# Python cache y compilados
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+
+# Empaquetado y artefactos compilados
+build/
+dist/
+*.exe
+*.msi
+*.spec.bak
+
+# Modelos de IA y pesos descargados
+models/
+*.onnx
+*.onnx.json
+*.gguf
+*.bin
+*.safetensors
+*.pt
+
+# Datos de usuario, bases de datos y logs locales
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.jsonl
+*.log
+*.tmp
+.jarvis/
+
+# Configuración local y secretos
+config_local.py
+.env
+.env.*
+client_secret*.json
+credentials.json
+token.json
+
+# Tests y cobertura
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Temporales / IDE
+scratch/
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini

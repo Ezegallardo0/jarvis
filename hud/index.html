@@ -1316,6 +1316,14 @@ button:focus-visible,a:focus-visible,[tabindex="0"]:focus-visible{
       <svg viewBox="0 0 24 24"><path d="M7 14a5 5 0 1 1 4.58-3H22v4h-3v3h-4v-3h-3.42A5 5 0 0 1 7 14Zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/></svg>
       <span>API Keys</span>
     </li>
+    <li class="nav-item" id="nav-memoria" role="button" tabindex="0" aria-label="Memoria, Proyectos y Tareas" title="Memoria y Proyectos">
+      <svg viewBox="0 0 24 24"><path d="M4 4h16v4H4V4Zm0 6h16v4H4v-4Zm0 6h10v4H4v-4Z"/></svg>
+      <span>Memoria</span>
+    </li>
+    <li class="nav-item" id="nav-automatizaciones" role="button" tabindex="0" aria-label="Habilidades y Automatizaciones" title="Habilidades y Automatizaciones">
+      <svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/></svg>
+      <span>Automatizaciones</span>
+    </li>
   </ul>
 
   <div class="sidebar-footer">
@@ -1744,6 +1752,15 @@ button:focus-visible,a:focus-visible,[tabindex="0"]:focus-visible{
       <button class="cfg-tab" id="tab-apikey" type="button" role="tab" aria-selected="false" aria-controls="page-apikey" data-settings-tab="apikey">
         <span aria-hidden="true">◇</span><span>API Keys</span>
       </button>
+      <button class="cfg-tab" id="tab-memoria" type="button" role="tab" aria-selected="false" aria-controls="page-memoria" data-settings-tab="memoria">
+        <span aria-hidden="true">▤</span><span>Memoria y Proyectos</span>
+      </button>
+      <button class="cfg-tab" id="tab-habilidades" type="button" role="tab" aria-selected="false" aria-controls="page-habilidades" data-settings-tab="habilidades">
+        <span aria-hidden="true">❖</span><span>Habilidades</span>
+      </button>
+      <button class="cfg-tab" id="tab-automatizaciones" type="button" role="tab" aria-selected="false" aria-controls="page-automatizaciones" data-settings-tab="automatizaciones">
+        <span aria-hidden="true">⚡</span><span>Automatizaciones</span>
+      </button>
     </nav>
 
     <main class="cfg-content">
@@ -2008,6 +2025,25 @@ button:focus-visible,a:focus-visible,[tabindex="0"]:focus-visible{
           <input id="cfg-modelo-vision" autocomplete="off">
           <div class="settings-actions"><button id="cfg-descargar-vision" type="button">Descargar Modelo Visual</button></div>
         </div>
+        <div style="margin-top:14px;border-top:1px solid var(--ln2);padding-top:12px">
+          <h4>Google Workspace (Calendar, Gmail, Drive — OAuth 2.0)</h4>
+          <p class="hint" id="cfg-google-status">Consultando estado de Google…</p>
+          <div class="cfg-two-col">
+            <div>
+              <label for="cfg-google-client-id">OAuth Client ID</label>
+              <input id="cfg-google-client-id" autocomplete="off" placeholder="xxxx.apps.googleusercontent.com">
+            </div>
+            <div>
+              <label for="cfg-google-client-secret">OAuth Client Secret (opcional Desktop)</label>
+              <input id="cfg-google-client-secret" type="password" autocomplete="off" placeholder="Client Secret si aplica">
+            </div>
+          </div>
+          <div class="settings-actions">
+            <button id="cfg-google-save" type="button">Guardar Client ID</button>
+            <button id="cfg-google-connect" class="pri" type="button">Conectar Google</button>
+            <button id="cfg-google-disconnect" type="button">Desconectar</button>
+          </div>
+        </div>
         </section>
       </section>
 
@@ -2092,6 +2128,14 @@ button:focus-visible,a:focus-visible,[tabindex="0"]:focus-visible{
             <p class="hint" id="motor-error-detail"></p>
           </article>
         </div>
+        <section class="cfg-section-block" style="margin-top:12px">
+          <h4>Diagnóstico y Pruebas Automatizadas</h4>
+          <p class="hint">Ejecuta la suite local de pruebas (memoria, habilidades, Google mocks, automatizaciones y permisos).</p>
+          <div class="settings-actions">
+            <button id="btn-run-diagnostics" type="button">Ejecutar Tests Automatizados</button>
+          </div>
+          <pre id="diagnostics-output" class="hint" style="margin-top:8px;max-height:160px;overflow:auto;white-space:pre-wrap;font-family:var(--f-mono);font-size:11px"></pre>
+        </section>
       </section>
 
       <section class="cfg-page" id="page-apikey" role="tabpanel" aria-labelledby="tab-apikey">
@@ -2141,6 +2185,108 @@ button:focus-visible,a:focus-visible,[tabindex="0"]:focus-visible{
             </div>
           </section>
         </div>
+      </section>
+      <section class="cfg-page" id="page-memoria" role="tabpanel" aria-labelledby="tab-memoria">
+        <h3>Memoria Estructurada, Proyectos y Tareas</h3>
+        <p class="hint">Administrá qué recuerda JARVIS por categoría. Los datos sensibles o claves se bloquean automáticamente.</p>
+        <div class="cfg-two-col" style="margin-bottom:10px">
+          <div>
+            <label for="mem-filtro-cat">Filtrar categoría</label>
+            <select id="mem-filtro-cat">
+              <option value="">Todas</option>
+              <option value="perfil">Perfil</option>
+              <option value="preferencias">Preferencias</option>
+              <option value="proyectos">Proyectos</option>
+              <option value="tareas">Tareas</option>
+              <option value="conversaciones">Conversaciones</option>
+              <option value="contexto_temporal">Contexto temporal</option>
+            </select>
+          </div>
+          <div>
+            <label for="mem-buscar">Buscar por palabra clave o proyecto</label>
+            <input id="mem-buscar" placeholder="Buscar...">
+          </div>
+        </div>
+        <div class="cfg-section-block">
+          <h4>Agregar recuerdo, proyecto o tarea</h4>
+          <div class="cfg-two-col">
+            <div>
+              <label for="mem-nueva-cat">Categoría</label>
+              <select id="mem-nueva-cat">
+                <option value="perfil">Perfil</option>
+                <option value="preferencias">Preferencias</option>
+                <option value="proyectos">Proyectos</option>
+                <option value="tareas">Tareas</option>
+                <option value="contexto_temporal">Contexto temporal</option>
+              </select>
+            </div>
+            <div>
+              <label for="mem-nuevo-proyecto">Proyecto (opcional)</label>
+              <input id="mem-nuevo-proyecto" placeholder="Ej: JARVIS">
+            </div>
+          </div>
+          <label for="mem-nuevo-titulo" style="margin-top:8px">Título</label>
+          <input id="mem-nuevo-titulo" placeholder="Título breve">
+          <label for="mem-nuevo-contenido" style="margin-top:8px">Contenido / Detalle</label>
+          <input id="mem-nuevo-contenido" placeholder="Ej: Prefiero respuestas breves y directas">
+          <div class="settings-actions">
+            <button id="mem-agregar-btn" class="pri" type="button">Guardar en memoria</button>
+            <button id="mem-recargar-btn" type="button">Actualizar lista</button>
+          </div>
+          <p class="hint" id="mem-status"></p>
+        </div>
+        <ul id="mem-lista" class="motor-list" style="margin-top:10px;max-height:240px;overflow:auto"></ul>
+      </section>
+
+      <section class="cfg-page" id="page-habilidades" role="tabpanel" aria-labelledby="tab-habilidades">
+        <h3>Habilidades Modulares (Skills)</h3>
+        <p class="hint">Activá o desactivá módulos independientes. Las habilidades desactivadas no exponen ni ejecutan herramientas.</p>
+        <div id="skills-lista" class="system-capability-grid" style="margin-top:10px"></div>
+        <section class="cfg-section-block" style="margin-top:12px">
+          <h4>Registro reciente de habilidades</h4>
+          <ul id="skills-logs" class="motor-list" style="max-height:150px;overflow:auto"></ul>
+        </section>
+      </section>
+
+      <section class="cfg-page" id="page-automatizaciones" role="tabpanel" aria-labelledby="tab-automatizaciones">
+        <h3>Automatizaciones Persistentes y Servicio de Windows</h3>
+        <div class="cfg-summary-grid">
+          <article class="cfg-summary-card">
+            <span class="summary-label">Servicio Windows</span>
+            <strong class="summary-value" id="auto-svc-estado">Consultando…</strong>
+            <span class="summary-detail" id="auto-svc-detalle">IPC Named Pipe local</span>
+          </article>
+          <article class="cfg-summary-card">
+            <span class="summary-label">Inicio automático</span>
+            <strong class="summary-value" id="auto-svc-autostart">No</strong>
+            <span class="summary-detail">Ejecución en segundo plano al iniciar Windows</span>
+          </article>
+        </div>
+        <div class="settings-actions" style="margin-bottom:12px">
+          <button id="auto-svc-start" class="pri" type="button">Iniciar Servicio</button>
+          <button id="auto-svc-stop" type="button">Detener Servicio</button>
+          <button id="auto-svc-toggle-auto" type="button">Alternar Inicio Automático</button>
+        </div>
+        <section class="cfg-section-block">
+          <h4>Nueva automatización</h4>
+          <div class="cfg-two-col">
+            <div>
+              <label for="auto-titulo">Título</label>
+              <input id="auto-titulo" placeholder="Ej: Revisar agenda">
+            </div>
+            <div>
+              <label for="auto-fecha">Fecha y hora (YYYY-MM-DDTHH:MM)</label>
+              <input id="auto-fecha" placeholder="2026-11-26T09:00">
+            </div>
+          </div>
+          <label for="auto-intervalo" style="margin-top:8px">Recurrencia en minutos (0 = una sola vez)</label>
+          <input id="auto-intervalo" type="number" min="0" value="0">
+          <div class="settings-actions">
+            <button id="auto-crear-btn" class="pri" type="button">Programar automatización</button>
+          </div>
+          <p class="hint" id="auto-status"></p>
+        </section>
+        <ul id="auto-lista" class="motor-list" style="margin-top:10px;max-height:200px;overflow:auto"></ul>
       </section>
     </main>
 
@@ -2978,6 +3124,8 @@ const paginasConfiguracionPorNav = {
   'nav-motor':'motor',
   'nav-config':'general',
   'nav-keys':'apikey',
+  'nav-memoria':'memoria',
+  'nav-automatizaciones':'automatizaciones',
 };
 for(const [id, pagina] of Object.entries(paginasConfiguracionPorNav)){
   $(id).onclick = () => {
@@ -3005,6 +3153,10 @@ function mostrarPaginaConfiguracion(nombre){
   document.querySelectorAll('.cfg-page').forEach(page => {
     page.classList.toggle('activa', page.id === `page-${nombre}`);
   });
+  if(nombre === 'memoria' && typeof cargarMemoriaHud === 'function') cargarMemoriaHud();
+  if(nombre === 'habilidades' && typeof cargarHabilidadesHud === 'function') cargarHabilidadesHud();
+  if(nombre === 'automatizaciones' && typeof cargarAutomatizacionesHud === 'function') cargarAutomatizacionesHud();
+  if(nombre === 'conexiones' && typeof cargarGoogleHud === 'function') cargarGoogleHud();
 }
 document.querySelectorAll('[data-settings-tab]').forEach(tab => {
   tab.onclick = () => mostrarPaginaConfiguracion(tab.dataset.settingsTab);
@@ -3564,6 +3716,162 @@ reloj(); setInterval(reloj, 1000);
 })();
 
 setEstado('espera', 'Esperando órdenes…');
+
+/* ---------- Módulos Avanzados HUD (Memoria, Skills, Google, Automatizaciones, Diagnóstico) ---------- */
+async function apiGet(ruta){
+  const r = await fetch(ruta, {headers:{'X-Token':T}});
+  return r.json();
+}
+async function cargarMemoriaHud(){
+  const cat = encodeURIComponent($('mem-filtro-cat')?.value || '');
+  const q = encodeURIComponent($('mem-buscar')?.value || '');
+  const d = await apiGet(`/api/memory?categoria=${cat}&q=${q}`);
+  const lista = $('mem-lista');
+  if(!lista || !d?.ok) return;
+  lista.innerHTML = '';
+  if(!d.items.length){
+    lista.innerHTML = '<li>Sin recuerdos registrados con ese filtro.</li>';
+    return;
+  }
+  for(const item of d.items){
+    const li = document.createElement('li');
+    li.style.display = 'flex'; li.style.justifyContent = 'space-between'; li.style.gap = '8px';
+    const proy = item.proyecto ? ` [${item.proyecto}]` : '';
+    const tit = item.titulo ? ` ${item.titulo}:` : '';
+    const span = document.createElement('span');
+    span.textContent = `#${item.id} [${item.categoria}]${proy}${tit} ${item.contenido}`;
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.textContent = 'Eliminar';
+    btn.onclick = async () => {
+      await post('/api/memory', {action:'delete', id:item.id});
+      cargarMemoriaHud();
+    };
+    li.append(span, btn);
+    lista.append(li);
+  }
+}
+if($('mem-recargar-btn')) $('mem-recargar-btn').onclick = cargarMemoriaHud;
+if($('mem-filtro-cat')) $('mem-filtro-cat').onchange = cargarMemoriaHud;
+if($('mem-buscar')) $('mem-buscar').oninput = cargarMemoriaHud;
+if($('mem-agregar-btn')) $('mem-agregar-btn').onclick = async () => {
+  const res = await post('/api/memory', {
+    action:'add',
+    categoria:$('mem-nueva-cat').value,
+    proyecto:$('mem-nuevo-proyecto').value,
+    titulo:$('mem-nuevo-titulo').value,
+    contenido:$('mem-nuevo-contenido').value,
+  });
+  if(res){
+    $('mem-status').textContent = res.mensaje || 'Guardado.';
+    $('mem-nuevo-contenido').value = '';
+    cargarMemoriaHud();
+  }
+};
+
+async function cargarHabilidadesHud(){
+  const d = await apiGet('/api/skills');
+  const cont = $('skills-lista');
+  if(!cont || !d?.ok) return;
+  cont.innerHTML = '';
+  for(const sk of d.skills){
+    const card = document.createElement('article');
+    card.className = 'system-capability-card';
+    card.innerHTML = `<h4>${sk.name} <small>(v${sk.version})</small></h4>` +
+      `<p>${sk.description}</p>` +
+      `<p class="hint">Permisos: ${(sk.permissions||[]).join(', ') || 'ninguno'}</p>`;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = sk.enabled ? 'pri' : '';
+    btn.textContent = sk.enabled ? 'Activa (Desactivar)' : 'Desactivada (Activar)';
+    btn.onclick = async () => {
+      await post('/api/skills', {action:'toggle', id:sk.id, enabled:!sk.enabled});
+      cargarHabilidadesHud();
+    };
+    card.append(btn);
+    cont.append(card);
+  }
+  const logs = $('skills-logs');
+  if(logs){
+    logs.innerHTML = (d.logs||[]).slice(0,12).map(l => `<li>${l.timestamp} · ${l.skill_id} · ${l.accion} (${l.estado})</li>`).join('') || '<li>Sin eventos recientes.</li>';
+  }
+}
+
+async function cargarGoogleHud(){
+  const d = await apiGet('/api/google');
+  const st = $('cfg-google-status');
+  if(!st || !d?.ok) return;
+  if(d.connected) st.textContent = `Conectado como ${d.email || 'cuenta Google'} (Calendar, Gmail, Drive activos).`;
+  else if(d.client_configured) st.textContent = 'Client ID configurado. Hacé clic en «Conectar Google» para autorizar OAuth 2.0.';
+  else st.textContent = 'Pendiente de configurar Client ID de Google Cloud.';
+}
+if($('cfg-google-save')) $('cfg-google-save').onclick = async () => {
+  const res = await post('/api/google', {action:'configure', client_id:$('cfg-google-client-id').value, client_secret:$('cfg-google-client-secret').value});
+  if(res) cargarGoogleHud();
+};
+if($('cfg-google-connect')) $('cfg-google-connect').onclick = async () => {
+  $('cfg-google-status').textContent = 'Abriendo navegador para autorización OAuth 2.0…';
+  const res = await post('/api/google', {action:'connect'});
+  if(res) cargarGoogleHud();
+};
+if($('cfg-google-disconnect')) $('cfg-google-disconnect').onclick = async () => {
+  const res = await post('/api/google', {action:'disconnect'});
+  if(res) cargarGoogleHud();
+};
+
+let _autoAutostart = false;
+async function cargarAutomatizacionesHud(){
+  const d = await apiGet('/api/automations');
+  if(!d?.ok) return;
+  const svc = d.service || {};
+  _autoAutostart = !!svc.autostart_registered;
+  if($('auto-svc-estado')) $('auto-svc-estado').textContent = svc.running ? `Activo (PID ${svc.pid})` : 'Detenido';
+  if($('auto-svc-autostart')) $('auto-svc-autostart').textContent = _autoAutostart ? 'Habilitado' : 'Deshabilitado';
+  const ul = $('auto-lista');
+  if(!ul) return;
+  ul.innerHTML = '';
+  for(const t of d.tasks || []){
+    const li = document.createElement('li');
+    li.style.display = 'flex'; li.style.justifyContent = 'space-between'; li.style.gap = '6px';
+    const txt = document.createElement('span');
+    txt.textContent = `[${t.status}] ${t.title} · ${t.schedule_at} (${t.run_count} ejec.)`;
+    const box = document.createElement('span');
+    const bPause = document.createElement('button');
+    bPause.type = 'button';
+    bPause.textContent = t.status === 'paused' ? 'Reanudar' : 'Pausar';
+    bPause.onclick = async () => {
+      await post('/api/automations', {action: t.status === 'paused' ? 'resume' : 'pause', id: t.id});
+      cargarAutomatizacionesHud();
+    };
+    const bDel = document.createElement('button');
+    bDel.type = 'button'; bDel.textContent = 'Eliminar';
+    bDel.onclick = async () => {
+      await post('/api/automations', {action:'delete', id:t.id});
+      cargarAutomatizacionesHud();
+    };
+    box.append(bPause, bDel);
+    li.append(txt, box);
+    ul.append(li);
+  }
+}
+if($('auto-svc-start')) $('auto-svc-start').onclick = async () => { await post('/api/automations', {action:'service_start'}); cargarAutomatizacionesHud(); };
+if($('auto-svc-stop')) $('auto-svc-stop').onclick = async () => { await post('/api/automations', {action:'service_stop'}); cargarAutomatizacionesHud(); };
+if($('auto-svc-toggle-auto')) $('auto-svc-toggle-auto').onclick = async () => { await post('/api/automations', {action:'service_autostart', enabled:!_autoAutostart}); cargarAutomatizacionesHud(); };
+if($('auto-crear-btn')) $('auto-crear-btn').onclick = async () => {
+  const res = await post('/api/automations', {
+    action:'create',
+    title:$('auto-titulo').value,
+    schedule_at:$('auto-fecha').value,
+    interval_seconds: Number($('auto-intervalo').value || 0) * 60,
+  });
+  if(res){ $('auto-status').textContent = 'Automatización programada.'; cargarAutomatizacionesHud(); }
+};
+
+if($('btn-run-diagnostics')) $('btn-run-diagnostics').onclick = async () => {
+  $('diagnostics-output').textContent = 'Ejecutando pruebas automatizadas…';
+  const r = await fetch('/api/diagnostics', {method:'POST', headers:H, body:'{}'});
+  const d = await r.json();
+  $('diagnostics-output').textContent = (d.ok ? '[OK]\n' : '[ERROR]\n') + (d.output || d.error || '');
+};
 
 </script>
 </body>

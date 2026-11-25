@@ -1,0 +1,14 @@
+{
+  "id": "weather",
+  "name": "Clima y Pronóstico",
+  "version": "1.0.0",
+  "description": "Pronóstico meteorológico real mediante Open-Meteo sin API key.",
+  "author": "JARVIS Core",
+  "enabled_by_default": true,
+  "permissions": ["network"],
+  "dependencies": ["httpx"],
+  "tools": ["skill_clima_ciudad"],
+  "default_config": {
+    "unidades": "metric"
+  }
+}

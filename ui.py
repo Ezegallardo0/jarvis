@@ -318,6 +318,51 @@ class Servidor:
                         srv.bus.desuscribir(q)
                         self.close_connection = True
                     return
+                if ruta == "/api/memory":
+                    import memory_system
+
+                    q = parse_qs(urlparse(self.path).query)
+                    cat = (q.get("categoria") or [""])[0] or None
+                    proy = (q.get("proyecto") or [""])[0] or None
+                    consulta = (q.get("q") or [""])[0]
+                    store = memory_system.obtener_store()
+                    items = store.buscar(consulta=consulta, categoria=cat, proyecto=proy, limite=50)
+                    cuerpo = json.dumps(
+                        {"ok": True, "items": items, "stats": store.resumen_estadisticas()},
+                        ensure_ascii=False,
+                    ).encode("utf-8")
+                    return self._enviar(200, "application/json; charset=utf-8", cuerpo)
+                if ruta == "/api/skills":
+                    import skills_manager
+
+                    mgr = skills_manager.obtener_manager()
+                    cuerpo = json.dumps(
+                        {"ok": True, "skills": mgr.listar(), "logs": mgr.leer_logs(limite=30)},
+                        ensure_ascii=False,
+                    ).encode("utf-8")
+                    return self._enviar(200, "application/json; charset=utf-8", cuerpo)
+                if ruta == "/api/google":
+                    import google_integration
+
+                    cuerpo = json.dumps(
+                        {"ok": True, **google_integration.estado_conexion()},
+                        ensure_ascii=False,
+                    ).encode("utf-8")
+                    return self._enviar(200, "application/json; charset=utf-8", cuerpo)
+                if ruta == "/api/automations":
+                    import automation_service
+
+                    store = automation_service.obtener_store()
+                    cuerpo = json.dumps(
+                        {
+                            "ok": True,
+                            "service": automation_service.estado_servicio(),
+                            "tasks": store.listar_tareas(limite=50),
+                            "runs": store.historial_ejecuciones(limite=20),
+                        },
+                        ensure_ascii=False,
+                    ).encode("utf-8")
+                    return self._enviar(200, "application/json; charset=utf-8", cuerpo)
                 self._enviar(404, "text/plain", b"No existe")
 
             def do_POST(self):
@@ -817,6 +862,127 @@ class Servidor:
                         srv.accion_spotify(str(datos.get("accion", "")))
                     except Exception as e:
                         resultado = {"ok": False, "error": str(e)}
+                elif ruta == "/api/memory":
+                    import memory_system
+
+                    store = memory_system.obtener_store()
+                    accion = datos.get("action")
+                    try:
+                        if accion == "add":
+                            resultado = {
+                                "ok": True,
+                                **store.agregar(
+                                    contenido=datos.get("contenido", ""),
+                                    categoria=datos.get("categoria", "perfil"),
+                                    titulo=datos.get("titulo", ""),
+                                    proyecto=datos.get("proyecto", ""),
+                                    metadata=datos.get("metadata") or {},
+                                    reemplazar_contradiccion=bool(datos.get("reemplazar_contradiccion")),
+                                ),
+                            }
+                        elif accion == "update":
+                            act = store.actualizar(
+                                int(datos["id"]),
+                                contenido=datos.get("contenido"),
+                                titulo=datos.get("titulo"),
+                                proyecto=datos.get("proyecto"),
+                                metadata=datos.get("metadata"),
+                            )
+                            resultado = {"ok": bool(act), "recuerdo": act}
+                        elif accion == "delete":
+                            resultado = {"ok": store.eliminar(int(datos["id"]))}
+                        else:
+                            resultado = {"ok": False, "error": "Acción de memoria desconocida."}
+                    except Exception as exc:
+                        resultado = {"ok": False, "error": str(exc)}
+                elif ruta == "/api/skills":
+                    import skills_manager
+
+                    mgr = skills_manager.obtener_manager()
+                    accion = datos.get("action")
+                    try:
+                        if accion == "toggle":
+                            sk = mgr.establecer_estado(str(datos["id"]), bool(datos.get("enabled")))
+                            resultado = {"ok": True, "skill": sk}
+                        elif accion == "config":
+                            sk = mgr.actualizar_config(str(datos["id"]), datos.get("config") or {})
+                            resultado = {"ok": True, "skill": sk}
+                        else:
+                            resultado = {"ok": False, "error": "Acción de habilidad desconocida."}
+                    except Exception as exc:
+                        resultado = {"ok": False, "error": str(exc)}
+                elif ruta == "/api/google":
+                    import google_integration
+
+                    accion = datos.get("action")
+                    try:
+                        if accion == "configure":
+                            google_integration.configurar_cliente_oauth(
+                                datos.get("client_id", ""),
+                                datos.get("client_secret", ""),
+                            )
+                            resultado = {"ok": True, **google_integration.estado_conexion()}
+                        elif accion == "connect":
+                            resultado = {"ok": True, **google_integration.iniciar_oauth_escritorio()}
+                        elif accion == "disconnect":
+                            resultado = {"ok": True, **google_integration.desconectar()}
+                        else:
+                            resultado = {"ok": False, "error": "Acción de Google desconocida."}
+                    except Exception as exc:
+                        resultado = {"ok": False, "error": str(exc)}
+                elif ruta == "/api/automations":
+                    import automation_service
+
+                    store = automation_service.obtener_store()
+                    accion = datos.get("action")
+                    try:
+                        if accion == "create":
+                            t = store.crear_tarea(
+                                title=datos.get("title", "Automatización"),
+                                schedule_at=datos["schedule_at"],
+                                task_type=datos.get("task_type", "scheduled"),
+                                payload=datos.get("payload") or {},
+                                interval_seconds=int(datos.get("interval_seconds") or 0),
+                                missed_policy=datos.get("missed_policy", "run_once"),
+                            )
+                            resultado = {"ok": True, "task": t}
+                        elif accion == "pause":
+                            resultado = {"ok": True, "task": store.pausar_tarea(str(datos["id"]))}
+                        elif accion == "resume":
+                            resultado = {"ok": True, "task": store.reanudar_tarea(str(datos["id"]))}
+                        elif accion == "delete":
+                            resultado = {"ok": True, "deleted": store.eliminar_tarea(str(datos["id"]))}
+                        elif accion == "service_start":
+                            resultado = {"ok": True, "service": automation_service.iniciar_servicio_segundo_plano()}
+                        elif accion == "service_stop":
+                            resultado = {"ok": True, "service": automation_service.detener_servicio_segundo_plano()}
+                        elif accion == "service_autostart":
+                            ok_as = automation_service.registrar_inicio_automatico(bool(datos.get("enabled", True)))
+                            resultado = {"ok": ok_as, "service": automation_service.estado_servicio()}
+                        else:
+                            resultado = {"ok": False, "error": "Acción de automatización desconocida."}
+                    except Exception as exc:
+                        resultado = {"ok": False, "error": str(exc)}
+                elif ruta == "/api/diagnostics":
+                    import subprocess
+                    import sys
+
+                    try:
+                        r = subprocess.run(
+                            [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"],
+                            capture_output=True,
+                            text=True,
+                            timeout=30,
+                            cwd=str(Path(__file__).resolve().parent),
+                        )
+                        salida = (r.stdout + "\n" + r.stderr).strip()
+                        resultado = {
+                            "ok": r.returncode == 0,
+                            "returncode": r.returncode,
+                            "output": salida[-3000:],
+                        }
+                    except Exception as exc:
+                        resultado = {"ok": False, "error": str(exc)}
                 else:
                     return self._enviar(404, "text/plain", b"No existe")
                 self._enviar(200, "application/json", json.dumps(resultado).encode())

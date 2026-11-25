@@ -90,8 +90,13 @@ Respuestas recibidas:
 {respuestas}"""
 
 
-def _sistema_base():
-    memoria = "\n".join(f"- {d}" for d in tools.cargar_memoria()) or "(nada todavía)"
+def _sistema_base(consulta=""):
+    try:
+        import memory_system
+
+        memoria = memory_system.obtener_store().formatear_para_prompt(consulta)
+    except Exception:
+        memoria = "\n".join(f"- {d}" for d in tools.cargar_memoria()) or "(nada todavía)"
     ahora = datetime.datetime.now().strftime("%A %d/%m/%Y %H:%M")
     return {
         "role": "system",
@@ -460,8 +465,8 @@ class Cerebro:
         self.ia_error = ""
         return None
 
-    def _sistema(self):
-        return _sistema_base()
+    def _sistema(self, consulta=""):
+        return _sistema_base(consulta)
 
     def _recortar(self):
         if len(self.historial) <= 30:
@@ -519,7 +524,7 @@ class Cerebro:
             try:
                 opciones_chat = {
                     "model": config.MODELO,
-                    "messages": [self._sistema()] + self.historial,
+                    "messages": [self._sistema(texto)] + self.historial,
                     "tools": (
                         []
                         if not permitir_herramientas or _es_saludo_sencillo(texto)
@@ -659,7 +664,7 @@ class Cerebro:
                 opciones = ai_providers.crear_opciones_solicitud(
                     self.proveedor,
                     self.modelo,
-                    [self._sistema()] + self.historial,
+                    [self._sistema(texto)] + self.historial,
                     (
                         None
                         if not permitir_herramientas or _es_saludo_sencillo(texto)
@@ -1025,7 +1030,7 @@ class CerebroEnsemble:
             and not m.get("tool_calls")
             and m.get("content", "").strip()
         ]
-        mensajes = [_sistema_base()] + historial_limpio
+        mensajes = [_sistema_base(texto)] + historial_limpio
         if incluir_nuevo:
             mensajes.append({"role": "user", "content": texto})
         return mensajes

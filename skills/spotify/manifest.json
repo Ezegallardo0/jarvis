@@ -1,0 +1,12 @@
+{
+  "id": "spotify",
+  "name": "Spotify Control",
+  "version": "1.0.0",
+  "description": "Control de reproducción de Spotify mediante la integración PKCE configurada.",
+  "author": "JARVIS Core",
+  "enabled_by_default": true,
+  "permissions": ["media_control", "network"],
+  "dependencies": ["spotipy"],
+  "tools": ["skill_spotify_estado"],
+  "default_config": {}
+}
